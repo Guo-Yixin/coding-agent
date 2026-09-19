@@ -1,0 +1,21 @@
+{
+  "name": "coding-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 3000",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1 --port 3000"
+  },
+  "dependencies": {
+    "@vitejs/plugin-vue": "^6.0.0",
+    "axios": "^1.7.9",
+    "dompurify": "^3.2.4",
+    "markdown-it": "^14.1.0",
+    "pinia": "^3.0.1",
+    "vite": "^7.0.0",
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {}
+}
