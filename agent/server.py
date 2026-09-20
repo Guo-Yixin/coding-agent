@@ -48,6 +48,7 @@ from agent.tools import (
     fetch_url,
     get_gitee_pull_request_context,
     get_review_diff_summary,
+    hybrid_code_search,
     list_review_findings,
     load_default_review_rules,
     open_gitee_pull_request,
@@ -311,6 +312,7 @@ def get_agent(config: RunnableConfig):
         tools=[
             web_search,
             fetch_url,
+            hybrid_code_search,
             open_gitee_pull_request,
             publish_gitee_pr_comment,
             get_gitee_pull_request_context,
