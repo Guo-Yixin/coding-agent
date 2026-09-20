@@ -16,5 +16,10 @@ dependencies = [
   "zhipuai>=2.1.5",
 ]
 
+[project.optional-dependencies]
+sandbox = [
+  "opensandbox>=0.1.16",
+]
+
 [tool.setuptools.packages.find]
 include = ["agent*"]
