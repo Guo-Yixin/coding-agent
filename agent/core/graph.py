@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent.core.persistence import make_checkpointer, make_langgraph_store
+from agent.core.persistence import make_business_store, make_checkpointer, make_langgraph_store
 from agent.core.settings import CHECKPOINT_DB_PATH, LANGGRAPH_STORE_DB_PATH, STORE_DB_PATH
 from agent.core.task_intent import TaskKind
 from agent.store import LocalSqliteStore
@@ -21,7 +21,7 @@ def get_store() -> LocalSqliteStore:
 
     global _store
     if _store is None:
-        _store = LocalSqliteStore(STORE_DB_PATH)
+        _store = make_business_store()
     return _store
 
 

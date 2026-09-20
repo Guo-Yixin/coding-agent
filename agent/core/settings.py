@@ -24,6 +24,16 @@ LANGGRAPH_STORE_DB_PATH = Path(
     get_env("LANGGRAPH_STORE_DB_PATH", str(DATA_DIR / "langgraph_store.sqlite"))
 ).resolve()
 
+# 持久化后端。默认保持 SQLite，便于已有本地开发环境无感升级；
+# 设置为 postgres 后，业务 Store、LangGraph checkpoint 和 LangGraph Store
+# 会统一连接到 POSTGRES_DSN 指向的 coding_agent_db。
+PERSISTENCE_BACKEND = get_env("PERSISTENCE_BACKEND", "sqlite").strip().lower()
+POSTGRES_DSN = get_env("POSTGRES_DSN", "").strip()
+POSTGRES_POOL_MIN_SIZE = int(get_env("POSTGRES_POOL_MIN_SIZE", "1"))
+POSTGRES_POOL_MAX_SIZE = int(get_env("POSTGRES_POOL_MAX_SIZE", "8"))
+DEFAULT_TENANT_ID = get_env("CODING_DEFAULT_TENANT_ID", "default")
+DEFAULT_USER_ID = get_env("CODING_DEFAULT_USER_ID", "system")
+
 # 日志目录：所有后端日志和 Agent 运行日志都写入项目内 logs/。
 # 这样既能在控制台实时看，也能在运行后通过日志文件复盘 Agent 做了什么。
 LOG_DIR = Path(get_env("CODING_LOG_DIR", str(PROJECT_ROOT / "logs"))).resolve()
