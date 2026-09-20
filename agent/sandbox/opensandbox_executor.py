@@ -15,6 +15,7 @@ OpenSandbox SDK 是异步 API，而当前 Coding Agent 的 legacy tool/runtime �
 from __future__ import annotations
 
 import asyncio
+import inspect
 import os
 import time
 from dataclasses import dataclass
@@ -120,16 +121,6 @@ class SandboxFile:
     mode: int = 0o644
 
 
-def _run_sync(awaitable: Any) -> Any:
-    """在没有活动事件循环的同步 runtime 中执行 coroutine。"""
-
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(awaitable)
-    raise RuntimeError("OpenSandbox 同步 API 不能在运行中的事件循环内调用，请使用 async 方法")
-
-
 def _safe_relative_path(root: Path, candidate: Path) -> str | None:
     try:
         relative = candidate.resolve().relative_to(root.resolve())
@@ -215,6 +206,7 @@ class OpenSandboxExecutor:
     def __init__(self, config: OpenSandboxConfig | None = None) -> None:
         self.config = config or OpenSandboxConfig.from_env()
         self._sandbox: Any | None = None
+        self._sync_loop: asyncio.AbstractEventLoop | None = None
 
     @property
     def sandbox_id(self) -> str | None:
@@ -247,7 +239,32 @@ class OpenSandboxExecutor:
         return str(self.sandbox_id)
 
     def start(self) -> str:
-        return str(_run_sync(self.start_async()))
+        return str(self._run_sync(self.start_async()))
+
+    def _run_sync(self, awaitable: Any) -> Any:
+        """在同步调用链中复用当前 executor 的事件循环。
+
+        OpenSandbox SDK 内部持有异步 HTTP 客户端。若每次同步方法都调用
+        ``asyncio.run``，前一个事件循环会在 ``start`` 返回时关闭，后续
+        ``upload_files``/``execute``/``close`` 复用该客户端时就会触发
+        ``Event loop is closed``。因此同一个 executor 的同步生命周期必须
+        共享一个 loop；异步调用方则应直接使用 ``*_async`` 方法。
+        """
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            if inspect.iscoroutine(awaitable):
+                awaitable.close()
+            raise RuntimeError(
+                "OpenSandbox 同步 API 不能在运行中的事件循环内调用，请使用 async 方法"
+            )
+
+        if self._sync_loop is None or self._sync_loop.is_closed():
+            self._sync_loop = asyncio.new_event_loop()
+        return self._sync_loop.run_until_complete(awaitable)
 
     @staticmethod
     def _output_text(messages: Iterable[Any]) -> str:
@@ -286,7 +303,7 @@ class OpenSandboxExecutor:
         )
 
     def execute(self, command: str, *, cwd: str | None = None) -> SandboxExecution:
-        return _run_sync(self.execute_async(command, cwd=cwd))
+        return self._run_sync(self.execute_async(command, cwd=cwd))
 
     async def upload_files_async(self, files: Iterable[SandboxFile]) -> int:
         if self._sandbox is None:
@@ -301,14 +318,14 @@ class OpenSandboxExecutor:
         return len(entries)
 
     def upload_files(self, files: Iterable[SandboxFile]) -> int:
-        return int(_run_sync(self.upload_files_async(files)))
+        return int(self._run_sync(self.upload_files_async(files)))
 
     async def upload_workspace_async(self, root: str | Path) -> int:
         files = collect_safe_workspace_files(root, max_file_bytes=self.config.max_upload_bytes)
         return await self.upload_files_async(files)
 
     def upload_workspace(self, root: str | Path) -> int:
-        return int(_run_sync(self.upload_workspace_async(root)))
+        return int(self._run_sync(self.upload_workspace_async(root)))
 
     async def read_file_async(self, path: str) -> str:
         if self._sandbox is None:
@@ -316,7 +333,7 @@ class OpenSandboxExecutor:
         return str(await self._sandbox.files.read_file(path))
 
     def read_file(self, path: str) -> str:
-        return str(_run_sync(self.read_file_async(path)))
+        return str(self._run_sync(self.read_file_async(path)))
 
     async def close_async(self) -> None:
         if self._sandbox is None:
@@ -327,7 +344,14 @@ class OpenSandboxExecutor:
             await sandbox.destroy()
 
     def close(self) -> None:
-        _run_sync(self.close_async())
+        try:
+            self._run_sync(self.close_async())
+        finally:
+            loop = self._sync_loop
+            self._sync_loop = None
+            if loop is not None and not loop.is_closed():
+                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.close()
 
     async def __aenter__(self) -> "OpenSandboxExecutor":
         await self.start_async()
