@@ -24,11 +24,12 @@ LANGGRAPH_STORE_DB_PATH = Path(
     get_env("LANGGRAPH_STORE_DB_PATH", str(DATA_DIR / "langgraph_store.sqlite"))
 ).resolve()
 
-# 持久化后端。默认保持 SQLite，便于已有本地开发环境无感升级；
-# 设置为 postgres 后，业务 Store、LangGraph checkpoint 和 LangGraph Store
-# 会统一连接到 POSTGRES_DSN 指向的 coding_agent_db。
-PERSISTENCE_BACKEND = get_env("PERSISTENCE_BACKEND", "sqlite").strip().lower()
 POSTGRES_DSN = get_env("POSTGRES_DSN", "").strip()
+# 持久化后端。配置了 PostgreSQL DSN 时默认启用 PostgreSQL；
+# 没有 DSN 时保持 SQLite，便于离线单元测试和已有本地开发环境继续运行。
+PERSISTENCE_BACKEND = get_env(
+    "PERSISTENCE_BACKEND", "postgres" if POSTGRES_DSN else "sqlite"
+).strip().lower()
 POSTGRES_POOL_MIN_SIZE = int(get_env("POSTGRES_POOL_MIN_SIZE", "1"))
 POSTGRES_POOL_MAX_SIZE = int(get_env("POSTGRES_POOL_MAX_SIZE", "8"))
 DEFAULT_TENANT_ID = get_env("CODING_DEFAULT_TENANT_ID", "default")
