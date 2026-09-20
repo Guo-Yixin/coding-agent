@@ -33,6 +33,7 @@ from agent.core.repo_memory_update import RepoMemoryUpdate, update_repo_memory_f
 from agent.core.settings import PROJECTS_DIR, WORKSPACE_ROOT
 from agent.core.streaming_runtime import run_agent_with_event_stream
 from agent.core.task_intent import classify_task_kind, is_pull_only_task, is_workspace_listing_task
+from agent.core.worker import WorkerLeaseManager
 from agent.server import get_agent
 from agent.tools.gitee_api import mask_token, parse_gitee_repo_url
 
@@ -954,20 +955,21 @@ def run_agent_task(
         # runtime 只负责“决定跑什么”和“最终状态落库”。
         # 运行过程中的 text delta、write_todos、tool call、subagent 事件解析，
         # 统一交给 streaming_runtime.py，避免调度层和事件解析层混在一起。
-        result = run_agent_with_event_stream(
-            agent=agent,
-            thread_id=thread_id,
-            run_id=run_id,
-            content=_build_agent_user_content(
-                repo_url=repo.clone_url,
+        with WorkerLeaseManager(store).hold(run_id):
+            result = run_agent_with_event_stream(
+                agent=agent,
+                thread_id=thread_id,
+                run_id=run_id,
+                content=_build_agent_user_content(
+                    repo_url=repo.clone_url,
+                    task_kind=task_kind,
+                    prompt=coding_prompt,
+                    display_prompt=display_prompt,
+                    approved_plan=approved_plan_text,
+                ),
                 task_kind=task_kind,
-                prompt=coding_prompt,
-                display_prompt=display_prompt,
-                approved_plan=approved_plan_text,
-            ),
-            task_kind=task_kind,
-            event_sink=event_sink,
-        )
+                event_sink=event_sink,
+            )
         store.finish_open_run_events(thread_id, status="completed")
         current_branch = _detect_current_branch(repo)
         store.update_thread_status(thread_id, "completed", branch_name=current_branch)

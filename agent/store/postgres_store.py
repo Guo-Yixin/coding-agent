@@ -448,9 +448,16 @@ class PostgresBusinessStore:
                    ON CONFLICT(run_id) DO UPDATE SET worker_id=EXCLUDED.worker_id,
                    heartbeat_at=EXCLUDED.heartbeat_at, expires_at=EXCLUDED.expires_at
                    WHERE worker_leases.expires_at < EXCLUDED.heartbeat_at OR worker_leases.worker_id=EXCLUDED.worker_id
-                   RETURNING lease_id""",
+                RETURNING lease_id""",
                 (lease_id, worker_id, run_id, self.tenant_id, now, now, expires),
             ).fetchone()
+            if row is not None:
+                conn.execute(
+                    """UPDATE runs
+                       SET worker_id=%s, lease_expires_at=%s, heartbeat_at=%s
+                       WHERE run_id=%s""",
+                    (worker_id, expires, now, run_id),
+                )
             return row is not None
 
     def renew_worker_lease(self, *, run_id: str, worker_id: str, ttl_seconds: int = 60) -> bool:
@@ -460,11 +467,20 @@ class PostgresBusinessStore:
                 "UPDATE worker_leases SET heartbeat_at=%s, expires_at=%s WHERE run_id=%s AND worker_id=%s RETURNING lease_id",
                 (now, now + timedelta(seconds=ttl_seconds), run_id, worker_id),
             ).fetchone()
+            if row is not None:
+                conn.execute(
+                    "UPDATE runs SET lease_expires_at=%s, heartbeat_at=%s WHERE run_id=%s AND worker_id=%s",
+                    (now + timedelta(seconds=ttl_seconds), now, run_id, worker_id),
+                )
             return row is not None
 
     def release_worker_lease(self, *, run_id: str, worker_id: str) -> bool:
         with self._connection() as conn:
             result = conn.execute("DELETE FROM worker_leases WHERE run_id=%s AND worker_id=%s", (run_id, worker_id))
+            conn.execute(
+                "UPDATE runs SET worker_id=NULL, lease_expires_at=NULL, heartbeat_at=NULL WHERE run_id=%s AND worker_id=%s",
+                (run_id, worker_id),
+            )
             return result.rowcount > 0
 
     def recover_stale_runs(self) -> list[str]:
@@ -477,4 +493,3 @@ class PostgresBusinessStore:
             ).fetchall())
             conn.execute("DELETE FROM worker_leases WHERE expires_at < NOW()")
             return [row["run_id"] for row in rows]
-
