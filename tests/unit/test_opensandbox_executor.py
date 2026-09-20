@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
 
 from agent.sandbox.opensandbox_executor import (
     OpenSandboxConfig,
+    OpenSandboxExecutor,
     collect_safe_workspace_files,
     sandbox_health,
 )
@@ -50,3 +52,21 @@ def test_sandbox_health_reports_connection_error_without_raising() -> None:
 
     assert result["ok"] is False
     assert result["status_code"] is None
+
+
+def test_sync_executor_reuses_event_loop_for_one_lifecycle() -> None:
+    executor = OpenSandboxExecutor(OpenSandboxConfig(domain="http://sandbox.test"))
+    loop_ids: list[int] = []
+
+    async def record_loop() -> None:
+        loop_ids.append(id(asyncio.get_running_loop()))
+
+    try:
+        executor._run_sync(record_loop())
+        executor._run_sync(record_loop())
+    finally:
+        executor.close()
+
+    assert len(loop_ids) == 2
+    assert loop_ids[0] == loop_ids[1]
+    assert executor._sync_loop is None
