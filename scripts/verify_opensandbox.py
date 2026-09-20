@@ -3,11 +3,32 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import sys
-from pathlib import Path
 
 from agent.sandbox import OpenSandboxConfig, OpenSandboxExecutor, SandboxFile, sandbox_health
+
+
+async def _run_probe(config: OpenSandboxConfig) -> int:
+    executor = OpenSandboxExecutor(config)
+    try:
+        sandbox_id = await executor.start_async()
+        uploaded = await executor.upload_files_async(
+            [SandboxFile(path="workspace/coding_agent_probe.py", data=b"print('opensandbox-ok')\n")]
+        )
+        result = await executor.execute_async("python workspace/coding_agent_probe.py")
+        payload = {
+            "sandbox_id": sandbox_id,
+            "uploaded_files": uploaded,
+            "execution": result.__dict__,
+        }
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        if result.exit_code not in (0, None) or "opensandbox-ok" not in result.stdout:
+            return 3
+        return 0
+    finally:
+        await executor.close_async()
 
 
 def main() -> int:
@@ -30,24 +51,7 @@ def main() -> int:
     if not health["ok"]:
         return 2
 
-    executor = OpenSandboxExecutor(config)
-    try:
-        sandbox_id = executor.start()
-        uploaded = executor.upload_files(
-            [SandboxFile(path="workspace/coding_agent_probe.py", data=b"print('opensandbox-ok')\n")]
-        )
-        result = executor.execute("python workspace/coding_agent_probe.py")
-        payload = {
-            "sandbox_id": sandbox_id,
-            "uploaded_files": uploaded,
-            "execution": result.__dict__,
-        }
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        if result.exit_code not in (0, None) or "opensandbox-ok" not in result.stdout:
-            return 3
-        return 0
-    finally:
-        executor.close()
+    return asyncio.run(_run_probe(config))
 
 
 if __name__ == "__main__":
