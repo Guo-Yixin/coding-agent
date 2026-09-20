@@ -1,0 +1,20 @@
+[
+  {
+    "case_id": "persistence-factory-smoke",
+    "prompt": "验证 PostgreSQL/SQLite 持久化工厂和业务 Store 可用",
+    "gold_files": ["agent/core/persistence.py", "agent/store/postgres_store.py"],
+    "target_tests": [["python", "-m", "pytest", "tests/unit/test_persistence_factory.py", "-q", "-m", "not integration"]],
+    "regression_tests": [["python", "-m", "pytest", "tests/unit", "-q", "-m", "not integration"]],
+    "fake_command": ["python", "-c", "from pathlib import Path; Path('.eval/retrieval.json').write_text('[{\\\"path\\\":\\\"agent/core/persistence.py\\\"}]'); Path('.eval/usage.json').write_text('{\\\"input_tokens\\\":120,\\\"output_tokens\\\":80}'); Path('.eval/events.jsonl').write_text('')"],
+    "metadata": {"source": "SWE-bench-style issue-to-test smoke case", "category": "persistence"}
+  },
+  {
+    "case_id": "hybrid-retrieval-smoke",
+    "prompt": "定位 run_agent_task 的调用入口和 grep 结果，并返回可用上下文",
+    "gold_files": ["agent/core/runtime.py", "agent/retrieval/hybrid_search.py"],
+    "target_tests": [["python", "-m", "pytest", "tests/unit/test_hybrid_search.py", "-q"]],
+    "regression_tests": [["python", "-m", "pytest", "tests/unit", "-q", "-m", "not integration"]],
+    "fake_command": ["python", "-c", "from pathlib import Path; Path('.eval/retrieval.json').write_text('[{\\\"path\\\":\\\"agent/retrieval/hybrid_search.py\\\"}]'); Path('.eval/usage.json').write_text('{\\\"input_tokens\\\":90,\\\"output_tokens\\\":70}')"],
+    "metadata": {"source": "RepoBench-style retrieval case", "category": "retrieval"}
+  }
+]
