@@ -212,7 +212,7 @@ watch(sidebarCollapsed, (value) => {
               <span v-else-if="titleError" class="title-save-error" :title="titleError">保存失败</span>
             </div>
             <p class="workspace-repo">
-              {{ agent.currentThread?.repoFullName || agent.selectedRepo || '未选择 Gitee 仓库' }}
+              {{ agent.currentThread?.repoFullName || agent.selectedRepo || '未选择仓库' }}
             </p>
           </div>
         </div>
@@ -258,6 +258,8 @@ watch(sidebarCollapsed, (value) => {
 
       <ChatComposer
         v-model:repo="agent.selectedRepo"
+        v-model:provider="agent.selectedProvider"
+        :providers="agent.options?.providers || []"
         :disabled="agent.streaming"
         :model="agent.selectedModel"
         :effort="agent.selectedEffort"

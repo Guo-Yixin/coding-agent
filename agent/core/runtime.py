@@ -30,12 +30,13 @@ from agent.core.graph import get_checkpointer, get_langgraph_store, get_store
 from agent.core.checkpoint_history import visible_checkpoint_messages
 from agent.core.repo_memory import ensure_repo_memory_initialized, repo_project_dir
 from agent.core.repo_memory_update import RepoMemoryUpdate, update_repo_memory_from_text
-from agent.core.settings import PROJECTS_DIR, WORKSPACE_ROOT
+from agent.core.settings import PERSISTENCE_BACKEND, PROJECTS_DIR, WORKSPACE_ROOT
 from agent.core.streaming_runtime import run_agent_with_event_stream
 from agent.core.task_intent import classify_task_kind, is_pull_only_task, is_workspace_listing_task
 from agent.core.worker import WorkerLeaseManager
 from agent.server import get_agent
-from agent.tools.gitee_api import mask_token, parse_gitee_repo_url
+from agent.tools.gitee_api import mask_token
+from agent.repository import parse_repo_url
 
 logger = logging.getLogger("agent.run.runtime")
 
@@ -100,7 +101,7 @@ def _detect_current_branch(repo: Any) -> str | None:
     """读取当前仓库实际工作分支，供 Dashboard 会话元信息展示。"""
 
     project_dir = repo_project_dir(repo)
-    backend = LocalShellBackend(Workspace(WORKSPACE_ROOT))
+    backend = LocalShellBackend(Workspace(WORKSPACE_ROOT), provider=repo.provider)
     target = backend.workspace.resolve(project_dir)
     if not (target / ".git").exists():
         return None
@@ -197,6 +198,51 @@ def _extract_best_plan_text(messages: list[dict[str, Any]]) -> str:
     return max(selected_pool, key=len).strip()
 
 
+def _record_thread_message(
+    *,
+    thread_id: str,
+    author: str,
+    content: str,
+    run_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """把一条用户可见正文写入业务 Store 的消息投影。
+
+    LangGraph checkpoint 仍然是 Agent 恢复所需的事实来源，但 Dashboard 历史不应
+    为了展示正文去遍历 PostgreSQL checkpoint 的 delta 链。这个投影是稳定、可分页、
+    不会触发 checkpoint 长查询的展示来源；Store 自己负责对重试时重复的用户正文做
+    幂等去重。
+    """
+
+    normalized = content.strip()
+    if not normalized:
+        return
+    get_store().add_thread_message(
+        message_id=f"{thread_id}-{author}-{uuid.uuid4()}",
+        thread_id=thread_id,
+        author=author,
+        content=normalized,
+        run_id=run_id,
+        metadata=metadata or {},
+    )
+
+
+def _visible_thread_messages(thread_id: str) -> list[dict[str, Any]]:
+    """读取消息投影，必要时只在 SQLite 旧数据上回退到 checkpoint。
+
+    PostgreSQL 的通用 checkpoint delta reader 在旧链路上可能持续等待，因此空投影
+    只回退到 checkpoint_history 提供的有界 SQL reader，而不是调用通用 delta API。
+    新运行会同步写入 user/agent 消息；旧 PostgreSQL 会话也能通过有界读取恢复。
+    """
+
+    projected = get_store().list_thread_messages(thread_id)
+    if projected:
+        return projected
+    if PERSISTENCE_BACKEND == "postgres":
+        return visible_checkpoint_messages(thread_id)
+    return visible_checkpoint_messages(thread_id)
+
+
 def _build_agent_user_content(
     *,
     repo_url: str,
@@ -229,7 +275,7 @@ def _build_agent_user_content(
         if approved_plan:
             plan_instruction = f"\n\n用户已经确认以下技术方案，请按该方案实施；如执行中发现必要调整，请在最终总结中说明：\n{approved_plan}"
         task_instruction = (
-            "这是开发实现任务。请按系统开发流程完成任务，必要时修改代码、验证，并创建或复用 Gitee Pull Request。"
+            "这是开发实现任务。请按系统开发流程完成任务，必要时修改代码、验证，并创建或复用 GitHub/Gitee Pull Request。"
             f"{plan_instruction}"
         )
     else:
@@ -241,7 +287,7 @@ def _build_agent_user_content(
     return (
         f"用户可见输入：\n{visible_prompt}\n\n"
         "内部执行上下文：以下内容用于 Agent 判断和执行，不要原样展示为用户输入。\n\n"
-        f"Gitee 仓库地址：{repo_url}\n\n"
+        f"GitHub/Gitee 仓库地址：{repo_url}\n\n"
         f"任务类型：{task_kind}\n\n"
         f"用户任务：\n{prompt}\n\n"
         f"{task_instruction}"
@@ -266,7 +312,7 @@ def _build_plan_user_content(
 
     if previous_plan and revision_prompt:
         return (
-            f"Gitee 仓库地址：{repo_url}\n\n"
+            f"GitHub/Gitee 仓库地址：{repo_url}\n\n"
             f"原始用户需求：\n{prompt}\n\n"
             f"上一版技术方案：\n{previous_plan}\n\n"
             f"用户新的修改要求：\n{revision_prompt}\n\n"
@@ -284,7 +330,7 @@ def _build_plan_user_content(
         )
 
     return (
-        f"Gitee 仓库地址：{repo_url}\n\n"
+        f"GitHub/Gitee 仓库地址：{repo_url}\n\n"
         f"用户需求：\n{prompt}\n\n"
         "请只生成技术方案，不要修改文件、不要提交、不要 push、不要创建 Pull Request。\n"
         "方案必须使用中文 Markdown，建议包含：\n"
@@ -369,11 +415,9 @@ def _is_plan_revision_prompt(prompt: str) -> bool:
 
 
 def _message_metadata(message: dict[str, Any]) -> dict[str, Any]:
-    """解析 checkpoint 消息包装出来的 metadata。
+    """解析消息投影或 checkpoint 兼容结构中的 metadata。
 
-    当前前端历史和方案确认都不再读取 Store.thread_messages。这个函数只负责
-    兼容 checkpoint_history 返回的字典结构：metadata 可能是 dict，也可能是
-    旧数据中的 JSON 字符串。
+    metadata 可能是 dict，也可能是旧数据中的 JSON 字符串。
 
     目前最重要的 metadata 是 source_prompt。它用于从“确认实施”恢复出上一轮
     真正的用户需求，避免把“确认”当成 coding 需求传给 Agent。
@@ -394,14 +438,17 @@ def _message_metadata(message: dict[str, Any]) -> dict[str, Any]:
 def _latest_confirmable_plan_message(thread_id: str) -> dict[str, Any] | None:
     """读取当前线程最近一条等待确认的技术方案消息。
 
-    页面历史和确认实施都以 checkpoint 为准。Store 不再参与正常会话展示、
-    历史恢复或方案确认判断，避免双数据源导致页面覆盖、重复或读到旧方案。
-
-    这个封装函数保留了“读取来源”的抽象。当前实现只从 checkpoint 读取；如果以后
-    要增加归档查询或迁移兼容，可以在这里扩展，而不用修改 run_agent_task 主流程。
+    页面展示和确认实施优先读取 thread_messages 投影。SQLite 旧数据仍可回退到
+    checkpoint；PostgreSQL 不回退到可能阻塞的 checkpoint delta reader。
     """
 
-    return _latest_confirmable_plan_from_checkpoint(thread_id)
+    for message in reversed(_visible_thread_messages(thread_id)):
+        if message.get("author") != "agent":
+            continue
+        content = str(message.get("content") or "").strip()
+        if _is_confirmable_plan_text(content):
+            return message
+    return None
 
 
 def _is_confirmable_plan_text(text: str) -> bool:
@@ -485,11 +532,10 @@ def _plan_source_prompt(message: dict[str, Any], fallback: str) -> str:
 
 
 def _latest_non_approval_user_prompt(thread_id: str, fallback: str) -> str:
-    """从 checkpoint 历史读取最近一条不是“确认/开始实施”的用户消息。
+    """从可展示消息历史读取最近一条不是“确认/开始实施”的用户消息。
 
-    方案确认时，如果 checkpoint 里的方案消息没有携带 Store metadata.source_prompt，
-    就从 checkpoint 历史向前找真实用户需求。这里不读取 Store 的 thread_messages，
-    防止 Store 中的兜底数据覆盖或污染前端历史。
+    方案确认时，如果方案消息没有携带 metadata.source_prompt，就从投影或 SQLite
+    checkpoint 兼容回退中找真实用户需求。
 
     例如用户依次输入：
     1. “帮我增加部门管理模块”
@@ -499,7 +545,7 @@ def _latest_non_approval_user_prompt(thread_id: str, fallback: str) -> str:
     第 3 步进入 coding 时，真正要传给 Agent 的需求应该是第 1 步，而不是第 3 步。
     """
 
-    for message in reversed(visible_checkpoint_messages(thread_id)):
+    for message in reversed(_visible_thread_messages(thread_id)):
         if message.get("author") != "user":
             continue
         content = str(message.get("content") or "").strip()
@@ -537,25 +583,31 @@ def initialize_task_record(
     后台任务再继续执行真正的 Agent 或 git pull。
 
     Store 中的 thread 记录是前端任务列表和任务状态的业务索引，不等同于
-    LangGraph checkpoint。真实对话消息仍由 checkpoint 保存；Store 只保存标题、
-    仓库信息、最新状态、PR 地址等业务字段。
+    LangGraph checkpoint。Agent 恢复仍依赖 checkpoint，同时把用户可见正文投影到
+    thread_messages，供 Dashboard 在 PostgreSQL 上稳定读取。
 
-    `record_user_message` 是历史兼容参数。当前前端消息历史以 checkpoint 为准，
-    因此这个参数不再直接控制消息写入。
+    `record_user_message` 保留给轻量任务和兼容调用方，用于控制是否记录本轮用户输入。
     """
 
     # 如果是全新会话，由 runtime 生成 thread_id；如果是继续对话，复用前端传入的 thread_id。
     thread_id = thread_id or str(uuid.uuid4())
-    repo = parse_gitee_repo_url(repo_url)
+    repo = parse_repo_url(repo_url)
     get_store().upsert_thread(
         thread_id=thread_id,
-        title=prompt[:80] or f"Gitee: {repo.owner}/{repo.repo}",
+        title=prompt[:80] or f"{repo.provider.title()}: {repo.owner}/{repo.repo}",
         user_prompt=prompt,
         repo_url=repo.clone_url,
         repo_owner=repo.owner,
         repo_name=repo.repo,
         latest_run_status="running",
     )
+    if record_user_message:
+        _record_thread_message(
+            thread_id=thread_id,
+            author="user",
+            content=prompt,
+            metadata={"source": "dashboard"},
+        )
     record_event(thread_id, "created", "任务已创建", status="completed")
     return thread_id
 
@@ -567,7 +619,7 @@ def run_workspace_listing_task(*, repo_url: str, prompt: str, thread_id: str | N
     函数仍然会写 thread/run/run_events，是为了前端展示方式和普通任务保持一致。
     """
 
-    should_record_user_message = thread_id is None
+    should_record_user_message = True
     thread_id = initialize_task_record(
         repo_url=repo_url,
         prompt=prompt,
@@ -640,17 +692,32 @@ def _run_git_with_fetch_head_retry(
     return backend.run(command, cwd=cwd, timeout=timeout)
 
 
+def _detect_remote_default_branch(backend: LocalShellBackend, *, cwd: str) -> str:
+    """读取远端默认分支，避免把 GitHub/Gitee 分支写死为 master。"""
+
+    result = backend.run("git symbolic-ref --short refs/remotes/origin/HEAD", cwd=cwd, timeout=60)
+    if result.exit_code == 0:
+        value = result.stdout.strip().splitlines()
+        if value:
+            branch = value[0].strip()
+            if branch.startswith("origin/"):
+                branch = branch.removeprefix("origin/")
+            if branch:
+                return branch
+    return "main"
+
+
 def run_pull_only_task(*, repo_url: str, prompt: str, thread_id: str | None = None) -> dict[str, Any]:
     """执行只拉取远程代码的轻量任务。
 
-    这个分支不调用大模型，也不创建 PR。它只确保 Gitee 仓库在本地工作区存在，
+    这个分支不调用大模型，也不创建 PR。它只确保 GitHub/Gitee 仓库在本地工作区存在，
     然后执行 fetch 和 pull，适合用户在前端输入“先把远程代码 pull 一下”的场景。
 
     由于它不需要推理，所以不走 DeepAgent，不消耗模型调用次数。它仍然会初始化
     仓库映射和仓库记忆，保证后续 planning/coding 任务能复用同一个本地目录。
     """
 
-    should_record_user_message = thread_id is None
+    should_record_user_message = True
     thread_id = initialize_task_record(
         repo_url=repo_url,
         prompt=prompt,
@@ -661,9 +728,9 @@ def run_pull_only_task(*, repo_url: str, prompt: str, thread_id: str | None = No
     store.clear_run_events(thread_id)
     run_id = str(uuid.uuid4())
     store.record_run(run_id=run_id, thread_id=thread_id, status="running")
-    repo = parse_gitee_repo_url(repo_url)
+    repo = parse_repo_url(repo_url)
     workspace = Workspace(WORKSPACE_ROOT)
-    backend = LocalShellBackend(workspace)
+    backend = LocalShellBackend(workspace, provider=repo.provider)
     project_dir = repo_project_dir(repo)
     _ensure_repo_memory_for_repo(repo, project_dir)
     relative_dir = Path(project_dir)
@@ -675,21 +742,22 @@ def run_pull_only_task(*, repo_url: str, prompt: str, thread_id: str | None = No
         record_event(thread_id, "workspace", "准备本地工作区", status="in_progress")
         PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
         if target.exists() and (target / ".git").exists():
-            # 本地已经存在 Git 仓库时，只更新远程地址并快进拉取 master。
+            # 本地已经存在 Git 仓库时，先 fetch，再根据远端 HEAD 解析默认分支。
             # 这里使用 --ff-only，避免自动产生 merge commit，保持项目历史清晰。
             record_event(thread_id, "workspace", "准备本地工作区", status="completed")
             record_event(thread_id, "sync", "同步远程仓库", kind="execute", status="in_progress")
             remote_result = backend.run(f"git remote set-url origin {clone_url}", cwd=str(relative_dir), timeout=60)
-            checkout_result = backend.run("git checkout master", cwd=str(relative_dir), timeout=300)
             fetch_result = _run_git_with_fetch_head_retry(
                 backend,
                 "git fetch --all",
                 cwd=str(relative_dir),
                 timeout=300,
             )
+            base_branch = _detect_remote_default_branch(backend, cwd=str(relative_dir))
+            checkout_result = backend.run(f"git checkout {base_branch}", cwd=str(relative_dir), timeout=300)
             pull_result = _run_git_with_fetch_head_retry(
                 backend,
-                "git pull origin master --ff-only",
+                f"git pull origin {base_branch} --ff-only",
                 cwd=str(relative_dir),
                 timeout=300,
             )
@@ -698,7 +766,7 @@ def run_pull_only_task(*, repo_url: str, prompt: str, thread_id: str | None = No
             # 本地还没有对应目录时，直接 clone 到 workspace/projects 下。
             # 本地部署版目录固定为 projects/<repo>，不再写入仓库目录映射表。
             record_event(thread_id, "workspace", "准备本地工作区", status="completed")
-            record_event(thread_id, "sync", "克隆 Gitee 仓库", kind="execute", status="in_progress")
+            record_event(thread_id, "sync", f"克隆 {repo.provider.title()} 仓库", kind="execute", status="in_progress")
             clone_result = backend.run(f"git clone {clone_url} {target.name}", cwd="projects", timeout=600)
             outputs = [clone_result]
 
@@ -739,9 +807,9 @@ def run_plan_response_task(
 ) -> dict[str, Any]:
     """为编码需求生成技术方案，并把方案作为普通回答直接展示。
 
-    这个流程不再写 thread_plans 表、thread_messages 表，也不再保存 Markdown 文件。
-    方案正文由 DeepAgents 写入 checkpoint，前端通过事件流实时展示，刷新后也从
-    checkpoint 恢复历史。用户后续输入“确认”时，同样从 checkpoint 读取上一条方案。
+    这个流程不再写 thread_plans 表或 Markdown 文件，但会把用户输入和最终方案正文
+    投影到 thread_messages。方案正文仍由 DeepAgents 写入 checkpoint，供 Agent 恢复；
+    Dashboard 刷新时读取消息投影，避免 PostgreSQL checkpoint 历史查询阻塞。
     如果传入 previous_plan_message，则表示用户在等待确认阶段提出了补充要求；
     此时会基于上一版方案重新输出完整新版方案，而不是只输出差异。
 
@@ -754,9 +822,9 @@ def run_plan_response_task(
     store.clear_run_events(thread_id)
     logger.info("开始生成技术方案：thread_id=%s repo_url=%s", thread_id, repo_url)
     record_event(thread_id, "created", "任务已创建", status="completed")
-    record_event(thread_id, "repo", "解析 Gitee 仓库", status="in_progress")
-    repo = parse_gitee_repo_url(repo_url)
-    record_event(thread_id, "repo", "解析 Gitee 仓库", status="completed")
+    record_event(thread_id, "repo", "解析 GitHub/Gitee 仓库", status="in_progress")
+    repo = parse_repo_url(repo_url)
+    record_event(thread_id, "repo", "解析 GitHub/Gitee 仓库", status="completed")
 
     plan_source_prompt = prompt
     previous_plan_text: str | None = None
@@ -770,7 +838,7 @@ def run_plan_response_task(
         )
     store.upsert_thread(
         thread_id=thread_id,
-        title=(revision_prompt or prompt)[:80] or f"Gitee: {repo.owner}/{repo.repo}",
+        title=(revision_prompt or prompt)[:80] or f"{repo.provider.title()}: {repo.owner}/{repo.repo}",
         # user_prompt 只保存本轮用户真实输入，用于 Dashboard user_message 展示。
         # plan_source_prompt 是方案生成/后续实施的完整需求，不能混用为前端展示文本。
         user_prompt=revision_prompt or prompt,
@@ -778,6 +846,13 @@ def run_plan_response_task(
         repo_owner=repo.owner,
         repo_name=repo.repo,
         latest_run_status="running",
+    )
+    display_prompt = revision_prompt or prompt
+    _record_thread_message(
+        thread_id=thread_id,
+        author="user",
+        content=display_prompt,
+        metadata={"source": "dashboard"},
     )
     run_id = str(uuid.uuid4())
     store.record_run(run_id=run_id, thread_id=thread_id, status="running")
@@ -807,8 +882,21 @@ def run_plan_response_task(
         )
         store.finish_open_run_events(thread_id, status="completed")
         messages = result.get("messages", [])
-        if not _extract_best_plan_text(messages):
+        plan_text = _extract_best_plan_text(messages)
+        if not plan_text:
             raise RuntimeError("技术方案生成失败：模型没有返回可用方案")
+        _record_thread_message(
+            thread_id=thread_id,
+            author="agent",
+            content=plan_text,
+            run_id=run_id,
+            metadata={
+                "source": "runtime",
+                "task_kind": "planning",
+                "awaiting_confirmation": True,
+                "source_prompt": plan_source_prompt,
+            },
+        )
         store.update_thread_status(thread_id, "completed")
         store.record_run(run_id=run_id, thread_id=thread_id, status="completed", finished=True)
         record_event(thread_id, "plan", "技术方案已输出，等待确认", kind="other", status="completed")
@@ -851,7 +939,8 @@ def run_agent_task(
     4. 普通 qa、analysis、review 等只读任务直接构建对应 task_kind 的 DeepAgent。
     5. 任务结束后更新 Store 状态、run_events 和仓库级长期记忆。
 
-    注意：Store 不作为正常历史恢复来源。用户消息和 assistant 正文以 checkpoint 为准。
+    注意：checkpoint 仍负责 Agent 状态恢复；用户可见消息同步投影到 thread_messages，
+    Dashboard 和 PostgreSQL 方案确认优先读取该投影。
     """
 
     # 两个直达分支都不需要 LLM，能显著减少模型调用和等待时间。
@@ -924,13 +1013,13 @@ def run_agent_task(
         record_event(thread_id, "plan:approved", "用户已确认技术方案", kind="other", status="completed")
     logger.info("任务开始：thread_id=%s repo_url=%s", thread_id, repo_url)
     record_event(thread_id, "created", "任务已创建", status="completed")
-    record_event(thread_id, "repo", "解析 Gitee 仓库", status="in_progress")
-    repo = parse_gitee_repo_url(repo_url)
-    logger.info("Gitee 仓库解析成功：owner=%s repo=%s", repo.owner, repo.repo)
-    record_event(thread_id, "repo", "解析 Gitee 仓库", status="completed")
+    record_event(thread_id, "repo", "解析 GitHub/Gitee 仓库", status="in_progress")
+    repo = parse_repo_url(repo_url)
+    logger.info("仓库解析成功：provider=%s owner=%s repo=%s", repo.provider, repo.owner, repo.repo)
+    record_event(thread_id, "repo", "解析 GitHub/Gitee 仓库", status="completed")
     store.upsert_thread(
         thread_id=thread_id,
-        title=coding_prompt[:80] or f"Gitee: {repo.owner}/{repo.repo}",
+        title=coding_prompt[:80] or f"{repo.provider.title()}: {repo.owner}/{repo.repo}",
         # user_prompt 只用于 Dashboard 展示“本轮用户真实输入”。
         # coding_prompt 可能是从上一轮方案还原出的完整执行需求，不能写回这里，
         # 否则用户输入“确认实施”后，前端会收到上一轮需求文本并误判重复。
@@ -939,6 +1028,14 @@ def run_agent_task(
         repo_owner=repo.owner,
         repo_name=repo.repo,
         latest_run_status="running",
+    )
+    # Dashboard SSE 已经会在初始化阶段写入用户消息；这里再次调用是幂等的，
+    # 也保证直接调用 run_agent_task 的脚本/测试不会丢失历史输入。
+    _record_thread_message(
+        thread_id=thread_id,
+        author="user",
+        content=display_prompt,
+        metadata={"source": "runtime", "task_kind": task_kind},
     )
     # 每轮 Agent 执行都有独立 run_id。前端事件列表按 run_id 追加，不能复用上一轮 id。
     run_id = str(uuid.uuid4())
@@ -978,6 +1075,13 @@ def run_agent_task(
         messages = result.get("messages", [])
         final_answer = _extract_final_assistant_text(messages)
         if final_answer:
+            _record_thread_message(
+                thread_id=thread_id,
+                author="agent",
+                content=final_answer,
+                run_id=run_id,
+                metadata={"source": "runtime", "task_kind": task_kind},
+            )
             # 仓库记忆只记录最终稳定结论，不记录所有中间 chunk。
             # branch/pr 信息来自 Store 中的最新业务状态，通常由 Gitee 工具在执行过程中写入。
             latest_thread = store.get_thread(thread_id) or {}

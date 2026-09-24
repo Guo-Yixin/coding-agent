@@ -10,25 +10,13 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from urllib.parse import urlparse
 
 import httpx
 
 from agent.env_utils import get_env
+from agent.repository import Repository, mask_tokens, parse_repo_url
 
-
-@dataclass(frozen=True)
-class GiteeRepo:
-    """标准化后的 Gitee 仓库信息。
-
-    owner 和 repo 用于调用 Gitee API；clone_url 用于 Git clone/push 等本地命令。
-    使用 frozen dataclass 可以避免解析后的仓库信息在调用链中被意外修改。
-    """
-
-    owner: str
-    repo: str
-    clone_url: str
+GiteeRepo = Repository
 
 
 def parse_gitee_repo_url(repo_url: str) -> GiteeRepo:
@@ -44,17 +32,7 @@ def parse_gitee_repo_url(repo_url: str) -> GiteeRepo:
         ValueError: URL 不是 gitee.com 域名，或路径中无法解析出 owner/repo。
     """
 
-    parsed = urlparse(repo_url.strip())
-    hostname = (parsed.hostname or "").lower()
-    if hostname not in {"gitee.com", "www.gitee.com"}:
-        raise ValueError("当前仅支持 gitee.com 仓库地址")
-    parts = [p for p in parsed.path.strip("/").split("/") if p]
-    if len(parts) < 2:
-        raise ValueError(f"无法解析 Gitee 仓库地址: {repo_url}")
-    owner = parts[0]
-    # 统一去掉 `.git` 后缀，API 路径使用纯 repo 名，clone_url 再补回标准后缀。
-    repo = re.sub(r"\.git$", "", parts[1])
-    return GiteeRepo(owner=owner, repo=repo, clone_url=f"https://gitee.com/{owner}/{repo}.git")
+    return parse_repo_url(repo_url, provider="gitee")
 
 
 def normalize_gitee_repo_url(repo_url: str) -> str:
@@ -98,12 +76,7 @@ def mask_token(text: str) -> str:
     所有写日志或返回给模型的外部错误文本都应经过该函数处理。
     """
 
-    masked = text
-    for token_name in ("GITEE_TOKEN", "SCM_GITEE_TOKEN"):
-        token = get_env(token_name).strip()
-        if token:
-            masked = masked.replace(token, "***")
-    return masked
+    return mask_tokens(text)
 
 
 def _existing_pr_from_error(text: str) -> dict | None:
@@ -134,7 +107,7 @@ def create_pull_request(
     owner: str,
     repo: str,
     head: str,
-    base: str,
+    base: str | None,
     title: str,
     body: str,
 ) -> dict:
@@ -160,11 +133,12 @@ def create_pull_request(
     url = f"{api_base}/repos/{owner}/{repo}/pulls"
     # Gitee v5 API 使用 access_token 表单字段认证。
     # 该 payload 不写日志，调用异常向上抛出前也应在上层做 token 脱敏。
+    target_base = base or str((_gitee_get(f"/repos/{owner}/{repo}") or {}).get("default_branch") or "master")
     payload = {
         "access_token": token,
         "title": title,
         "head": head,
-        "base": base,
+        "base": target_base,
         "body": body,
     }
     with httpx.Client(timeout=30) as client:
@@ -174,7 +148,7 @@ def create_pull_request(
         existing = _existing_pr_from_error(response.text)
         if existing is not None:
             return existing
-        raise RuntimeError(f"Gitee 创建 PR 失败: {response.status_code} {response.text}")
+        raise RuntimeError(f"Gitee 创建 PR 失败: {response.status_code} {mask_token(response.text)}")
     return response.json()
 
 
@@ -192,7 +166,7 @@ def _gitee_get(path: str, *, params: dict | None = None) -> dict | list:
     with httpx.Client(timeout=30) as client:
         response = client.get(url, params=payload)
     if response.status_code >= 400:
-        raise RuntimeError(f"Gitee API 读取失败: {response.status_code} {response.text}")
+        raise RuntimeError(f"Gitee API 读取失败: {response.status_code} {mask_token(response.text)}")
     return response.json()
 
 
@@ -246,5 +220,43 @@ def post_pr_comment(*, owner: str, repo: str, number: int, body: str) -> dict:
     with httpx.Client(timeout=30) as client:
         response = client.post(url, data={"access_token": token, "body": body})
     if response.status_code >= 400:
-        raise RuntimeError(f"Gitee 发布 PR 评论失败: {response.status_code} {response.text}")
+        raise RuntimeError(f"Gitee 发布 PR 评论失败: {response.status_code} {mask_token(response.text)}")
+    return response.json()
+
+
+def create_issue(*, owner: str, repo: str, title: str, body: str, labels: list[str] | None = None) -> dict:
+    """创建 Gitee Issue。"""
+
+    api_base = get_env("GITEE_API_BASE_URL", "https://gitee.com/api/v5").rstrip("/")
+    token = get_gitee_token()
+    payload: dict[str, object] = {"access_token": token, "title": title, "body": body}
+    if labels:
+        payload["labels"] = ",".join(labels)
+    with httpx.Client(timeout=30) as client:
+        response = client.post(f"{api_base}/repos/{owner}/{repo}/issues", data=payload)
+    if response.status_code >= 400:
+        raise RuntimeError(f"Gitee 创建 Issue 失败: {response.status_code} {mask_token(response.text)}")
+    return response.json()
+
+
+def get_issue(*, owner: str, repo: str, number: int) -> dict:
+    data = _gitee_get(f"/repos/{owner}/{repo}/issues/{number}")
+    return data if isinstance(data, dict) else {"items": data}
+
+
+def list_issue_comments(*, owner: str, repo: str, number: int) -> list:
+    data = _gitee_get(f"/repos/{owner}/{repo}/issues/{number}/comments")
+    return data if isinstance(data, list) else [data]
+
+
+def post_issue_comment(*, owner: str, repo: str, number: int, body: str) -> dict:
+    api_base = get_env("GITEE_API_BASE_URL", "https://gitee.com/api/v5").rstrip("/")
+    token = get_gitee_token()
+    with httpx.Client(timeout=30) as client:
+        response = client.post(
+            f"{api_base}/repos/{owner}/{repo}/issues/{number}/comments",
+            data={"access_token": token, "body": body},
+        )
+    if response.status_code >= 400:
+        raise RuntimeError(f"Gitee 发布 Issue 评论失败: {response.status_code} {mask_token(response.text)}")
     return response.json()

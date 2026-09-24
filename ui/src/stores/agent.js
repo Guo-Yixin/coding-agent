@@ -3,7 +3,7 @@ import { defineStore } from 'pinia'
 import { dashboardApi } from '../api/client'
 import { streamAgentMessage } from '../api/sse'
 
-const DEFAULT_REPO = 'https://gitee.com/clumsypsc/test_coding_repo'
+const DEFAULT_REPO = 'https://github.com/Guo-Yixin/test-coding-repo'
 
 function nowIso() {
   return new Date().toISOString()
@@ -86,6 +86,7 @@ function mergeThreadMeta(target, source) {
   target.branch = source.branch || target.branch
   target.baseBranch = source.baseBranch || target.baseBranch
   target.pr = source.pr || target.pr
+  target.provider = source.provider || target.provider
   target.updatedAt = source.updatedAt || target.updatedAt
 }
 
@@ -97,6 +98,7 @@ export const useAgentStore = defineStore('agent', {
     currentThread: null,
     messages: [],
     selectedRepo: DEFAULT_REPO,
+    selectedProvider: 'github',
     selectedModel: '',
     selectedEffort: 'default',
     streaming: false,
@@ -124,6 +126,7 @@ export const useAgentStore = defineStore('agent', {
         this.options = options
         this.threads = threads
         this.selectedRepo = options.default_repo || DEFAULT_REPO
+        this.selectedProvider = options.default_provider || 'github'
         this.selectedModel = options.default_agent_model || options.models?.[0]?.id || ''
         this.selectedEffort = options.default_agent_reasoning_effort || 'default'
         if (!this.currentThread && threads.length) {
@@ -153,6 +156,7 @@ export const useAgentStore = defineStore('agent', {
       const thread = await dashboardApi.getThread(threadId)
       this.currentThread = thread
       this.selectedRepo = thread.repo || thread.repoFullName || DEFAULT_REPO
+      this.selectedProvider = thread.provider || this.selectedProvider || 'github'
       this.messages = normalizeThreadMessages(thread.messages)
     },
     async createThread() {
@@ -221,6 +225,7 @@ export const useAgentStore = defineStore('agent', {
         {
           content: prompt,
           repo: this.selectedRepo || DEFAULT_REPO,
+          provider: this.selectedProvider || 'github',
           model_id: this.selectedModel || null,
           effort: this.selectedEffort || null,
         },
@@ -234,6 +239,7 @@ export const useAgentStore = defineStore('agent', {
               if (!this.currentThread) {
                 this.currentThread = data
                 this.selectedRepo = data.repo || data.repoFullName || this.selectedRepo || DEFAULT_REPO
+                this.selectedProvider = data.provider || this.selectedProvider || 'github'
               } else {
                 mergeThreadMeta(this.currentThread, data)
               }

@@ -658,6 +658,22 @@ body,
   font-weight: 650;
 }
 
+.repo-provider-select {
+  flex: 0 0 auto;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  outline: 0;
+  padding: 6px 8px;
+  color: #3f3f3f;
+  background: #fafafa;
+  font-size: 12px;
+}
+
+.repo-provider-select:focus {
+  border-color: #b8b8b8;
+  background: #ffffff;
+}
+
 .repo-control-input {
   display: flex;
   flex: 0 1 260px;

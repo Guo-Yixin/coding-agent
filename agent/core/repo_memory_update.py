@@ -9,7 +9,8 @@ from typing import Any
 from langgraph.store.base import BaseStore
 
 from agent.core.repo_memory import build_repo_memory_namespace, get_repo_memory_item, repo_memory_store_key
-from agent.tools.gitee_api import GiteeRepo, mask_token
+from agent.tools.gitee_api import mask_token
+from agent.repository import Repository
 
 logger = logging.getLogger("agent.run.repo_memory_update")
 
@@ -244,7 +245,7 @@ def build_updated_repo_memory(memory: str, update: RepoMemoryUpdate) -> str:
 def update_repo_memory_from_text(
     *,
     store: BaseStore,
-    repo: GiteeRepo,
+    repo: Repository,
     update: RepoMemoryUpdate,
 ) -> bool:
     """把任务最终输出写回仓库级长期记忆。
@@ -252,7 +253,8 @@ def update_repo_memory_from_text(
     返回值表示是否真的修改了记忆文件。调用方可以据此记录日志或前端事件。
     """
 
-    namespace = build_repo_memory_namespace(repo.owner, repo.repo)
+    provider = repo.provider if repo.provider != "gitee" else None
+    namespace = build_repo_memory_namespace(repo.owner, repo.repo, provider)
     item = get_repo_memory_item(store, namespace)
     if item is None:
         logger.info("仓库记忆不存在，跳过结构化更新：repo=%s/%s", repo.owner, repo.repo)
@@ -266,6 +268,6 @@ def update_repo_memory_from_text(
 
     value = dict(item.value)
     value["content"] = updated
-    store.put(namespace, repo_memory_store_key(repo.owner, repo.repo), value)
+    store.put(namespace, repo_memory_store_key(repo.owner, repo.repo, provider), value)
     logger.info("仓库记忆已结构化更新：repo=%s/%s task_kind=%s", repo.owner, repo.repo, update.task_kind)
     return True

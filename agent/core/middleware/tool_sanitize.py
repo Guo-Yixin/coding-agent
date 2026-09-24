@@ -24,7 +24,8 @@ from typing import Any
 
 from agent.backends.local_shell import LocalShellBackend
 from agent.core.events import record_event
-from agent.tools.gitee_api import mask_token, normalize_gitee_repo_url
+from agent.tools.gitee_api import mask_token
+from agent.repository import normalize_repo_url, parse_repo_url
 from langchain.agents.middleware.types import AgentMiddleware, AgentState
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
@@ -34,8 +35,8 @@ logger = logging.getLogger("agent.run.middleware.tool_sanitize")
 
 # 所有工具中具有“路径语义”的参数名，统一经过工作区路径清洗。
 PATH_ARGUMENTS = {"path", "cwd", "repo_dir", "project_dir", "file_path", "old_path", "new_path"}
-# 仓库地址参数需要规范为不含 token 的标准 Gitee HTTPS 地址。
-GITEE_URL_ARGUMENTS = {"repo_url"}
+# 仓库地址参数需要规范为不含 token 的标准 GitHub/Gitee HTTPS 地址。
+REPO_URL_ARGUMENTS = {"repo_url"}
 # DeepAgents read_file 的 offset/limit 容易被模型生成为字符串，这里做轻量纠正。
 READ_FILE_INT_ARGUMENTS = {"offset", "limit"}
 
@@ -177,11 +178,11 @@ def sanitize_workspace_path(value: Any, *, argument_name: str, backend: LocalShe
     return cleaned or "."
 
 
-def _sanitize_gitee_url(value: Any) -> Any:
-    """把 Gitee 地址规范为不带 token 的标准 HTTPS clone_url。
+def _sanitize_repo_url(value: Any) -> Any:
+    """把 GitHub/Gitee 地址规范为不带 token 的标准 HTTPS clone_url。
 
-    Gitee token 不应出现在工具参数、日志、事件或 Git remote URL 中。
-    这里只对包含 gitee.com 的字符串做规范化，其他普通字符串保持原样。
+    Token 不应出现在工具参数、日志、事件或 Git remote URL 中。
+    这里只对已知平台地址做规范化，其他普通字符串保持原样。
     """
 
     if not isinstance(value, str):
@@ -189,9 +190,9 @@ def _sanitize_gitee_url(value: Any) -> Any:
     text = value.strip()
     if not text:
         return text
-    if "gitee.com" not in text.lower():
+    if "gitee.com" not in text.lower() and "github.com" not in text.lower():
         return text
-    return normalize_gitee_repo_url(text)
+    return normalize_repo_url(text, provider=parse_repo_url(text).provider)
 
 
 def sanitize_tool_kwargs(tool_name: str, kwargs: dict[str, Any], *, backend: LocalShellBackend) -> dict[str, Any]:
@@ -206,9 +207,9 @@ def sanitize_tool_kwargs(tool_name: str, kwargs: dict[str, Any], *, backend: Loc
     for key in PATH_ARGUMENTS:
         if key in sanitized:
             sanitized[key] = sanitize_workspace_path(sanitized[key], argument_name=key, backend=backend)
-    for key in GITEE_URL_ARGUMENTS:
+    for key in REPO_URL_ARGUMENTS:
         if key in sanitized:
-            sanitized[key] = _sanitize_gitee_url(sanitized[key])
+            sanitized[key] = _sanitize_repo_url(sanitized[key])
     for key in READ_FILE_INT_ARGUMENTS:
         if key in sanitized:
             sanitized[key] = _coerce_int(sanitized[key])

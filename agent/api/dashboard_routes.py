@@ -35,16 +35,29 @@ from pydantic import BaseModel
 from agent.core.checkpoint_history import visible_checkpoint_messages
 from agent.core.graph import get_store
 from agent.core.runtime import delete_task, get_task, initialize_task_record, list_tasks, run_agent_task
+from agent.core.settings import PERSISTENCE_BACKEND
 from agent.env_utils import get_env
+from agent.repository import parse_repo_url
 
 dashboard_router = APIRouter(prefix="/dashboard/api")
 
-# 页面首次打开或用户没有填写仓库时使用的默认 Gitee 仓库。
-DEFAULT_REPO_URL = "https://gitee.com/clumsypsc/test_coding_repo.git"
+# 页面首次打开或用户没有填写仓库时使用的默认测试仓库。
+DEFAULT_REPO_PROVIDER = get_env("DEFAULT_REPO_PROVIDER", "github").strip().lower()
+DEFAULT_REPO_URL = get_env(
+    "DEFAULT_REPO_URL",
+    "https://github.com/Guo-Yixin/test-coding-repo.git"
+    if DEFAULT_REPO_PROVIDER == "github"
+    else "https://gitee.com/clumsypsc/test_coding_repo.git",
+)
 
 
-def _normalize_dashboard_repo_url(repo: str | None, *, fallback: str | None = None) -> str:
-    """把前端传入的仓库字段统一整理成后端运行时可解析的 Gitee URL。
+def _normalize_dashboard_repo_url(
+    repo: str | None,
+    *,
+    provider: str | None = None,
+    fallback: str | None = None,
+) -> str:
+    """把前端传入的仓库字段统一整理成标准 GitHub/Gitee URL。
 
     前端为了方便展示和输入，通常使用 `owner/repo` 这种简写；但是运行时、
     仓库映射、仓库记忆和 Gitee API 封装都统一依赖完整 URL。这里在 Dashboard
@@ -60,18 +73,13 @@ def _normalize_dashboard_repo_url(repo: str | None, *, fallback: str | None = No
     text = (repo or fallback or DEFAULT_REPO_URL).strip()
     if not text:
         return DEFAULT_REPO_URL
-
-    if text.startswith(("http://", "https://")):
-        return text
-
-    shorthand = text.removesuffix(".git").strip().strip("/")
-    if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", shorthand):
-        return f"https://gitee.com/{shorthand}.git"
-
-    raise HTTPException(
-        status_code=400,
-        detail="Gitee 仓库地址格式不正确，请输入完整 Gitee URL 或 owner/repo。",
-    )
+    try:
+        return parse_repo_url(text, provider=provider).clone_url
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="仓库地址格式不正确，请输入 GitHub/Gitee 完整 HTTPS URL 或 owner/repo。",
+        ) from exc
 
 
 class DashboardThreadMessageRequest(BaseModel):
@@ -85,6 +93,7 @@ class DashboardThreadMessageRequest(BaseModel):
     content: str
     images: list[dict[str, Any]] | None = None
     repo: str | None = None
+    provider: str | None = None
     model_id: str | None = None
     effort: str | None = None
 
@@ -106,12 +115,14 @@ def _sse_part(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
-def _timestamp_ms(value: str | None) -> int:
-    """把 SQLite 中的 ISO 时间转换成前端使用的毫秒时间戳。"""
+def _timestamp_ms(value: str | datetime | None) -> int:
+    """把 SQLite/PostgreSQL 的时间值转换成前端使用的毫秒时间戳。"""
 
     if not value:
         return int(datetime.now().timestamp() * 1000)
-    normalized = value.replace("Z", "+00:00")
+    if isinstance(value, datetime):
+        return int(value.timestamp() * 1000)
+    normalized = str(value).replace("Z", "+00:00")
     return int(datetime.fromisoformat(normalized).timestamp() * 1000)
 
 
@@ -137,6 +148,13 @@ def _repo_full_name(thread: dict[str, Any]) -> str:
     return thread.get("repo_url") or ""
 
 
+def _repo_provider(thread: dict[str, Any]) -> str:
+    try:
+        return parse_repo_url(str(thread.get("repo_url") or "")).provider
+    except ValueError:
+        return DEFAULT_REPO_PROVIDER
+
+
 def _pr_payload(thread: dict[str, Any]) -> dict[str, Any] | None:
     """把 Store 中的 PR 字段转换成前端期望的 PR 对象。
 
@@ -157,7 +175,7 @@ def _pr_payload(thread: dict[str, Any]) -> dict[str, Any] | None:
         "title": thread.get("title") or "CODING Pull Request",
         "state": "open",
         "headRef": thread.get("branch_name") or "",
-        "baseRef": "master",
+        "baseRef": "main" if _repo_provider(thread) == "github" else "master",
         "url": pr_url,
     }
 
@@ -187,16 +205,37 @@ def _user_visible_stream_text(text: str) -> str:
 def _message_payload(thread: dict[str, Any]) -> list[dict[str, Any]]:
     """生成前端可展示的消息列表。
 
-    历史正文只从 LangGraph checkpoint 读取。Store 仍然可以写入业务数据、
-    run_events、review findings 等内容，但不再参与聊天正文拼接，避免 checkpoint
-    和 Store 双数据源导致页面重复、覆盖或乱序。
-
-    当前轮实时过程由 POST SSE 直接推送增量事件；刷新页面后再由 checkpoint 恢复稳定历史。
+    PostgreSQL 模式优先从 thread_messages 投影读取，避免历史页面触发可能持续等待
+    的 checkpoint delta 查询。SQLite 新消息也使用同一投影；没有投影的旧 SQLite
+    会话才回退到 checkpoint。当前轮实时过程仍由 POST SSE 直接推送增量事件。
     """
 
     created_at = thread.get("created_at") or datetime.now().isoformat()
     messages: list[dict[str, Any]] = []
     thread_id = str(thread["thread_id"])
+
+    projected = get_store().list_thread_messages(thread_id)
+    for index, message in enumerate(projected):
+        content = _user_visible_text(str(message.get("content") or ""))
+        if not content:
+            continue
+        author = message.get("author") if message.get("author") in {"user", "agent", "system", "tool"} else "agent"
+        message_timestamp = message.get("created_at") or created_at
+        if isinstance(message_timestamp, datetime):
+            message_timestamp = message_timestamp.isoformat()
+        messages.append(
+            {
+                "id": message.get("message_id") or f"{thread_id}-projected-{index}",
+                "author": author,
+                "timestamp": message_timestamp,
+                "chunks": [{"kind": "text", "text": content}],
+            }
+        )
+    if messages:
+        return messages
+
+    # 旧 SQLite 走原有兼容回退；PostgreSQL 走 checkpoint_history 的有界 SQL reader，
+    # 不调用会卡住的通用 delta history API。
     for index, message in enumerate(visible_checkpoint_messages(thread_id)):
         content = str(message.get("content") or "").strip()
         if not content:
@@ -234,9 +273,10 @@ def _thread_payload(thread: dict[str, Any]) -> dict[str, Any]:
         "title": thread.get("title") or "CODING Task",
         "repo": repo_full_name,
         "repoFullName": repo_full_name,
+        "provider": _repo_provider(thread),
         # branch_name 为空时表示尚未记录真实工作分支；不要伪装成当前分支 master。
         "branch": thread.get("branch_name"),
-        "baseBranch": "master",
+        "baseBranch": "main" if _repo_provider(thread) == "github" else "master",
         "model": get_env("MAIN_MODEL", "deepseek-v4-pro"),
         "effort": None,
         "source": "dashboard",
@@ -291,7 +331,12 @@ def dashboard_options() -> dict[str, Any]:
     model = get_env("MAIN_MODEL", "deepseek-v4-pro")
     return {
         "default_repo": DEFAULT_REPO_URL,
-        "repo_placeholder": "https://gitee.com/owner/repo.git",
+        "default_provider": DEFAULT_REPO_PROVIDER,
+        "providers": [
+            {"id": "github", "label": "GitHub", "url_placeholder": "https://github.com/owner/repo.git"},
+            {"id": "gitee", "label": "Gitee", "url_placeholder": "https://gitee.com/owner/repo.git"},
+        ],
+        "repo_placeholder": "https://github.com/owner/repo.git",
         "models": [
             {
                 "id": model,
@@ -565,7 +610,7 @@ def _post_streaming_response(*, thread_id: str, repo_url: str, content: str) -> 
 async def dashboard_stream_new_message(body: DashboardThreadMessageRequest) -> StreamingResponse:
     """创建新会话并通过 POST SSE 返回实时运行过程。"""
 
-    repo_url = _normalize_dashboard_repo_url(body.repo)
+    repo_url = _normalize_dashboard_repo_url(body.repo, provider=body.provider)
     thread_id = str(uuid.uuid4())
     return _post_streaming_response(thread_id=thread_id, repo_url=repo_url, content=body.content)
 
@@ -581,7 +626,11 @@ async def dashboard_stream_existing_message(
     """
 
     task = get_task(thread_id)
-    repo_url = _normalize_dashboard_repo_url(body.repo, fallback=(task or {}).get("repo_url"))
+    repo_url = _normalize_dashboard_repo_url(
+        body.repo,
+        provider=body.provider,
+        fallback=(task or {}).get("repo_url"),
+    )
     return _post_streaming_response(thread_id=thread_id, repo_url=repo_url, content=body.content)
 
 

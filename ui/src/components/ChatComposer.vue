@@ -18,9 +18,17 @@ const props = defineProps({
     type: String,
     default: '',
   },
+  provider: {
+    type: String,
+    default: 'github',
+  },
+  providers: {
+    type: Array,
+    default: () => [],
+  },
 })
 
-const emit = defineEmits(['send', 'stop', 'update:repo'])
+const emit = defineEmits(['send', 'stop', 'update:repo', 'update:provider'])
 const draft = shallowRef('')
 const inputRef = shallowRef(null)
 
@@ -28,13 +36,23 @@ const modelLabel = computed(() => props.model || 'deepseek-v4-pro')
 const effortLabel = computed(() => props.effort || 'default')
 const canSend = computed(() => !props.disabled && Boolean(draft.value.trim()))
 
+const githubUrlPattern = /^https?:\/\/(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+(?:\.git)?\/?$/i
 const giteeUrlPattern = /^https?:\/\/(?:www\.)?gitee\.com\/[\w.-]+\/[\w.-]+(?:\.git)?\/?$/i
 const shortRepoPattern = /^[\w.-]+\/[\w.-]+$/
+
+const providerLabel = computed(() => {
+  const selected = props.providers.find((item) => item.id === props.provider)
+  return selected?.label || (props.provider === 'gitee' ? 'Gitee' : 'GitHub')
+})
+const repoPlaceholder = computed(() => {
+  const selected = props.providers.find((item) => item.id === props.provider)
+  return selected?.url_placeholder || `${props.provider === 'gitee' ? 'https://gitee.com' : 'https://github.com'}/owner/repo`
+})
 
 const repoStatus = computed(() => {
   const value = props.repo.trim()
   if (!value) return { label: '待填写', className: 'empty' }
-  if (giteeUrlPattern.test(value) || shortRepoPattern.test(value)) {
+  if (githubUrlPattern.test(value) || giteeUrlPattern.test(value) || shortRepoPattern.test(value)) {
     return { label: '已识别', className: 'ready' }
   }
   return { label: '检查地址', className: 'warning' }
@@ -70,6 +88,17 @@ function onDraftInput() {
 function stop() {
   emit('stop')
 }
+
+function changeProvider(event) {
+  const nextProvider = event.target.value
+  emit('update:provider', nextProvider)
+  const current = props.repo.trim().toLowerCase()
+  const isGithubUrl = current.includes('github.com/')
+  const isGiteeUrl = current.includes('gitee.com/')
+  if ((nextProvider === 'github' && isGiteeUrl) || (nextProvider === 'gitee' && isGithubUrl)) {
+    emit('update:repo', '')
+  }
+}
 </script>
 
 <template>
@@ -90,14 +119,27 @@ function stop() {
         <span class="meta-chip"><span class="meta-label">推理</span>{{ effortLabel }}</span>
       </div>
       <label class="repo-control">
-        <span class="repo-control-label">Gitee</span>
+        <span class="repo-control-label">仓库</span>
+        <select
+          class="repo-provider-select"
+          :value="provider"
+          :disabled="disabled"
+          aria-label="仓库平台"
+          @change="changeProvider"
+        >
+          <option v-for="item in providers" :key="item.id" :value="item.id">
+            {{ item.label }}
+          </option>
+          <option v-if="!providers.length" value="github">GitHub</option>
+          <option v-if="!providers.length" value="gitee">Gitee</option>
+        </select>
         <span class="repo-control-input">
-          <span class="sr-only">Gitee 仓库地址</span>
+          <span class="sr-only">{{ providerLabel }} 仓库地址</span>
           <input
             :value="repo"
             :disabled="disabled"
-            placeholder="owner/repo"
-            aria-label="Gitee 仓库地址"
+            :placeholder="repoPlaceholder"
+            :aria-label="`${providerLabel} 仓库地址`"
             @input="emit('update:repo', $event.target.value)"
           />
           <span class="repo-status" :class="repoStatus.className">

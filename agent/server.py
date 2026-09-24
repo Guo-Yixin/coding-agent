@@ -47,16 +47,28 @@ from agent.tools import (
     add_review_finding,
     fetch_url,
     get_gitee_pull_request_context,
+    create_gitee_issue,
+    get_gitee_issue_context,
+    get_github_actions_status,
+    get_github_issue_context,
+    get_github_pull_request_context,
     get_review_diff_summary,
     hybrid_code_search,
     list_review_findings,
     load_default_review_rules,
     open_gitee_pull_request,
+    open_github_pull_request,
+    create_github_issue,
+    publish_github_issue_comment,
+    publish_github_pr_comment,
+    publish_gitee_issue_comment,
+    rerun_github_actions,
+    cancel_github_actions,
     publish_gitee_pr_comment,
     validate_review_finding_location,
     web_search,
 )
-from agent.tools.gitee_api import parse_gitee_repo_url
+from agent.repository import parse_repo_url
 
 logger = logging.getLogger(__name__)
 
@@ -86,7 +98,7 @@ def graph_loaded_for_execution(config: RunnableConfig) -> bool:
     return bool(configurable.get("__is_for_execution__", False))
 
 
-def ensure_backend_for_thread(thread_id: str) -> LocalShellBackend:
+def ensure_backend_for_thread(thread_id: str, *, provider: str | None = None) -> LocalShellBackend:
     """获取或创建绑定到 thread 的本地 backend。
 
     这个函数对应 之前项目 的 `ensure_sandbox_for_thread`，但做了功能减法：
@@ -99,10 +111,12 @@ def ensure_backend_for_thread(thread_id: str) -> LocalShellBackend:
     backend = _BACKENDS.get(thread_id)
     if backend is None:
         logger.info("为 thread 创建 LocalShellBackend：%s", thread_id)
-        backend = LocalShellBackend()
+        backend = LocalShellBackend(provider=provider)
         _BACKENDS[thread_id] = backend
     else:
         logger.info("复用 thread 的 LocalShellBackend：%s", thread_id)
+        if provider:
+            backend.provider = provider
     return backend
 
 
@@ -134,7 +148,7 @@ def _code_reviewer_subagent(model: BaseChatModel) -> SubAgent:
     return {
         "name": "code_reviewer",
         "description": (
-            "用于审查 Gitee Pull Request 或本地分支 diff 的子 Agent。"
+            "用于审查 GitHub/Gitee Pull Request 或本地分支 diff 的子 Agent。"
             "它会读取审查规则、PR 上下文和变更文件，记录结构化 finding，"
             "最后输出中文审查报告。"
         ),
@@ -143,7 +157,7 @@ def _code_reviewer_subagent(model: BaseChatModel) -> SubAgent:
             "你必须使用中文输出，代码标识符、路径、命令和 API 名称可以保留英文。\n"
             "审查流程：\n"
             "1. 按 code-review skill 先用 read_file 读取工作区规则和仓库规则；读不到时调用 load_default_review_rules。\n"
-            "2. 如果用户提供 Gitee PR 编号，调用 get_gitee_pull_request_context 读取 PR 详情、提交、文件和评论。\n"
+            "2. 如果用户提供 GitHub/Gitee PR 编号，按仓库平台调用对应的 Pull Request Context 工具，读取 PR 详情、提交、文件、普通评论、Review Comment 和 CI 状态。\n"
             "3. 调用 get_review_diff_summary 获取本地 diff 摘要和变更行号。\n"
             "4. 只记录会导致真实风险的问题，不记录纯风格偏好。\n"
             "5. finding 必须包含 file、line、severity、title、description。\n"
@@ -155,6 +169,7 @@ def _code_reviewer_subagent(model: BaseChatModel) -> SubAgent:
         "model": model,
         "tools": [
             get_gitee_pull_request_context,
+            get_github_pull_request_context,
             load_default_review_rules,
             get_review_diff_summary,
             validate_review_finding_location,
@@ -192,7 +207,7 @@ def _prepare_repo_backend_context(
         return backend, None, None
 
     # 仓库地址是仓库记忆命名空间的唯一来源，格式必须能解析为 owner/repo。
-    repo = parse_gitee_repo_url(repo_url)
+    repo = parse_repo_url(repo_url)
     langgraph_store = get_langgraph_store()
     project_dir = repo_project_dir(repo)
 
@@ -203,11 +218,12 @@ def _prepare_repo_backend_context(
         project_dir=project_dir,
     )
     # 顺带读一次记忆内容，传给 ContextInjectionMiddleware 避免重复查询
-    memory_path = repo_memory_virtual_path(repo.owner, repo.repo)
+    memory_provider = repo.provider if repo.provider != "gitee" else None
+    memory_path = repo_memory_virtual_path(repo.owner, repo.repo, memory_provider)
     memory_content: str | None = None
     memory_item = langgraph_store.get(
-        build_repo_memory_namespace(repo.owner, repo.repo),
-        repo_memory_store_key(repo.owner, repo.repo),
+        build_repo_memory_namespace(repo.owner, repo.repo, memory_provider),
+        repo_memory_store_key(repo.owner, repo.repo, memory_provider),
     )
     if memory_item is not None:
         content = str(memory_item.value.get("content") or "").strip()
@@ -222,6 +238,7 @@ def _prepare_repo_backend_context(
             store=langgraph_store,
             owner=repo.owner,
             repo=repo.repo,
+            provider=memory_provider,
         ),
         [memory_path],
         memory_content,
@@ -233,13 +250,14 @@ def create_repo_backend(
     store: BaseStore,
     owner: str,
     repo: str,
+    provider: str | None = None,
 ) -> CompositeBackend:
     """创建当前仓库专用的 CompositeBackend。
 
     - `/projects`、`/skills`、`/runtimes` 和 `execute()` 继续走 LocalShellBackend。
     - `/memories/` 走 DeepAgents 原生 StoreBackend，底层由 LangGraph Store 持久化。
     """
-    namespace = build_repo_memory_namespace(owner, repo)
+    namespace = build_repo_memory_namespace(owner, repo, provider)
     return CompositeBackend(
         # default backend 覆盖绝大多数路径和命令执行能力。
         default=local_backend,
@@ -280,9 +298,12 @@ def get_agent(config: RunnableConfig):
     # task_kind 是系统提示词、权限策略和运行保护策略的共同输入。
     task_kind = _task_kind_from_config(configurable)
 
-    # backend 按 thread 复用，避免同一个会话内反复初始化 Windows 工作区封装。
-    backend = ensure_backend_for_thread(thread_id)
     repo_url = configurable.get("repo_url")
+    repo_provider = None
+    if isinstance(repo_url, str) and repo_url.strip():
+        repo_provider = parse_repo_url(repo_url).provider
+    # backend 按 thread 复用，避免同一个会话内反复初始化 Windows 工作区封装。
+    backend = ensure_backend_for_thread(thread_id, provider=repo_provider)
     langgraph_store = get_langgraph_store()
     # server.py 在创建 Agent 之前，已经顺手读到了当前仓库记忆内容；
     # 那就把内容放进 config，后面的 ContextInjectionMiddleware 直接用，
@@ -316,6 +337,18 @@ def get_agent(config: RunnableConfig):
             open_gitee_pull_request,
             publish_gitee_pr_comment,
             get_gitee_pull_request_context,
+            get_github_pull_request_context,
+            create_gitee_issue,
+            publish_gitee_issue_comment,
+            get_gitee_issue_context,
+            open_github_pull_request,
+            publish_github_pr_comment,
+            create_github_issue,
+            publish_github_issue_comment,
+            get_github_actions_status,
+            get_github_issue_context,
+            rerun_github_actions,
+            cancel_github_actions,
             load_default_review_rules,
             get_review_diff_summary,
             validate_review_finding_location,

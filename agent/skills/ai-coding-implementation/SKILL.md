@@ -1,6 +1,6 @@
 ---
 name: ai-coding-implementation
-description: 面向 Gitee 仓库的复杂业务代码实施流程。开发实现、复杂业务改造、多文件修改、测试修复、提交推送和创建 Pull Request 时使用。
+description: 面向 GitHub/Gitee 仓库的复杂业务代码实施流程。开发实现、复杂业务改造、多文件修改、测试修复、提交推送和创建 Pull Request 时使用。
 ---
 
 # AI Coding 复杂代码实施流程
