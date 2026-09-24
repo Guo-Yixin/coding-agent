@@ -18,7 +18,7 @@ from deepagents import create_deep_agent
 from deepagents.backends import CompositeBackend, StoreBackend
 from deepagents.middleware.subagents import GENERAL_PURPOSE_SUBAGENT, SubAgent
 from deepagents.middleware.summarization import create_summarization_tool_middleware
-from langchain.agents.middleware import ModelCallLimitMiddleware
+from langchain.agents.middleware import ModelCallLimitMiddleware, TodoListMiddleware
 from langchain_core.language_models import BaseChatModel
 from langgraph.graph.state import RunnableConfig
 from langgraph.store.base import BaseStore
@@ -374,6 +374,8 @@ def get_agent(config: RunnableConfig):
         #
         # 你已经完成结果的提取或合成，不再需要之前的工作上下文时。
         middleware=[
+            # write_todos 由 TodoListMiddleware 注入；系统提示要求每轮任务跟踪此 Todo。
+            TodoListMiddleware(),
             ContextInjectionMiddleware(),
             MessageSanitizeMiddleware(),
             SanitizeToolInputsMiddleware(backend=backend),
