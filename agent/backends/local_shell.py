@@ -4,7 +4,7 @@
 
 1. 它把 DeepAgents 的文件后端协议落到本机文件系统上；
 2. 它把模型看到的虚拟路径（例如 `/projects`、`/skills`）映射到真实工作区目录；
-3. 它为命令执行增加安全守卫、超时控制、Token 脱敏和 Gitee 非交互认证；
+    3. 它为命令执行增加安全守卫、超时控制、Token 脱敏和 GitHub/Gitee 非交互认证；
 4. 它保留了旧版 Gitee/Git 工具需要的兼容方法，降低业务代码迁移成本。
 
 开发调试时可以把它理解为“Agent 与真实电脑之间的工程边界”：
@@ -39,6 +39,7 @@ from deepagents.backends.sandbox import BaseSandbox  # 沙箱基类
 
 from agent.core.settings import WORKSPACE_ROOT  # 统一的工作区根目录（由 settings.py 管理）
 from agent.env_utils import get_env
+from agent.repository import get_provider_token, mask_tokens
 
 from .permissions import normalize_safe_command
 from .workspace import Workspace
@@ -99,12 +100,7 @@ def _mask_token(text: str) -> str:
     因此所有准备进入日志和模型上下文的文本，都应先经过这个函数脱敏。
     """
 
-    masked = text
-    for token_name in ("GITEE_TOKEN", "SCM_GITEE_TOKEN"):
-        token = get_env(token_name).strip()
-        if token:
-            masked = masked.replace(token, "***")
-    return masked
+    return mask_tokens(text)
 
 
 @dataclass
@@ -130,7 +126,7 @@ class LocalShellBackend(BaseSandbox):
     1. 实现 DeepAgents 原生文件协议：`ls/read/write/edit/glob/grep/upload/download`；
     2. 实现命令执行协议：`execute()`，负责 Windows/Linux 适配、路径转换、超时和脱敏；
     3. 实现本地工作区布局：projects、skills、policies、reviews、runtimes、tmp、logs；
-    4. 实现 Gitee Git 非交互认证：通过 `GIT_ASKPASS` 注入 token，避免后台进程弹窗；
+    4. 实现 GitHub/Gitee Git 非交互认证：通过 `GIT_ASKPASS` 注入 token，避免后台进程弹窗；
     5. 保留旧版兼容接口：`run/read_file/write_file/list_files`，避免一次性重构业务工具。
 
     这个类不是“完全可信的 shell 代理”，而是项目里的受控本地执行层。
@@ -141,6 +137,7 @@ class LocalShellBackend(BaseSandbox):
         self,
         workspace: Workspace | str | os.PathLike[str] | None = None,
         *,
+        provider: str | None = None,
         timeout: int = 3600,
     ) -> None:
         # 确定工作区根目录：传入的 workspace > 环境变量 > settings.py 的默认值
@@ -166,6 +163,7 @@ class LocalShellBackend(BaseSandbox):
             "runtimes/python/default/.venv",
         )
         self.default_timeout = timeout
+        self.provider = provider or get_env("DEFAULT_REPO_PROVIDER", "gitee").strip().lower()
         # 命令安全守卫，默认开启
         self.command_guard_enabled = (
             os.environ.get("LOCAL_SHELL_ENABLE_COMMAND_GUARD", "true").lower()
@@ -241,7 +239,7 @@ class LocalShellBackend(BaseSandbox):
     def _git_askpass_path(self) -> Path:
         """返回当前平台的 Git askpass 脚本路径。"""
 
-        return self.secrets_dir / ("gitee_askpass.cmd" if IS_WINDOWS else "gitee_askpass.sh")
+        return self.secrets_dir / ("git_askpass.cmd" if IS_WINDOWS else "git_askpass.sh")
 
     # ── DeepAgents 原生协议实现 ─────────────────────────────
 
@@ -584,7 +582,7 @@ class LocalShellBackend(BaseSandbox):
         if os.environ.get("LOCAL_SHELL_CREATE_PYTHON_VENV", "false").lower() not in {"0", "false", "no"}:
             self._ensure_shared_python_venv()
         self._ensure_policy_files()
-        self._ensure_gitee_askpass_files()
+        self._ensure_git_askpass_files()
         # 写一个 .ai_coding_workspace.json 标记文件，方便外部工具识别工作区
         state = {
             "backend": "local_shell",
@@ -617,7 +615,7 @@ class LocalShellBackend(BaseSandbox):
         """
         defaults = {
             "workspace.md": "# 工作区目录说明\n\n- /projects：Gitee 项目源码目录。\n- /skills：DeepAgents 技能目录。\n- /runtimes：本机运行环境目录。\n- /reviews：审查结果目录。\n- /tmp：临时文件目录。\n- /logs：运行日志目录。\n",
-            "git.md": "# Git 规范\n\n- 第一版只处理 Gitee 仓库。\n- 修改代码前先确认仓库目录和当前分支。\n- 提交前必须运行必要测试。\n",
+            "git.md": "# Git 规范\n\n- 第一阶段支持 GitHub.com 和 Gitee Cloud 的 HTTPS 仓库。\n- 修改代码前先确认仓库目录和当前分支。\n- 提交前必须运行必要测试。\n- 禁止把 Token、.env 或私钥加入提交。\n",
             "security.md": "# 安全规范\n\n- 不读取或输出 .secrets 目录内容。\n- 不提交密钥、Token、私钥或 .env 文件。\n",
         }
         for name, content in defaults.items():
@@ -652,7 +650,7 @@ class LocalShellBackend(BaseSandbox):
             return
         self._venv_error = None
 
-    def _ensure_gitee_askpass_files(self) -> None:
+    def _ensure_git_askpass_files(self) -> None:
         """生成 Git 非交互认证脚本。
 
         因为 Agent 后台不能弹窗让用户输密码，所以预先创建 askpass 脚本，
@@ -663,9 +661,9 @@ class LocalShellBackend(BaseSandbox):
         - Git 命令仍然可以走标准 HTTPS 认证流程；
         - 后端可以统一通过 `_execution_env()` 注入认证环境变量。
         """
-        ps1 = self.secrets_dir / "gitee_askpass.ps1"
-        cmd = self.secrets_dir / "gitee_askpass.cmd"
-        sh = self.secrets_dir / "gitee_askpass.sh"
+        ps1 = self.secrets_dir / "git_askpass.ps1"
+        cmd = self.secrets_dir / "git_askpass.cmd"
+        sh = self.secrets_dir / "git_askpass.sh"
         if not IS_WINDOWS:
             if not sh.exists():
                 sh.write_text(
@@ -673,8 +671,8 @@ class LocalShellBackend(BaseSandbox):
                         [
                             "#!/usr/bin/env bash",
                             "case \"$1\" in",
-                            "  *sername*|*Username*) printf '%s' \"$GITEE_ASKPASS_USERNAME\" ;;",
-                            "  *) printf '%s' \"$GITEE_ASKPASS_TOKEN\" ;;",
+                            "  *sername*|*Username*) printf '%s' \"$SCM_ASKPASS_USERNAME\" ;;",
+                            "  *) printf '%s' \"$SCM_ASKPASS_TOKEN\" ;;",
                             "esac",
                         ]
                     )
@@ -689,9 +687,9 @@ class LocalShellBackend(BaseSandbox):
                     [
                         "param([string]$Prompt)",
                         "if ($Prompt -match '(?i)username') {",
-                        "  [Console]::Out.Write($env:GITEE_ASKPASS_USERNAME)",
+                        "  [Console]::Out.Write($env:SCM_ASKPASS_USERNAME)",
                         "} else {",
-                        "  [Console]::Out.Write($env:GITEE_ASKPASS_TOKEN)",
+                        "  [Console]::Out.Write($env:SCM_ASKPASS_TOKEN)",
                         "}",
                     ]
                 )
@@ -949,12 +947,12 @@ class LocalShellBackend(BaseSandbox):
         return f'"{path}"'
 
     def _execution_env(self) -> dict[str, str]:
-        """构造子进程环境变量：注入 venv、Git 安全配置、Gitee 认证信息。
+        """构造子进程环境变量：注入 venv、Git 安全配置和平台认证信息。
 
         命令执行环境是企业项目里很容易失控的地方，所以这里统一集中处理：
         - 如果共享 Python venv 存在，优先放到 PATH 前面；
         - 禁用 Git 交互式弹窗，后台任务失败也要以文本形式返回；
-        - 如果配置了 Gitee token，通过 `GIT_ASKPASS` 注入，不拼进命令字符串。
+        - 如果配置了 GitHub/Gitee token，通过 `GIT_ASKPASS` 注入，不拼进命令字符串。
         """
         env = os.environ.copy()
         scripts = self._venv_bin_dir()
@@ -964,11 +962,16 @@ class LocalShellBackend(BaseSandbox):
         # 禁止 Git 交互式弹窗，出错直接返回
         env["GIT_TERMINAL_PROMPT"] = "0"
         env["GCM_INTERACTIVE"] = "Never"
-        gitee_token = get_env("GITEE_TOKEN").strip() or get_env("SCM_GITEE_TOKEN").strip()
-        if gitee_token:
+        token = ""
+        if self.provider in {"github", "gitee"}:
+            try:
+                token = get_provider_token(self.provider)
+            except RuntimeError:
+                token = ""
+        if token:
             env["GIT_ASKPASS"] = str(self._git_askpass_path())
-            env["GITEE_ASKPASS_USERNAME"] = "oauth2"
-            env["GITEE_ASKPASS_TOKEN"] = gitee_token
+            env["SCM_ASKPASS_USERNAME"] = "oauth2"
+            env["SCM_ASKPASS_TOKEN"] = token
         return env
 
 

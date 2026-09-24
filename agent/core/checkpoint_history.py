@@ -8,6 +8,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from agent.core.graph import get_checkpointer
+from agent.core.settings import PERSISTENCE_BACKEND
 
 logger = logging.getLogger("agent.checkpoint_history")
 
@@ -48,6 +49,9 @@ def _delta_messages_from_checkpoint(thread_id: str) -> list[Any]:
     后续会按 role/content/message_id 去重。
     """
 
+    if PERSISTENCE_BACKEND == "postgres":
+        return _postgres_delta_messages(thread_id)
+
     checkpointer = get_checkpointer()
     config = {"configurable": {"thread_id": thread_id}}
     try:
@@ -78,6 +82,52 @@ def _delta_messages_from_checkpoint(thread_id: str) -> list[Any]:
                 messages.append(value)
 
     return messages
+
+
+def _postgres_delta_messages(thread_id: str) -> list[Any]:
+    """用有界 SQL 读取 PostgreSQL messages writes，避免调用阻塞的 delta API。
+
+    `langgraph-checkpoint-postgres` 的通用 delta history 方法在部分旧链路上会长时间
+    等待。PostgresSaver 仍负责写入和 Agent 恢复；Dashboard 历史只需要读取
+    `checkpoint_writes` 中的 messages 增量，因此直接按 checkpoint 时间和 write idx
+    读取并用同一个 serializer 解码即可。查询带 statement timeout，不能拖住 API。
+    """
+
+    checkpointer = get_checkpointer()
+    connection = getattr(checkpointer, "conn", None)
+    if connection is None:
+        logger.warning("PostgreSQL checkpointer 没有可用连接：thread_id=%s", thread_id)
+        return []
+
+    try:
+        with connection.transaction():
+            connection.execute("SET LOCAL statement_timeout = '5000ms'")
+            rows = connection.execute(
+                """
+                SELECT w.type, w.blob, w.idx, w.task_id, c.checkpoint->>'ts' AS checkpoint_ts
+                FROM checkpoint_writes AS w
+                JOIN checkpoints AS c
+                  ON c.thread_id = w.thread_id
+                 AND c.checkpoint_ns = w.checkpoint_ns
+                 AND c.checkpoint_id = w.checkpoint_id
+                WHERE w.thread_id = %s
+                  AND w.channel = 'messages'
+                ORDER BY c.checkpoint->>'ts' ASC, w.idx ASC, w.task_id ASC
+                """,
+                (thread_id,),
+            ).fetchall()
+
+        messages: list[Any] = []
+        for row in rows:
+            value = checkpointer.serde.loads_typed((row["type"], bytes(row["blob"])))
+            if isinstance(value, list):
+                messages.extend(value)
+            elif value is not None:
+                messages.append(value)
+        return messages
+    except Exception:
+        logger.exception("读取 PostgreSQL checkpoint messages writes 失败：thread_id=%s", thread_id)
+        return []
 
 
 def _extract_user_prompt(text: str) -> str:

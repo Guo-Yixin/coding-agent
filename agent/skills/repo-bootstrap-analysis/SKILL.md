@@ -1,21 +1,21 @@
 ---
 name: repo-bootstrap-analysis
-description: 面向 Gitee 仓库的首次项目分析流程。第一次处理某个仓库、生成技术方案、分析项目结构、确认启动/测试方式或接手陌生项目时使用。
+description: 面向 GitHub/Gitee 仓库的首次项目分析流程。第一次处理某个仓库、生成技术方案、分析项目结构、确认启动/测试方式或接手陌生项目时使用。
 ---
 
-# Gitee 仓库首次分析
+# GitHub/Gitee 仓库首次分析
 
 你正在分析一个 Gitee 仓库。目标不是立刻写代码，而是先建立对项目的可靠认知，避免在不了解目录结构、启动方式、测试方式和业务边界的情况下贸然修改文件。
 
 所有面向用户的自然语言输出必须使用中文。代码、路径、命令、配置字段、分支名、文件名和编程标识符可以保持英文。
 
-## 1. 准备 Gitee 仓库
+## 1. 准备 GitHub/Gitee 仓库
 
-当前项目只支持 Gitee，不考虑 GitHub、GitLab 或其他代码托管平台。
+当前阶段支持 GitHub.com 和 Gitee Cloud，不考虑 GitHub Enterprise、私有 Gitee 部署、GitLab 或其他代码托管平台。
 
-如果用户提供了 Gitee 仓库地址：
+如果用户提供了 GitHub/Gitee 仓库地址：
 
-1. 先确认地址形如 `https://gitee.com/<owner>/<repo>` 或 `https://gitee.com/<owner>/<repo>.git`。
+1. 先确认地址形如 `https://github.com/<owner>/<repo>`、`https://gitee.com/<owner>/<repo>`，或 `owner/repo` 简写。
 2. 使用 `ls("/projects")` 查看本地是否已有同名目录。
 3. 如果本地不存在，使用 `execute` 执行普通 Git 命令克隆仓库，例如：
    `git clone https://gitee.com/<owner>/<repo>.git`
@@ -23,9 +23,9 @@ description: 面向 Gitee 仓库的首次项目分析流程。第一次处理某
    `git -C <repo> status`
    `git -C <repo> fetch --all`
 
-Gitee Token 由 `LocalShellBackend` 通过 Git askpass 自动注入。不要把 token 写进命令、文件、commit message、PR 描述或用户回复。
+GitHub/Gitee Token 由 `LocalShellBackend` 通过 Git askpass 自动注入。不要把 token 写进命令、文件、commit message、PR 描述或用户回复。
 
-仓库源码应该位于工作区的 `/projects/<repo>` 目录下。不要把以下目录当作业务源码：
+仓库源码应该位于工作区的 `/projects/` 下，由运行时按平台和仓库名稳定映射。不要把以下目录当作业务源码：
 
 - `/runtimes`：运行环境目录，例如 Python 虚拟环境或 Node 运行时。
 - `/skills`：DeepAgents skill 目录，只读。
@@ -58,7 +58,7 @@ Gitee Token 由 `LocalShellBackend` 通过 Git askpass 自动注入。不要把 
 
 完成首次分析后，整理一份简洁但有证据的中文结论，至少包括：
 
-1. **仓库定位**：Gitee 地址、本地目录、当前分支或状态。
+1. **仓库定位**：GitHub/Gitee 地址、本地目录、当前分支或状态。
 2. **技术栈**：后端、前端、数据库、测试框架、主要依赖。
 3. **目录结构**：关键目录和文件分别负责什么。
 4. **启动方式**：根据文件推断出的启动命令；不确定时明确说明“不确定”。
@@ -106,4 +106,4 @@ Gitee Token 由 `LocalShellBackend` 通过 Git askpass 自动注入。不要把 
 - `web_search`：搜索外部资料。
 - `fetch_url`：读取用户指定的公开 HTTP/HTTPS 页面或官方文档页面。
 
-外部资料只能作为辅助。最终判断必须回到当前 Gitee 仓库中的真实文件。
+外部资料只能作为辅助。最终判断必须回到当前 GitHub/Gitee 仓库中的真实文件。

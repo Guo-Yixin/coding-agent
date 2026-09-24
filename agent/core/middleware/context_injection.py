@@ -27,7 +27,8 @@ from langgraph.config import get_config
 
 from agent.core.graph import get_langgraph_store
 from agent.core.repo_memory import build_repo_memory_namespace, repo_memory_store_key, repo_memory_virtual_path
-from agent.tools.gitee_api import mask_token, parse_gitee_repo_url
+from agent.tools.gitee_api import mask_token
+from agent.repository import parse_repo_url
 
 logger = logging.getLogger("agent.run.middleware.context_injection")
 
@@ -44,7 +45,7 @@ def _repo_url_and_content_from_config() -> tuple[str | None, str | None]:
     必须通过 langgraph.config.get_config() 才能访问 RunnableConfig。
 
     返回值：
-    - repo_url：当前任务绑定的 Gitee 仓库地址。
+    - repo_url：当前任务绑定的 GitHub/Gitee 仓库地址。
     - memory_content：runtime.py 预先读取并放入 configurable 的仓库记忆内容。
 
     为什么优先读取 `_repo_memory_content`：
@@ -67,6 +68,7 @@ def _build_repo_context_notice(
     owner: str,
     repo: str,
     repo_url: str,
+    provider: str,
     memory_content: str | None,
 ) -> str:
     """生成仓库上下文的 SystemMessage 文本。
@@ -78,7 +80,7 @@ def _build_repo_context_notice(
     这条 SystemMessage 只用于“提示模型当前仓库背景”，不作为权限边界。
     真正的读写边界仍然由 LocalShellBackend、工具参数清洗中间件和权限校验代码控制。
     """
-    memory_path = repo_memory_virtual_path(owner, repo)
+    memory_path = repo_memory_virtual_path(owner, repo, provider if provider != "gitee" else None)
     lines = [
         "【当前仓库上下文】",
         f"仓库地址：{repo_url}",
@@ -127,20 +129,20 @@ class ContextInjectionMiddleware(AgentMiddleware):
         #    这里不直接使用 runtime，是因为当前 LangGraph Runtime 不暴露 config 字段。
         repo_url, memory_content = _repo_url_and_content_from_config()
         if not repo_url:
-            # 没有 repo_url 说明本轮任务没有绑定 Gitee 仓库。
+            # 没有 repo_url 说明本轮任务没有绑定 GitHub/Gitee 仓库。
             # 这种情况下不注入仓库上下文，避免给问答类或系统类任务制造错误背景。
             return None
 
-        # 2. 解析 Gitee 仓库地址，得到 owner/repo。
-        #    parse_gitee_repo_url 只接受 Gitee 地址，符合当前项目“只支持 Gitee”的规则。
-        repo = parse_gitee_repo_url(repo_url)
+        # 2. 解析仓库地址，得到 provider/owner/repo。
+        repo = parse_repo_url(repo_url)
+        memory_provider = repo.provider if repo.provider != "gitee" else None
         need_fallback_read = memory_content is None
         if need_fallback_read:
             # 3. 兜底：缓存的记忆内容不存在时，直接从 Store 读取。
             #    正常路径中 runtime.py 会提前初始化并缓存记忆；这里保留兜底逻辑，
             #    是为了避免未来新增运行入口时忘记把 `_repo_memory_content` 放入 config。
-            namespace = build_repo_memory_namespace(repo.owner, repo.repo)
-            item = get_langgraph_store().get(namespace, repo_memory_store_key(repo.owner, repo.repo))
+            namespace = build_repo_memory_namespace(repo.owner, repo.repo, memory_provider)
+            item = get_langgraph_store().get(namespace, repo_memory_store_key(repo.owner, repo.repo, memory_provider))
             memory_content = str(item.value.get("content") or "").strip() if item is not None else None
 
         if memory_content:
@@ -159,6 +161,7 @@ class ContextInjectionMiddleware(AgentMiddleware):
             owner=repo.owner,
             repo=repo.repo,
             repo_url=repo.clone_url,
+            provider=repo.provider,
             memory_content=memory_content,
         )
         # 5. 把仓库上下文插入消息列表最前面。

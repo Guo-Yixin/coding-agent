@@ -27,7 +27,8 @@ from langgraph.config import get_config
 
 from agent.core.graph import get_langgraph_store
 from agent.core.repo_memory_update import RepoMemoryUpdate, update_repo_memory_from_text
-from agent.tools.gitee_api import mask_token, parse_gitee_repo_url
+from agent.tools.gitee_api import mask_token
+from agent.repository import parse_repo_url
 
 logger = logging.getLogger("agent.run.middleware.memory_update")
 
@@ -145,7 +146,7 @@ class MemoryUpdateMiddleware(AgentMiddleware):
 
         # 4. 解析 Gitee 仓库地址，并委托 repo_memory_update.py 执行真正的记忆更新。
         #    parse_gitee_repo_url 会保证这里只处理 Gitee 仓库，符合当前项目范围。
-        repo = parse_gitee_repo_url(repo_url)
+        repo = parse_repo_url(repo_url)
         update_repo_memory_from_text(
             store=get_langgraph_store(),
             repo=repo,

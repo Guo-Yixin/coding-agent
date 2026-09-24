@@ -32,4 +32,6 @@ def health() -> dict[str, Any]:
         "deepseek_base_url": get_env("DEEPSEEK_BASE_URL"),
         "main_model": get_env("MAIN_MODEL", "deepseek-v4-pro"),
         "has_gitee_token": bool(get_env("GITEE_TOKEN")),
+        "has_github_token": bool(get_env("GITHUB_TOKEN")),
+        "default_repo_provider": get_env("DEFAULT_REPO_PROVIDER", "github"),
     }

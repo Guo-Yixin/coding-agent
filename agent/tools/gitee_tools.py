@@ -14,12 +14,16 @@ from langchain_core.tools import tool
 from agent.core.events import record_event
 from agent.core.graph import get_store
 from agent.tools.gitee_api import (
+    create_issue,
     create_pull_request,
+    get_issue,
     get_pull_request,
     list_pull_request_comments,
     list_pull_request_commits,
     list_pull_request_files,
     post_pr_comment,
+    list_issue_comments,
+    post_issue_comment,
 )
 from agent.tools.runtime_context import get_runtime_thread_id, runtime_is_read_only_task
 
@@ -31,7 +35,7 @@ def open_gitee_pull_request(
     owner: str,
     repo: str,
     head: str,
-    base: str = "master",
+    base: str = "",
     title: str = "CODING generated changes",
     body: str = "由 CODING 自动生成。",
 ) -> dict[str, Any]:
@@ -92,6 +96,34 @@ def open_gitee_pull_request(
     else:
         logger.info("Gitee PR 创建完成：thread_id=%s pr_url=%s", thread_id, pr_url)
     return {"ok": True, "pr_url": pr_url, "raw": pr}
+
+
+@tool
+def create_gitee_issue(owner: str, repo: str, title: str, body: str = "", labels: list[str] | None = None) -> dict[str, Any]:
+    """创建 Gitee Issue。"""
+
+    if runtime_is_read_only_task():
+        return {"ok": False, "error": "当前任务是只读任务，不能创建 Issue。请先确认实施。"}
+    data = create_issue(owner=owner, repo=repo, title=title, body=body, labels=labels)
+    return {"ok": True, "issue_url": data.get("html_url") or data.get("url") or "", "raw": data}
+
+
+@tool
+def publish_gitee_issue_comment(owner: str, repo: str, number: int, body: str) -> dict[str, Any]:
+    """向 Gitee Issue 或 PR 发布普通评论。"""
+
+    if runtime_is_read_only_task():
+        return {"ok": False, "error": "当前任务是只读任务，不能发布评论。请先确认实施。"}
+    return {"ok": True, "raw": post_issue_comment(owner=owner, repo=repo, number=number, body=body)}
+
+
+@tool
+def get_gitee_issue_context(owner: str, repo: str, number: int) -> dict[str, Any]:
+    """读取 Gitee Issue 和评论上下文。"""
+
+    issue = get_issue(owner=owner, repo=repo, number=number)
+    comments = list_issue_comments(owner=owner, repo=repo, number=number)
+    return {"issue": issue, "comments": comments, "summary": {"title": issue.get("title"), "state": issue.get("state")}}
 
 
 @tool
