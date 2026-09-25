@@ -539,6 +539,10 @@ def dashboard_run_activity_events(thread_id: str, run_id: str) -> dict[str, Any]
         safe_detail: dict[str, Any] = {}
         if event.get("kind") == "todo" and isinstance(detail.get("todos"), list):
             safe_detail["todos"] = detail["todos"]
+        elif event.get("kind") == "todo_guard":
+            for field in ("total", "completed", "in_progress", "pending", "complete"):
+                if isinstance(detail.get(field), (int, bool)):
+                    safe_detail[field] = detail[field]
         elif event.get("title") == "正在生成内容" and isinstance(detail.get("text"), str):
             progress_text = detail["text"].strip()
             if progress_text and progress_text not in final_texts:

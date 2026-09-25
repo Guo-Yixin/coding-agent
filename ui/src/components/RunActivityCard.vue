@@ -51,8 +51,12 @@ const durationLabel = computed(() => {
   if (minutes > 0) return `用时 ${minutes} 分 ${seconds} 秒`
   return `用时 ${seconds} 秒`
 })
+const hasIncompleteTodos = computed(() => (
+  latestTodos.value.length > 0
+  && latestTodos.value.some((todo) => todo.status !== 'completed')
+))
 const statusLabel = computed(() => ({
-  running: '运行中', queued: '排队中', completed: '已完成',
+  running: '运行中', queued: '排队中', completed: hasIncompleteTodos.value ? '运行已结束 · 清单未完成' : '已完成',
   failed: '运行失败', awaiting_approval: '等待人工确认',
 }[props.activity.status] || '执行记录'))
 const todoSummary = computed(() => {
@@ -76,7 +80,7 @@ function toggle() {
 }
 
 function eventStatus(status) {
-  return ({ completed: '完成', in_progress: '进行中', pending: '等待中', error: '失败' })[status] || ''
+  return ({ completed: '完成', in_progress: '进行中', pending: '等待中', error: '失败', warning: '需核对' })[status] || ''
 }
 
 onMounted(() => {
@@ -91,7 +95,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="run-activity" :class="`run-activity-${activity.status}`">
+  <section class="run-activity" :class="[`run-activity-${activity.status}`, { 'run-activity-incomplete': activity.status === 'completed' && hasIncompleteTodos }]">
     <button
       type="button"
       class="run-activity-toggle"
