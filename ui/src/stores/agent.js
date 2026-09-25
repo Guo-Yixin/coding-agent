@@ -110,6 +110,8 @@ export const useAgentStore = defineStore('agent', {
     error: '',
     controller: null,
     activeRunThreadId: null,
+    runActivityEvents: {},
+    runActivityLoading: {},
   }),
   getters: {
     currentThreadId: (state) => state.currentThread?.id || null,
@@ -162,6 +164,8 @@ export const useAgentStore = defineStore('agent', {
       this.selectedRepo = thread.repo || thread.repoFullName || DEFAULT_REPO
       this.selectedProvider = thread.provider || this.selectedProvider || 'github'
       this.messages = normalizeThreadMessages(thread.messages)
+      this.runActivityEvents = {}
+      this.runActivityLoading = {}
     },
     async createThread() {
       if (this.streaming) return
@@ -190,6 +194,21 @@ export const useAgentStore = defineStore('agent', {
         this.currentThread = { ...this.currentThread, title: updated.title }
       }
       return updated
+    },
+    async loadRunActivity(runId) {
+      const threadId = this.currentThread?.id
+      if (!threadId || !runId || this.runActivityEvents[runId] || this.runActivityLoading[runId]) return
+      this.runActivityLoading[runId] = true
+      try {
+        const result = await dashboardApi.getRunActivity(threadId, runId)
+        if (this.currentThread?.id === threadId) {
+          this.runActivityEvents[runId] = Array.isArray(result.events) ? result.events : []
+        }
+      } catch (error) {
+        this.error = error.message || '读取运行过程失败'
+      } finally {
+        this.runActivityLoading[runId] = false
+      }
     },
     stopStream() {
       this.controller?.abort()

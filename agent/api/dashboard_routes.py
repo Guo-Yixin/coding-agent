@@ -82,6 +82,19 @@ def _normalize_dashboard_repo_url(
         ) from exc
 
 
+def _normalize_dashboard_model_id(model_id: str | None) -> str:
+    """只允许使用服务端当前暴露给前端的模型，避免接受任意模型名。"""
+
+    configured_model = get_env("MAIN_MODEL", "deepseek-v4-pro").strip()
+    selected_model = (model_id or configured_model).strip()
+    if selected_model != configured_model:
+        raise HTTPException(
+            status_code=422,
+            detail=f"所选模型未启用：{selected_model}。当前可用模型为 {configured_model}。",
+        )
+    return selected_model
+
+
 class DashboardThreadMessageRequest(BaseModel):
     """前端发送一轮用户输入时的请求体。
 
@@ -262,27 +275,59 @@ def _message_payload(thread: dict[str, Any]) -> list[dict[str, Any]]:
                 "chunks": chunks,
             }
         )
-    if messages:
-        return messages
-
     # 旧 SQLite 走原有兼容回退；PostgreSQL 走 checkpoint_history 的有界 SQL reader，
     # 不调用会卡住的通用 delta history API。
-    for index, message in enumerate(visible_checkpoint_messages(thread_id)):
-        content = str(message.get("content") or "").strip()
-        if not content:
-            continue
-        content = _user_visible_text(content)
-        if not content:
-            continue
-        author = message.get("author") if message.get("author") in {"user", "agent", "system", "tool"} else "agent"
-        messages.append(
-            {
-                "id": message.get("message_id") or f"{thread_id}-history-fallback-{index}",
-                "author": author,
-                "timestamp": message.get("created_at") or created_at,
-                "chunks": [{"kind": "text", "text": content}],
-            }
-        )
+    if not messages:
+        for index, message in enumerate(visible_checkpoint_messages(thread_id)):
+            content = str(message.get("content") or "").strip()
+            if not content:
+                continue
+            content = _user_visible_text(content)
+            if not content:
+                continue
+            author = message.get("author") if message.get("author") in {"user", "agent", "system", "tool"} else "agent"
+            messages.append(
+                {
+                    "id": message.get("message_id") or f"{thread_id}-history-fallback-{index}",
+                    "author": author,
+                    "timestamp": message.get("created_at") or created_at,
+                    "chunks": [{"kind": "text", "text": content}],
+                }
+            )
+
+    store = get_store()
+    list_runs = getattr(store, "list_runs", None)
+    if list_runs:
+        runs = list_runs(thread_id, limit=50)
+        for run in reversed(runs):
+            started_at = run.get("started_at") or created_at
+            if isinstance(started_at, datetime):
+                started_at = started_at.isoformat()
+            finished_at = run.get("finished_at")
+            if isinstance(finished_at, datetime):
+                finished_at = finished_at.isoformat()
+            messages.append({
+                "id": f"{thread_id}-run-activity-{run['run_id']}",
+                "author": "agent",
+                "timestamp": started_at,
+                "chunks": [{
+                    "kind": "run_activity",
+                    "activity": {
+                        "run_id": run["run_id"],
+                        "status": run.get("status") or "unknown",
+                        "started_at": started_at,
+                        "finished_at": finished_at,
+                        "error": run.get("error"),
+                    },
+                }],
+            })
+
+    messages.sort(key=lambda message: (
+        _timestamp_ms(message.get("timestamp")),
+        1 if any(chunk.get("kind") == "run_activity" for chunk in message.get("chunks", []))
+        else 0 if message.get("author") == "user" else 2,
+        message["id"],
+    ))
     return messages
 
 
@@ -294,8 +339,8 @@ def _thread_payload(thread: dict[str, Any]) -> dict[str, Any]:
     - 打开某个历史会话；
     - 页面刷新后的稳定历史恢复。
 
-    其中 `messages` 只来自 `_message_payload()`，也就是 checkpoint 历史；
-    不会从 Store 的 run_events 或其它兜底表里拼接聊天正文。
+    聊天正文来自 thread_messages/checkpoint；每次运行的过程卡则由 runs 元数据构成，
+    展开时再按 run_id 单独读取 run_events。
     """
 
     repo_full_name = _repo_full_name(thread)
@@ -458,8 +503,61 @@ def dashboard_thread_detail(thread_id: str) -> dict[str, Any]:
     return _thread_payload(task)
 
 
+@dashboard_router.get("/threads/{thread_id}/runs/{run_id}/events")
+def dashboard_run_activity_events(thread_id: str, run_id: str) -> dict[str, Any]:
+    """按 run_id 读取可展示的运行过程；拒绝读取其它会话的运行记录。"""
+
+    if get_task(thread_id) is None:
+        raise HTTPException(status_code=404, detail="thread not found")
+    store = get_store()
+    list_runs = getattr(store, "list_runs", None)
+    list_events = getattr(store, "list_run_events_for_run", None)
+    if not list_runs:
+        return {"run_id": run_id, "events": []}
+    run = next((item for item in list_runs(thread_id, limit=100) if item.get("run_id") == run_id), None)
+    if run is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    if not list_events:
+        return {"run_id": run_id, "events": []}
+
+    final_texts = {
+        str(message.get("content") or "").strip()
+        for message in store.list_thread_messages(thread_id)
+        if message.get("run_id") == run_id and message.get("author") == "agent"
+    }
+    visible_events: list[dict[str, Any]] = []
+    for event in list_events(thread_id, run_id):
+        detail: dict[str, Any] = {}
+        raw_detail = event.get("detail")
+        if raw_detail:
+            try:
+                decoded = json.loads(raw_detail) if isinstance(raw_detail, str) else raw_detail
+                if isinstance(decoded, dict):
+                    detail = decoded
+            except (TypeError, ValueError):
+                detail = {}
+        safe_detail: dict[str, Any] = {}
+        if event.get("kind") == "todo" and isinstance(detail.get("todos"), list):
+            safe_detail["todos"] = detail["todos"]
+        elif event.get("title") == "正在生成内容" and isinstance(detail.get("text"), str):
+            progress_text = detail["text"].strip()
+            if progress_text and progress_text not in final_texts:
+                safe_detail["text"] = progress_text[:12000]
+        visible_events.append({
+            "id": event.get("id"),
+            "kind": event.get("kind"),
+            "title": event.get("title"),
+            "status": event.get("status"),
+            "created_at": event.get("created_at").isoformat()
+            if isinstance(event.get("created_at"), datetime) else event.get("created_at"),
+            "detail": safe_detail,
+        })
+    return {"run_id": run_id, "events": visible_events}
+
+
 def _post_streaming_response(
     *, thread_id: str, repo_url: str, content: str,
+    model_id: str | None = None,
     interaction_action: str | None = None, plan_id: str | None = None,
     intervention_id: str | None = None,
 ) -> StreamingResponse:
@@ -557,6 +655,7 @@ def _post_streaming_response(
                     interaction_action=interaction_action,
                     plan_id=plan_id,
                     intervention_id=intervention_id,
+                    model_id=model_id,
                 )
 
                 # Agent 正常结束后，重新读取最新 thread 摘要，里面可能已经包含分支、PR、状态等新信息。
@@ -677,9 +776,11 @@ async def dashboard_stream_new_message(body: DashboardThreadMessageRequest) -> S
     if body.interaction_action is not None:
         raise HTTPException(status_code=422, detail="方案与人工介入操作必须来自已有会话。")
     repo_url = _normalize_dashboard_repo_url(body.repo, provider=body.provider)
+    model_id = _normalize_dashboard_model_id(body.model_id)
     thread_id = str(uuid.uuid4())
     return _post_streaming_response(
         thread_id=thread_id, repo_url=repo_url, content=body.content,
+        model_id=model_id,
         interaction_action=body.interaction_action, plan_id=body.plan_id,
         intervention_id=body.intervention_id,
     )
@@ -696,6 +797,7 @@ async def dashboard_stream_existing_message(
     """
 
     task = get_task(thread_id)
+    model_id = _normalize_dashboard_model_id(body.model_id)
     repo_url = _normalize_dashboard_repo_url(
         body.repo,
         provider=body.provider,
@@ -737,6 +839,7 @@ async def dashboard_stream_existing_message(
         raise HTTPException(status_code=422, detail="不支持的交互操作。")
     return _post_streaming_response(
         thread_id=thread_id, repo_url=repo_url, content=body.content,
+        model_id=model_id,
         interaction_action=body.interaction_action, plan_id=body.plan_id,
         intervention_id=body.intervention_id,
     )

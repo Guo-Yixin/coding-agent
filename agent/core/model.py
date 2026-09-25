@@ -11,7 +11,7 @@ DEEPSEEK_V4_MAX_TOKENS = 25600
 INTENT_MODEL_MAX_TOKENS = 200
 
 
-def make_main_model() -> BaseChatModel:
+def make_main_model(model_id: str | None = None) -> BaseChatModel:
     """创建编码智能体使用的 DeepSeek 模型。
 
     本地部署版只保留一个主模型，默认对齐 open-swe 使用的 `deepseek-v4-pro`。
@@ -27,8 +27,13 @@ def make_main_model() -> BaseChatModel:
     `ChatOpenAI` 的稳定行为，又便于后续把模型供应商抽象成配置。
     """
 
+    configured_model = get_env("MAIN_MODEL", "deepseek-v4-pro").strip()
+    selected_model = (model_id or configured_model).strip()
+    if selected_model != configured_model:
+        raise ValueError(f"请求模型 {selected_model!r} 未在服务端 MAIN_MODEL 配置中启用")
+
     return init_chat_model(
-        model=get_env("MAIN_MODEL", "deepseek-v4-pro"),
+        model=selected_model,
         model_provider="openai",
         temperature=1.1,
         api_key=require_env("DEEPSEEK_API_KEY"),

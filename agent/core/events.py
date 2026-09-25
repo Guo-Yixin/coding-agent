@@ -29,6 +29,7 @@ def record_event(
     kind: str = "think",
     status: str = "in_progress",
     detail: str | None = None,
+    run_id: str | None = None,
 ) -> None:
     """写入一个可展示在前端的运行步骤。
 
@@ -36,20 +37,27 @@ def record_event(
     """
 
     try:
-        _get_event_store().add_run_event(
-            event_id=f"{thread_id}:{key}",
+        store = _get_event_store()
+        if run_id is None:
+            latest_run = getattr(store, "get_latest_run", lambda _thread_id: None)(thread_id)
+            run_id = str(latest_run["run_id"]) if latest_run and latest_run.get("run_id") else None
+        event_id = f"{thread_id}:{run_id}:{key}" if run_id else f"{thread_id}:{key}"
+        store.add_run_event(
+            event_id=event_id,
             thread_id=thread_id,
             kind=kind,
             title=title,
             status=status,
             detail=detail,
+            run_id=run_id,
         )
-        append_audit = getattr(_get_event_store(), "append_audit_event", None)
+        append_audit = getattr(store, "append_audit_event", None)
         if append_audit is not None:
             append_audit(
                 event_id=str(uuid.uuid4()),
                 event_type="run_event",
                 thread_id=thread_id,
+                run_id=run_id,
                 payload={"key": key, "kind": kind, "title": title, "status": status},
             )
     except Exception:
