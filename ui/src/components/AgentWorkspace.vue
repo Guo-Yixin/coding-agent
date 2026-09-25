@@ -16,6 +16,19 @@ const titleDraft = ref('')
 const titleInput = ref(null)
 const titleSaving = ref(false)
 const titleError = ref('')
+const revisionPlan = ref(null)
+const pendingIntervention = computed(() => {
+  if (agent.currentThread && Object.hasOwn(agent.currentThread, 'pendingIntervention')) {
+    return agent.currentThread.pendingIntervention
+  }
+  for (const message of agent.messages) {
+    const active = (message.chunks || []).find((chunk) => (
+      chunk.kind === 'intervention' && ['pending', 'resuming'].includes(chunk.status)
+    ))
+    if (active) return active
+  }
+  return null
+})
 
 const derivedSessionTitle = computed(() => {
   const firstUserMessage = agent.messages.find((message) => message.author === 'user')
@@ -107,6 +120,7 @@ function onTitleKeydown(event) {
 
 function statusLabel(status, streaming) {
   if (streaming || status === 'running') return '正在运行'
+  if (status === 'awaiting_approval') return '等待你介入'
   if (status === 'error' || status === 'failed') return '运行失败'
   if (status === 'finished' || status === 'completed') return '已完成'
   return '等待任务'
@@ -129,6 +143,7 @@ watch(
 watch(
   () => agent.currentThreadId,
   async () => {
+    revisionPlan.value = null
     isTitleEditing.value = false
     titleError.value = ''
     await nextTick()
@@ -137,8 +152,29 @@ watch(
 )
 
 function submitMessage(content) {
+  if (pendingIntervention.value) return
   scrollToLatest()
+  if (revisionPlan.value) {
+    const plan = revisionPlan.value
+    revisionPlan.value = null
+    agent.submit(content, { interaction_action: 'revise_plan', plan_id: plan.plan_id })
+    return
+  }
   agent.submit(content)
+}
+
+function handlePlanAction({ action, proposal }) {
+  if (action === 'revise') {
+    revisionPlan.value = proposal
+    return
+  }
+  const decision = action === 'approve' ? 'approve_plan' : 'reject_plan'
+  const prompt = action === 'approve' ? '确认并实施该方案' : '拒绝实施该方案'
+  agent.submit(prompt, { interaction_action: decision, plan_id: proposal.plan_id })
+}
+
+function handleInterventionResponse({ intervention_id, response }) {
+  agent.submit(response, { interaction_action: 'resume_intervention', intervention_id })
 }
 
 onMounted(() => {
@@ -241,6 +277,9 @@ watch(sidebarCollapsed, (value) => {
           v-for="message in agent.messages"
           :key="message.id"
           :message="message"
+          :disabled="agent.streaming"
+          @plan-action="handlePlanAction"
+          @intervention-response="handleInterventionResponse"
         />
 
         <div v-if="agent.error" class="error-banner">{{ agent.error }}</div>
@@ -261,9 +300,13 @@ watch(sidebarCollapsed, (value) => {
         v-model:provider="agent.selectedProvider"
         :providers="agent.options?.providers || []"
         :disabled="agent.streaming"
+        :locked="!!pendingIntervention"
+        :locked-hint="pendingIntervention ? '此会话正在等待人工介入答复，请在上方确认卡片中提交答复后继续。' : ''"
         :model="agent.selectedModel"
         :effort="agent.selectedEffort"
+        :interaction-hint="revisionPlan ? `正在调整方案 V${revisionPlan.version || 1}` : ''"
         @send="submitMessage"
+        @cancel-interaction="revisionPlan = null"
         @stop="agent.stopStream"
       />
     </section>

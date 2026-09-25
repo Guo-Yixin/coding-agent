@@ -42,6 +42,7 @@ function normalizeThreadMessages(messages) {
       timestamp: message.timestamp || nowIso(),
       chunks: message.chunks,
       hidden: !!message.hidden,
+      metadata: message.metadata || {},
     }))
 }
 
@@ -88,6 +89,9 @@ function mergeThreadMeta(target, source) {
   target.pr = source.pr || target.pr
   target.provider = source.provider || target.provider
   target.updatedAt = source.updatedAt || target.updatedAt
+  if (Object.hasOwn(source, 'pendingIntervention')) {
+    target.pendingIntervention = source.pendingIntervention
+  }
 }
 
 export const useAgentStore = defineStore('agent', {
@@ -190,7 +194,7 @@ export const useAgentStore = defineStore('agent', {
     stopStream() {
       this.controller?.abort()
     },
-    async submit(content) {
+    async submit(content, interaction = null) {
       const prompt = content.trim()
       if (!prompt || this.streaming) return
 
@@ -203,7 +207,12 @@ export const useAgentStore = defineStore('agent', {
       try {
         const initialThreadId = this.currentThread?.id || null
         this.activeRunThreadId = initialThreadId || 'pending'
-        await this.consumeMessageStream(initialThreadId, prompt)
+        await this.consumeMessageStream(initialThreadId, prompt, interaction)
+        if (this.currentThread?.id) {
+          const refreshed = await dashboardApi.getThread(this.currentThread.id)
+          this.currentThread = refreshed
+          this.messages = normalizeThreadMessages(refreshed.messages)
+        }
       } catch (error) {
         if (error.name !== 'AbortError') {
           this.error = error.message || 'Agent 执行失败'
@@ -219,7 +228,7 @@ export const useAgentStore = defineStore('agent', {
         await this.refreshThreads()
       }
     },
-    async consumeMessageStream(threadId, prompt) {
+    async consumeMessageStream(threadId, prompt, interaction = null) {
       await streamAgentMessage(
         threadId,
         {
@@ -228,6 +237,9 @@ export const useAgentStore = defineStore('agent', {
           provider: this.selectedProvider || 'github',
           model_id: this.selectedModel || null,
           effort: this.selectedEffort || null,
+          interaction_action: interaction?.interaction_action || null,
+          plan_id: interaction?.plan_id || null,
+          intervention_id: interaction?.intervention_id || null,
         },
         {
           signal: this.controller.signal,

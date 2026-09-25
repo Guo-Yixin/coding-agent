@@ -18,6 +18,7 @@ import json
 import re
 from collections.abc import Callable, Iterable
 from typing import Any
+from langgraph.types import Command
 
 from langchain_core.messages import BaseMessage
 
@@ -723,6 +724,7 @@ def run_agent_with_event_stream(
     content: str,
     task_kind: str | None = None,
     event_sink: StreamEventSink | None = None,
+    resume_value: Any | None = None,
 ) -> dict[str, Any]:
     """使用官方 v3 event streaming 驱动 DeepAgent。
 
@@ -734,8 +736,9 @@ def run_agent_with_event_stream(
     - 前端仍只消费我们自己的 `/dashboard/api/.../stream`，不用绑定 LangGraph 本地服务。
     """
 
+    agent_input = Command(resume=resume_value) if resume_value is not None else {"messages": [{"role": "user", "content": content}]}
     stream = agent.stream_events(
-        {"messages": [{"role": "user", "content": content}]},
+        agent_input,
         version="v3",
         config={"configurable": {"thread_id": thread_id}},
     )
@@ -763,6 +766,12 @@ def run_agent_with_event_stream(
         raise
 
     output = stream.output
+    raw_interrupts = output.get("__interrupt__", []) if isinstance(output, dict) else []
+    interrupts = []
+    for item in raw_interrupts or []:
+        value = getattr(item, "value", item)
+        if isinstance(value, dict):
+            interrupts.append(value)
     record_event(thread_id, "model", "调用 deepseek-v4-pro", kind="other", status="completed")
     logger.info(
         "官方事件流消费完成：thread_id=%s tool_calls=%s subagents=%s",
@@ -770,4 +779,4 @@ def run_agent_with_event_stream(
         tool_call_index,
         subagent_index,
     )
-    return {"messages": _messages_from_output(output), "raw_output": output}
+    return {"messages": _messages_from_output(output), "raw_output": output, "interrupts": interrupts}

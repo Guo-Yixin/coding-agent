@@ -4,13 +4,17 @@ import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
 
 import TodoPlan from './TodoPlan.vue'
+import ProposalCard from './ProposalCard.vue'
+import HumanInterventionCard from './HumanInterventionCard.vue'
 
 const props = defineProps({
   message: {
     type: Object,
     required: true,
   },
+  disabled: { type: Boolean, default: false },
 })
+const emit = defineEmits(['plan-action', 'intervention-response'])
 
 const userExpanded = shallowRef(false)
 
@@ -55,6 +59,14 @@ function todoChunks() {
 
 function errorChunks() {
   return (props.message.chunks || []).filter((chunk) => chunk.kind === 'error')
+}
+
+function proposalChunks() {
+  return (props.message.chunks || []).filter((chunk) => chunk.kind === 'proposal')
+}
+
+function interventionChunks() {
+  return (props.message.chunks || []).filter((chunk) => chunk.kind === 'intervention')
 }
 
 function handleCodeClick(event) {
@@ -121,6 +133,22 @@ function handleCodeClick(event) {
           v-for="(chunk, index) in todoChunks()"
           :key="`todo-${index}`"
           :todos="chunk.todos || []"
+        />
+
+        <ProposalCard
+          v-for="proposal in proposalChunks()"
+          :key="`proposal-${proposal.plan_id}`"
+          :proposal="proposal"
+          :disabled="disabled"
+          @action="(action) => emit('plan-action', { action, proposal })"
+        />
+
+        <HumanInterventionCard
+          v-for="intervention in interventionChunks()"
+          :key="`intervention-${intervention.intervention_id}`"
+          :intervention="intervention"
+          :disabled="disabled"
+          @respond="emit('intervention-response', $event)"
         />
 
         <div

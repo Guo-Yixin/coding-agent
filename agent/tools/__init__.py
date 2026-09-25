@@ -24,6 +24,7 @@ from .gitee_tools import (
     publish_gitee_issue_comment,
     publish_gitee_pr_comment,
 )
+from .human_intervention import request_human_intervention
 from .github_tools import (
     cancel_github_actions,
     create_github_issue,
@@ -72,4 +73,5 @@ __all__ = [
     "publish_gitee_pr_comment",
     "validate_review_finding_location",
     "web_search",
+    "request_human_intervention",
 ]

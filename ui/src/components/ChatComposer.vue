@@ -26,15 +26,27 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
+  locked: {
+    type: Boolean,
+    default: false,
+  },
+  lockedHint: {
+    type: String,
+    default: '',
+  },
+  interactionHint: {
+    type: String,
+    default: '',
+  },
 })
 
-const emit = defineEmits(['send', 'stop', 'update:repo', 'update:provider'])
+const emit = defineEmits(['send', 'stop', 'cancel-interaction', 'update:repo', 'update:provider'])
 const draft = shallowRef('')
 const inputRef = shallowRef(null)
 
 const modelLabel = computed(() => props.model || 'deepseek-v4-pro')
 const effortLabel = computed(() => props.effort || 'default')
-const canSend = computed(() => !props.disabled && Boolean(draft.value.trim()))
+const canSend = computed(() => !props.disabled && !props.locked && Boolean(draft.value.trim()))
 
 const githubUrlPattern = /^https?:\/\/(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+(?:\.git)?\/?$/i
 const giteeUrlPattern = /^https?:\/\/(?:www\.)?gitee\.com\/[\w.-]+\/[\w.-]+(?:\.git)?\/?$/i
@@ -67,7 +79,7 @@ function resizeTextarea() {
 
 function send() {
   const content = draft.value.trim()
-  if (!content || props.disabled) return
+  if (!content || props.disabled || props.locked) return
   draft.value = ''
   nextTick(resizeTextarea)
   emit('send', content)
@@ -103,11 +115,16 @@ function changeProvider(event) {
 
 <template>
   <footer class="composer">
+    <div v-if="lockedHint" class="composer-locked-hint" role="status">{{ lockedHint }}</div>
+    <div v-if="interactionHint" class="composer-interaction-hint">
+      <span>{{ interactionHint }}</span>
+      <button type="button" aria-label="取消方案调整" @click="emit('cancel-interaction')">取消</button>
+    </div>
     <textarea
       ref="inputRef"
       v-model="draft"
-      :disabled="disabled"
-      placeholder="描述你希望 CODING 完成的任务…"
+      :disabled="disabled || locked"
+      :placeholder="locked ? '请先在人工介入卡片中答复…' : interactionHint ? '描述你希望如何调整方案…' : '描述你希望 CODING 完成的任务…'"
       aria-label="任务指令"
       @input="onDraftInput"
       @keydown="onKeydown"
@@ -123,7 +140,7 @@ function changeProvider(event) {
         <select
           class="repo-provider-select"
           :value="provider"
-          :disabled="disabled"
+          :disabled="disabled || locked"
           aria-label="仓库平台"
           @change="changeProvider"
         >
@@ -137,7 +154,7 @@ function changeProvider(event) {
           <span class="sr-only">{{ providerLabel }} 仓库地址</span>
           <input
             :value="repo"
-            :disabled="disabled"
+            :disabled="disabled || locked"
             :placeholder="repoPlaceholder"
             :aria-label="`${providerLabel} 仓库地址`"
             @input="emit('update:repo', $event.target.value)"

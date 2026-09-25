@@ -96,6 +96,9 @@ class DashboardThreadMessageRequest(BaseModel):
     provider: str | None = None
     model_id: str | None = None
     effort: str | None = None
+    interaction_action: str | None = None
+    plan_id: str | None = None
+    intervention_id: str | None = None
 
 
 class DashboardThreadTitleRequest(BaseModel):
@@ -132,7 +135,7 @@ def _status_for_frontend(status: str | None) -> str:
     if status in {"running", "pushed", "pr_created"}:
         return "running"
     if status in {"completed", "awaiting_approval"}:
-        return "finished"
+        return "awaiting_approval" if status == "awaiting_approval" else "finished"
     if status == "failed":
         return "error"
     return "idle"
@@ -228,12 +231,35 @@ def _message_payload(thread: dict[str, Any]) -> list[dict[str, Any]]:
         message_timestamp = message.get("created_at") or created_at
         if isinstance(message_timestamp, datetime):
             message_timestamp = message_timestamp.isoformat()
+        metadata = message.get("metadata") or {}
+        chunks = [{"kind": "text", "text": content}]
+        proposal = metadata.get("proposal") if isinstance(metadata, dict) else None
+        plan_id = (proposal or {}).get("plan_id") if isinstance(proposal, dict) else None
+        if plan_id:
+            plan_record = get_store().get_thread_plan(str(plan_id))
+            if plan_record:
+                proposal = {
+                    **proposal,
+                    "status": plan_record.get("status") or proposal.get("status"),
+                    "version": plan_record.get("version") or proposal.get("version"),
+                }
+            chunks = [{"kind": "proposal", **proposal}]
+        intervention_id = metadata.get("intervention_id") if isinstance(metadata, dict) else None
+        if intervention_id:
+            intervention = get_store().get_thread_intervention(str(intervention_id))
+            if intervention:
+                chunks = [{
+                    "kind": "intervention",
+                    "intervention_id": intervention_id,
+                    "status": intervention.get("status"),
+                    **(intervention.get("payload") or {}),
+                }]
         messages.append(
             {
                 "id": message.get("message_id") or f"{thread_id}-projected-{index}",
                 "author": author,
                 "timestamp": message_timestamp,
-                "chunks": [{"kind": "text", "text": content}],
+                "chunks": chunks,
             }
         )
     if messages:
@@ -273,6 +299,31 @@ def _thread_payload(thread: dict[str, Any]) -> dict[str, Any]:
     """
 
     repo_full_name = _repo_full_name(thread)
+    store = get_store()
+    thread_id = str(thread["thread_id"])
+    latest_plan = store.get_latest_thread_plan(thread_id)
+    get_active_intervention = getattr(store, "get_latest_active_thread_intervention", None)
+    intervention = get_active_intervention(thread_id) if get_active_intervention else None
+    pending_intervention = None
+    if intervention:
+        pending_intervention = {
+            "intervention_id": intervention["intervention_id"],
+            "status": intervention.get("status") or "pending",
+            **(intervention.get("payload") or {}),
+        }
+    messages = _message_payload(thread)
+    if pending_intervention and not any(
+        chunk.get("kind") == "intervention"
+        and chunk.get("intervention_id") == pending_intervention["intervention_id"]
+        for message in messages
+        for chunk in message.get("chunks", [])
+    ):
+        messages.append({
+            "id": f"{thread_id}-intervention-{pending_intervention['intervention_id']}",
+            "author": "agent",
+            "timestamp": _timestamp_ms(intervention.get("created_at")),
+            "chunks": [{"kind": "intervention", **pending_intervention}],
+        })
     return {
         "id": thread["thread_id"],
         "title": thread.get("title") or "CODING Task",
@@ -288,9 +339,10 @@ def _thread_payload(thread: dict[str, Any]) -> dict[str, Any]:
         "status": _status_for_frontend(thread.get("latest_run_status")),
         "createdAt": _timestamp_ms(thread.get("created_at")),
         "updatedAt": _timestamp_ms(thread.get("updated_at")),
-        "messages": _message_payload(thread),
+        "messages": messages,
+        "pendingIntervention": pending_intervention,
         "pr": _pr_payload(thread),
-        "latestPlan": None,
+        "latestPlan": latest_plan,
         "diffStats": None,
         "changedFiles": [],
     }
@@ -406,7 +458,11 @@ def dashboard_thread_detail(thread_id: str) -> dict[str, Any]:
     return _thread_payload(task)
 
 
-def _post_streaming_response(*, thread_id: str, repo_url: str, content: str) -> StreamingResponse:
+def _post_streaming_response(
+    *, thread_id: str, repo_url: str, content: str,
+    interaction_action: str | None = None, plan_id: str | None = None,
+    intervention_id: str | None = None,
+) -> StreamingResponse:
     """直接执行本轮 Agent，并把过程事件作为同一个 POST SSE 响应返回。
 
     旧版链路是“POST 创建后台任务 + GET 轮询 run_events”。这种两段式链路在多轮
@@ -498,6 +554,9 @@ def _post_streaming_response(*, thread_id: str, repo_url: str, content: str) -> 
                     thread_id=thread_id,
                     # 把 runtime/streaming_runtime 产生的实时事件送回本函数的 SSE 队列。
                     event_sink=event_sink,
+                    interaction_action=interaction_action,
+                    plan_id=plan_id,
+                    intervention_id=intervention_id,
                 )
 
                 # Agent 正常结束后，重新读取最新 thread 摘要，里面可能已经包含分支、PR、状态等新信息。
@@ -615,9 +674,15 @@ def _post_streaming_response(*, thread_id: str, repo_url: str, content: str) -> 
 async def dashboard_stream_new_message(body: DashboardThreadMessageRequest) -> StreamingResponse:
     """创建新会话并通过 POST SSE 返回实时运行过程。"""
 
+    if body.interaction_action is not None:
+        raise HTTPException(status_code=422, detail="方案与人工介入操作必须来自已有会话。")
     repo_url = _normalize_dashboard_repo_url(body.repo, provider=body.provider)
     thread_id = str(uuid.uuid4())
-    return _post_streaming_response(thread_id=thread_id, repo_url=repo_url, content=body.content)
+    return _post_streaming_response(
+        thread_id=thread_id, repo_url=repo_url, content=body.content,
+        interaction_action=body.interaction_action, plan_id=body.plan_id,
+        intervention_id=body.intervention_id,
+    )
 
 
 @dashboard_router.post("/threads/{thread_id}/stream-message")
@@ -645,7 +710,36 @@ async def dashboard_stream_existing_message(
     if existing_repo:
         # Keep the persisted canonical casing/URL stable for case-insensitive providers.
         repo_url = parse_repo_url(str(existing_repo)).clone_url
-    return _post_streaming_response(thread_id=thread_id, repo_url=repo_url, content=body.content)
+    store = get_store()
+    get_active_intervention = getattr(store, "get_latest_active_thread_intervention", None)
+    active_intervention = get_active_intervention(thread_id) if get_active_intervention else None
+    if active_intervention and (
+        body.interaction_action != "resume_intervention"
+        or body.intervention_id != active_intervention.get("intervention_id")
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="此会话正等待人工介入答复。请在会话中的‘需要你确认后继续’卡片提交答复，不能发送普通消息启动新一轮任务。",
+        )
+    if body.interaction_action in {"approve_plan", "reject_plan", "revise_plan"}:
+        plan = store.get_thread_plan(body.plan_id or "")
+        if not plan or plan.get("thread_id") != thread_id or plan.get("status") != "pending":
+            raise HTTPException(status_code=409, detail="方案已处理或已失效，请刷新会话后重试。")
+        if body.interaction_action == "revise_plan" and not body.content.strip():
+            raise HTTPException(status_code=422, detail="请先描述需要调整的内容。")
+    elif body.interaction_action == "resume_intervention":
+        intervention = store.get_thread_intervention(body.intervention_id or "")
+        if not intervention or intervention.get("thread_id") != thread_id or intervention.get("status") != "pending":
+            raise HTTPException(status_code=409, detail="人工介入已处理或已失效，请刷新会话后重试。")
+        if not body.content.strip():
+            raise HTTPException(status_code=422, detail="请填写人工介入答复。")
+    elif body.interaction_action is not None:
+        raise HTTPException(status_code=422, detail="不支持的交互操作。")
+    return _post_streaming_response(
+        thread_id=thread_id, repo_url=repo_url, content=body.content,
+        interaction_action=body.interaction_action, plan_id=body.plan_id,
+        intervention_id=body.intervention_id,
+    )
 
 
 @dashboard_router.delete("/threads/{thread_id}", status_code=204)
