@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 import json
-from pathlib import Path
 import uuid
 from collections.abc import Callable
 from typing import Any
@@ -29,8 +28,9 @@ from agent.core.events import record_event
 from agent.core.graph import get_checkpointer, get_langgraph_store, get_store
 from agent.core.checkpoint_history import visible_checkpoint_messages
 from agent.core.repo_memory import ensure_repo_memory_initialized, repo_project_dir
+from agent.core.repository_workspace import prepare_repository_workspace, task_branch_name
 from agent.core.repo_memory_update import RepoMemoryUpdate, update_repo_memory_from_text
-from agent.core.settings import PERSISTENCE_BACKEND, PROJECTS_DIR, WORKSPACE_ROOT
+from agent.core.settings import PERSISTENCE_BACKEND, WORKSPACE_ROOT
 from agent.core.streaming_runtime import run_agent_with_event_stream
 from agent.core.task_intent import classify_task_kind, is_pull_only_task, is_workspace_listing_task
 from agent.core.worker import WorkerLeaseManager
@@ -76,6 +76,23 @@ def _build_agent_for_runtime(
         # 仓库地址在 Agent 工厂中会被用于初始化本地仓库上下文和仓库记忆。
         configurable["repo_url"] = repo_url
     return get_agent({"configurable": configurable})
+
+
+def _prepare_selected_repository(
+    repo: Any,
+    *,
+    thread_id: str,
+    create_task_branch: bool = False,
+):
+    """Prepare the selected repository before any Agent can inspect or edit files."""
+
+    backend = LocalShellBackend(Workspace(WORKSPACE_ROOT), provider=repo.provider)
+    return prepare_repository_workspace(
+        repo,
+        backend,
+        thread_id=thread_id,
+        create_task_branch=create_task_branch,
+    )
 
 
 def _ensure_repo_memory_for_repo(repo: Any, project_dir: str) -> None:
@@ -250,6 +267,7 @@ def _build_agent_user_content(
     prompt: str,
     display_prompt: str | None = None,
     approved_plan: str | None = None,
+    thread_id: str | None = None,
 ) -> str:
     """构造发送给 DeepAgent 的用户内容，避免只读任务被误导去创建 PR。
 
@@ -270,12 +288,20 @@ def _build_agent_user_content(
     """
 
     visible_prompt = (display_prompt or prompt).strip()
+    repo = parse_repo_url(repo_url)
+    repo_working_dir = "/" + repo_project_dir(repo).replace("\\", "/")
     if task_kind == "coding":
+        branch_instruction = (
+            f"当前任务分支为 `{task_branch_name(thread_id)}`；请保留该分支，不要切回 main/master。"
+            if thread_id
+            else "请从仓库远端默认分支创建 codex/ 前缀任务分支。"
+        )
         plan_instruction = ""
         if approved_plan:
             plan_instruction = f"\n\n用户已经确认以下技术方案，请按该方案实施；如执行中发现必要调整，请在最终总结中说明：\n{approved_plan}"
         task_instruction = (
             "这是开发实现任务。请按系统开发流程完成任务，必要时修改代码、验证，并创建或复用 GitHub/Gitee Pull Request。"
+            f"{branch_instruction}创建 PR 时不要猜测 base；留空让对应平台 API 使用仓库真实默认分支。"
             f"{plan_instruction}"
         )
     else:
@@ -288,6 +314,9 @@ def _build_agent_user_content(
         f"用户可见输入：\n{visible_prompt}\n\n"
         "内部执行上下文：以下内容用于 Agent 判断和执行，不要原样展示为用户输入。\n\n"
         f"GitHub/Gitee 仓库地址：{repo_url}\n\n"
+        f"本轮仓库专属工作目录：{repo_working_dir}。所有仓库文件读取、修改和 Git 命令必须针对该目录；"
+        "命令执行的默认 cwd 已是该目录根，请使用仓库相对路径，不要再次 cd 到仓库目录名。"
+        "不要从 projects 下选择其它同名/相似目录，也不要更改 origin。\n\n"
         f"任务类型：{task_kind}\n\n"
         f"用户任务：\n{prompt}\n\n"
         f"{task_instruction}"
@@ -310,9 +339,16 @@ def _build_plan_user_content(
     新要求发给模型，否则模型容易只补充一小段；这里明确要求重新输出完整新版方案。
     """
 
+    repo = parse_repo_url(repo_url)
+    repo_working_dir = "/" + repo_project_dir(repo).replace("\\", "/")
+    workspace_instruction = (
+        f"所选仓库唯一工作目录：{repo_working_dir}；命令默认 cwd 已是此仓库根。请只从该目录读取仓库内容；"
+        "不要把 projects 下其他目录当成本轮仓库，也不要修改 origin。\n\n"
+    )
     if previous_plan and revision_prompt:
         return (
             f"GitHub/Gitee 仓库地址：{repo_url}\n\n"
+            f"{workspace_instruction}"
             f"原始用户需求：\n{prompt}\n\n"
             f"上一版技术方案：\n{previous_plan}\n\n"
             f"用户新的修改要求：\n{revision_prompt}\n\n"
@@ -331,6 +367,7 @@ def _build_plan_user_content(
 
     return (
         f"GitHub/Gitee 仓库地址：{repo_url}\n\n"
+        f"{workspace_instruction}"
         f"用户需求：\n{prompt}\n\n"
         "请只生成技术方案，不要修改文件、不要提交、不要 push、不要创建 Pull Request。\n"
         "方案必须使用中文 Markdown，建议包含：\n"
@@ -661,52 +698,6 @@ def run_workspace_listing_task(*, repo_url: str, prompt: str, thread_id: str | N
         raise
 
 
-def _run_git_with_fetch_head_retry(
-    backend: LocalShellBackend,
-    command: str,
-    *,
-    cwd: str,
-    timeout: int,
-) -> Any:
-    """执行 Git 命令，并处理 Windows 下偶发的 FETCH_HEAD 权限异常。
-
-    FETCH_HEAD 是 git fetch/pull 写入的临时状态文件，不是仓库源码。
-    如果上一次任务异常中断或 IDE 短暂占用导致 Git 无法打开它，可以删除后重试。
-
-    这个兼容逻辑主要服务 Windows 开发环境。PyCharm、杀毒软件或文件索引服务
-    偶尔会短暂占用 `.git/FETCH_HEAD`，直接失败会让“同步代码”体验很差。
-    """
-
-    result = backend.run(command, cwd=cwd, timeout=timeout)
-    combined_output = f"{result.stdout}\n{result.stderr}".lower()
-    if result.exit_code == 0 or "cannot open .git/fetch_head" not in combined_output:
-        return result
-
-    fetch_head = backend.workspace.resolve(Path(cwd) / ".git" / "FETCH_HEAD")
-    logger.warning("检测到 FETCH_HEAD 权限异常，准备删除后重试：%s", fetch_head)
-    try:
-        fetch_head.unlink(missing_ok=True)
-    except OSError as exc:
-        logger.warning("删除 FETCH_HEAD 失败：%s", exc)
-        return result
-    return backend.run(command, cwd=cwd, timeout=timeout)
-
-
-def _detect_remote_default_branch(backend: LocalShellBackend, *, cwd: str) -> str:
-    """读取远端默认分支，避免把 GitHub/Gitee 分支写死为 master。"""
-
-    result = backend.run("git symbolic-ref --short refs/remotes/origin/HEAD", cwd=cwd, timeout=60)
-    if result.exit_code == 0:
-        value = result.stdout.strip().splitlines()
-        if value:
-            branch = value[0].strip()
-            if branch.startswith("origin/"):
-                branch = branch.removeprefix("origin/")
-            if branch:
-                return branch
-    return "main"
-
-
 def run_pull_only_task(*, repo_url: str, prompt: str, thread_id: str | None = None) -> dict[str, Any]:
     """执行只拉取远程代码的轻量任务。
 
@@ -733,54 +724,24 @@ def run_pull_only_task(*, repo_url: str, prompt: str, thread_id: str | None = No
     backend = LocalShellBackend(workspace, provider=repo.provider)
     project_dir = repo_project_dir(repo)
     _ensure_repo_memory_for_repo(repo, project_dir)
-    relative_dir = Path(project_dir)
-    target = workspace.resolve(relative_dir)
-    clone_url = repo.clone_url
 
     try:
         logger.info("开始执行 pull-only 任务：thread_id=%s repo=%s/%s", thread_id, repo.owner, repo.repo)
         record_event(thread_id, "workspace", "准备本地工作区", status="in_progress")
-        PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
-        if target.exists() and (target / ".git").exists():
-            # 本地已经存在 Git 仓库时，先 fetch，再根据远端 HEAD 解析默认分支。
-            # 这里使用 --ff-only，避免自动产生 merge commit，保持项目历史清晰。
-            record_event(thread_id, "workspace", "准备本地工作区", status="completed")
-            record_event(thread_id, "sync", "同步远程仓库", kind="execute", status="in_progress")
-            remote_result = backend.run(f"git remote set-url origin {clone_url}", cwd=str(relative_dir), timeout=60)
-            fetch_result = _run_git_with_fetch_head_retry(
-                backend,
-                "git fetch --all",
-                cwd=str(relative_dir),
-                timeout=300,
-            )
-            base_branch = _detect_remote_default_branch(backend, cwd=str(relative_dir))
-            checkout_result = backend.run(f"git checkout {base_branch}", cwd=str(relative_dir), timeout=300)
-            pull_result = _run_git_with_fetch_head_retry(
-                backend,
-                f"git pull origin {base_branch} --ff-only",
-                cwd=str(relative_dir),
-                timeout=300,
-            )
-            outputs = [remote_result, checkout_result, fetch_result, pull_result]
-        else:
-            # 本地还没有对应目录时，直接 clone 到 workspace/projects 下。
-            # 本地部署版目录固定为 projects/<repo>，不再写入仓库目录映射表。
-            record_event(thread_id, "workspace", "准备本地工作区", status="completed")
-            record_event(thread_id, "sync", f"克隆 {repo.provider.title()} 仓库", kind="execute", status="in_progress")
-            clone_result = backend.run(f"git clone {clone_url} {target.name}", cwd="projects", timeout=600)
-            outputs = [clone_result]
-
-        failed = next((result for result in outputs if result.exit_code != 0), None)
-        if failed is not None:
-            # Git 命令的 stdout/stderr 可能包含 token，所以对外展示和日志都要脱敏。
-            record_event(thread_id, "sync", "同步远程仓库", kind="execute", status="error")
-            raise RuntimeError(f"git pull 失败: {mask_token(failed.stderr or failed.stdout)}")
-
-        record_event(thread_id, "sync", "同步远程仓库", kind="execute", status="completed")
+        record_event(thread_id, "sync", "校验远端并同步默认分支", kind="execute", status="in_progress")
+        prepared = prepare_repository_workspace(repo, backend, thread_id=thread_id)
+        record_event(
+            thread_id,
+            "sync",
+            "校验远端并同步默认分支",
+            kind="execute",
+            status="completed",
+            detail=f"{prepared.directory} · {prepared.default_branch}",
+        )
         store.update_thread_status(thread_id, "completed")
         store.record_run(run_id=run_id, thread_id=thread_id, status="completed", finished=True)
         record_event(thread_id, "done", "任务完成", status="completed")
-        logger.info("pull-only 任务完成：thread_id=%s repo_dir=%s", thread_id, relative_dir)
+        logger.info("pull-only 任务完成：thread_id=%s repo_dir=%s", thread_id, project_dir)
         return {"thread_id": thread_id, "run_id": run_id, "status": "completed"}
     except Exception as exc:
         store.update_thread_status(thread_id, "failed")
@@ -856,13 +817,20 @@ def run_plan_response_task(
     )
     run_id = str(uuid.uuid4())
     store.record_run(run_id=run_id, thread_id=thread_id, status="running")
-    record_event(thread_id, "agent", "构建方案生成 Agent", status="in_progress")
-    # 方案任务也使用 DeepAgent，是因为它需要读取仓库结构、测试方式、关键文件等上下文。
-    # 但 task_kind 固定为 planning，中间件和工具权限会保持只读。
-    agent = _build_agent_for_runtime(thread_id=thread_id, task_kind="planning", repo_url=repo.clone_url)
-    record_event(thread_id, "agent", "构建方案生成 Agent", status="completed")
-
     try:
+        record_event(thread_id, "workspace", "准备所选仓库工作区", status="in_progress")
+        prepared_workspace = _prepare_selected_repository(repo, thread_id=thread_id)
+        record_event(
+            thread_id,
+            "workspace",
+            "校验仓库来源并定位默认分支",
+            status="completed",
+            detail=f"{prepared_workspace.directory} · {prepared_workspace.default_branch}",
+        )
+        record_event(thread_id, "agent", "构建方案生成 Agent", status="in_progress")
+        # 方案任务需要读取仓库结构，因此先确保加载的是用户所选仓库。
+        agent = _build_agent_for_runtime(thread_id=thread_id, task_kind="planning", repo_url=repo.clone_url)
+        record_event(thread_id, "agent", "构建方案生成 Agent", status="completed")
         # 事件流消费由 streaming_runtime.py 负责。runtime 只关心最终是否成功、
         # 以及最终 messages 里是否能提取到一份可确认的技术方案。
         result = run_agent_with_event_stream(
@@ -1041,13 +1009,25 @@ def run_agent_task(
     run_id = str(uuid.uuid4())
     store.record_run(run_id=run_id, thread_id=thread_id, status="running")
     logger.info("业务 Store 已记录运行：thread_id=%s run_id=%s", thread_id, run_id)
-    record_event(thread_id, "agent", "构建 Agent 运行图", status="in_progress")
-    # get_agent 会根据 config 注入 backend、tools、skills、middleware 和系统提示词。
-    # runtime 不直接拼装这些底层能力，避免调度层和 Agent 工厂耦合过深。
-    agent = _build_agent_for_runtime(thread_id=thread_id, task_kind=task_kind, repo_url=repo.clone_url)
-    logger.info("Agent 图已构建：thread_id=%s", thread_id)
-    record_event(thread_id, "agent", "构建 Agent 运行图", status="completed")
     try:
+        record_event(thread_id, "workspace", "准备所选仓库工作区", status="in_progress")
+        prepared_workspace = _prepare_selected_repository(
+            repo,
+            thread_id=thread_id,
+            create_task_branch=(task_kind == "coding"),
+        )
+        record_event(
+            thread_id,
+            "workspace",
+            "校验仓库来源并绑定任务工作目录",
+            status="completed",
+            detail=f"{prepared_workspace.directory} · {prepared_workspace.current_branch}",
+        )
+        record_event(thread_id, "agent", "构建 Agent 运行图", status="in_progress")
+        # Agent 在仓库校验成功后才创建，backend 默认 cwd 已绑定到本轮仓库。
+        agent = _build_agent_for_runtime(thread_id=thread_id, task_kind=task_kind, repo_url=repo.clone_url)
+        logger.info("Agent 图已构建：thread_id=%s", thread_id)
+        record_event(thread_id, "agent", "构建 Agent 运行图", status="completed")
         logger.info("开始通过官方事件流调用 Agent：thread_id=%s", thread_id)
         # runtime 只负责“决定跑什么”和“最终状态落库”。
         # 运行过程中的 text delta、write_todos、tool call、subagent 事件解析，
@@ -1063,6 +1043,7 @@ def run_agent_task(
                     prompt=coding_prompt,
                     display_prompt=display_prompt,
                     approved_plan=approved_plan_text,
+                    thread_id=thread_id,
                 ),
                 task_kind=task_kind,
                 event_sink=event_sink,

@@ -10,7 +10,7 @@ CODING 使用受控本地工作区执行 Agent 任务。工作区真实路径由
 
 ## 目录语义
 
-- `projects/`：Gitee 仓库克隆目录，真实业务项目通常位于 `projects/仓库名`。
+- `projects/`：GitHub/Gitee 仓库 checkout 根目录。每轮任务的真实仓库目录由运行时根据所选 provider、owner 和 repo 解析，并在 Agent 启动前校验 `origin`；不要根据仓库名猜测目录，也不要复用其它仓库 checkout。
 - `skills/`：DeepAgents 原生 skill 目录，Agent 运行时通过 `/skills` 虚拟路径读取。
 - `runtimes/`：共享运行环境目录，例如 Python 虚拟环境、Node 或其它项目运行时。
 - `policies/`：编码规范、审查规范、安全规范目录。
@@ -19,3 +19,5 @@ CODING 使用受控本地工作区执行 Agent 任务。工作区真实路径由
 - `tmp/`：临时文件目录，用于短期中间产物。
 - `.secrets/`：敏感凭据辅助目录。
 - `.ai_coding_workspace.json`：工作区元信息文件，用于识别本地工作区状态。
+
+具体仓库路径以本轮 Agent 运行上下文提供的“仓库专属工作目录”为准。若该目录的 Git `origin` 与本轮所选仓库不符，任务必须停止并报告，不得通过改写 `origin` 来复用旧提交历史。

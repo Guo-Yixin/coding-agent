@@ -98,7 +98,12 @@ def graph_loaded_for_execution(config: RunnableConfig) -> bool:
     return bool(configurable.get("__is_for_execution__", False))
 
 
-def ensure_backend_for_thread(thread_id: str, *, provider: str | None = None) -> LocalShellBackend:
+def ensure_backend_for_thread(
+    thread_id: str,
+    *,
+    provider: str | None = None,
+    working_dir: str | None = None,
+) -> LocalShellBackend:
     """获取或创建绑定到 thread 的本地 backend。
 
     这个函数对应 之前项目 的 `ensure_sandbox_for_thread`，但做了功能减法：
@@ -111,12 +116,14 @@ def ensure_backend_for_thread(thread_id: str, *, provider: str | None = None) ->
     backend = _BACKENDS.get(thread_id)
     if backend is None:
         logger.info("为 thread 创建 LocalShellBackend：%s", thread_id)
-        backend = LocalShellBackend(provider=provider)
+        backend = LocalShellBackend(provider=provider, working_dir=working_dir)
         _BACKENDS[thread_id] = backend
     else:
         logger.info("复用 thread 的 LocalShellBackend：%s", thread_id)
         if provider:
             backend.provider = provider
+        if working_dir:
+            backend.set_working_dir(working_dir)
     return backend
 
 
@@ -300,10 +307,17 @@ def get_agent(config: RunnableConfig):
 
     repo_url = configurable.get("repo_url")
     repo_provider = None
+    repo_working_dir = None
     if isinstance(repo_url, str) and repo_url.strip():
-        repo_provider = parse_repo_url(repo_url).provider
+        repo = parse_repo_url(repo_url)
+        repo_provider = repo.provider
+        repo_working_dir = "/" + repo_project_dir(repo).replace("\\", "/")
     # backend 按 thread 复用，避免同一个会话内反复初始化 Windows 工作区封装。
-    backend = ensure_backend_for_thread(thread_id, provider=repo_provider)
+    backend = ensure_backend_for_thread(
+        thread_id,
+        provider=repo_provider,
+        working_dir=repo_working_dir,
+    )
     langgraph_store = get_langgraph_store()
     # server.py 在创建 Agent 之前，已经顺手读到了当前仓库记忆内容；
     # 那就把内容放进 config，后面的 ContextInjectionMiddleware 直接用，

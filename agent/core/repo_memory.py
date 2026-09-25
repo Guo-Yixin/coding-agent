@@ -31,10 +31,10 @@ def repo_memory_store_key(owner: str, repo: str, provider: str | None = None) ->
 def repo_project_dir(repo: Repository) -> str:
     """根据 GitHub/Gitee 仓库信息生成固定的本地项目目录。
 
-    本地部署版第一版本不再维护“仓库 URL -> 本地目录”的 SQLite 映射表。
-    只要前端传入受支持的仓库地址，后端就可以从 URL 解析出 owner/repo，
-    并稳定落到 `/projects/<repo>`。这样本地目录、命令目录和仓库记忆路径
-    都由同一个 owner/repo 规则推导，避免多套映射关系互相覆盖。
+    本地部署版不再维护“仓库 URL -> 本地目录”的 SQLite 映射表。
+    只要前端传入受支持的仓库地址，后端就从 provider/owner/repo 推导隔离路径。
+    GitHub 路径包含平台与 owner，避免与旧版仅按 repo 名命名的 Gitee checkout
+    冲突；Gitee 仍保留历史路径以兼容已有工作区。
     """
 
     from agent.repository import project_dir
@@ -74,14 +74,12 @@ def build_initial_repo_memory(*, repo: Repository, project_dir: str) -> str:
     """
     now = datetime.now(UTC).isoformat()
     virtual_project_dir = "/" + project_dir.replace("\\", "/").strip("/")
-    command_repo_dir = project_dir.replace("\\", "/").removeprefix("projects/").strip("/")
-    command_repo_dir = command_repo_dir or repo.repo
     return f"""# 仓库记忆：{repo.owner}/{repo.repo}
 
 ## 基本信息
 - 仓库地址：{repo.clone_url}
 - 本地目录：{virtual_project_dir}
-- 命令目录：{command_repo_dir}
+- 命令工作目录：{virtual_project_dir}
 - 初始化时间：{now}
 
 ## 技术栈
@@ -98,7 +96,7 @@ def build_initial_repo_memory(*, repo: Repository, project_dir: str) -> str:
 
 ## 已知约定
 - 文件工具使用 `{virtual_project_dir}/...` 这样的虚拟路径。
-- `execute` 默认在 `/projects` 对应的本地目录下执行，命令里直接使用 `{command_repo_dir}`，不要写 `projects/{command_repo_dir}`。
+- `execute` 默认工作目录已经是 `{virtual_project_dir}` 仓库根；使用仓库相对路径，不要再次 `cd` 到仓库目录名。
 - 不得把 token、私钥、`.env`、`.secrets` 或本机敏感路径写入记忆。
 - 如果本记忆与真实仓库文件冲突，以真实文件和实际命令输出为准。
 
