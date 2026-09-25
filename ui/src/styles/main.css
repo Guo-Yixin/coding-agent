@@ -773,6 +773,62 @@ body,
   }
 }
 
+.proposal-card {
+  margin: 18px 0;
+  overflow: hidden;
+  border: 1px solid #dce8e4;
+  border-radius: 15px;
+  background: linear-gradient(145deg, #fbfdfc, #f5f8f7);
+  box-shadow: 0 8px 28px rgba(30, 55, 48, 0.06);
+}
+
+.proposal-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px 12px;
+  border-bottom: 1px solid #e7eeeb;
+}
+
+.proposal-eyebrow { color: #68877d; font-size: 11px; font-weight: 700; letter-spacing: .06em; }
+.proposal-card-header h3 { margin: 4px 0 0; color: #263b34; font-size: 17px; }
+.proposal-status { flex: 0 0 auto; border-radius: 999px; padding: 5px 10px; color: #56786d; background: #eaf2ef; font-size: 11px; }
+.proposal-status-approved { color: #317353; background: #e4f3e9; }
+.proposal-status-rejected { color: #93635d; background: #f6eae8; }
+.proposal-status-superseded { color: #777; background: #eceeef; }
+.proposal-card-content { max-height: min(52vh, 540px); overflow: auto; padding: 14px 20px; color: #3c4843; font-size: 13px; }
+.proposal-actions { display: flex; flex-wrap: wrap; gap: 9px; padding: 13px 20px 17px; border-top: 1px solid #e7eeeb; }
+.proposal-button { border: 1px solid #d6e0dc; border-radius: 8px; padding: 8px 12px; color: #42564f; background: #fff; cursor: pointer; font: inherit; font-size: 12px; }
+.proposal-button:hover { border-color: #90b2a6; background: #f8fbf9; }
+.proposal-button-primary { border-color: #347b67; color: #fff; background: #347b67; }
+.proposal-button-primary:hover { border-color: #286451; background: #286451; }
+.proposal-button-muted { color: #7b6663; }
+.composer-interaction-hint { display: flex; align-items: center; justify-content: space-between; margin: 0 0 9px; border: 1px solid #d7e6e0; border-radius: 8px; padding: 7px 10px; color: #416b5d; background: #f1f7f4; font-size: 12px; }
+.composer-interaction-hint button { border: 0; color: inherit; background: transparent; cursor: pointer; }
+.composer-locked-hint { margin: 0 0 9px; border: 1px solid #eadbb4; border-radius: 8px; padding: 8px 10px; color: #725b2b; background: #fffaf0; font-size: 12px; }
+
+.intervention-card { margin: 18px 0; border: 1px solid #e7d8ad; border-radius: 13px; padding: 16px; background: #fffaf0; }
+.intervention-card-header { display: flex; align-items: center; gap: 10px; color: #66532b; }
+.intervention-icon { display: grid; flex: 0 0 auto; width: 28px; height: 28px; place-items: center; border-radius: 50%; color: #fff; background: #a1813a; font-weight: 700; }
+.intervention-card-header p { margin: 3px 0 0; color: #81734f; font-size: 12px; }
+.intervention-card h4 { margin: 14px 0 10px; color: #3f3a2e; font-size: 14px; }
+.intervention-options { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 10px; }
+.intervention-options button { border: 1px solid #e4d7b6; border-radius: 999px; padding: 5px 10px; color: #685832; background: #fff; cursor: pointer; font-size: 12px; }
+.intervention-options button:disabled { cursor: default; }
+.intervention-reply { display: flex; align-items: flex-end; gap: 9px; }
+.intervention-reply textarea { flex: 1; min-width: 0; resize: vertical; border: 1px solid #ddd2b4; border-radius: 8px; padding: 9px 10px; color: #343434; background: #fff; font: inherit; font-size: 12px; }
+.intervention-reply button { flex: 0 0 auto; border: 0; border-radius: 8px; padding: 9px 12px; color: #fff; background: #75602f; cursor: pointer; font: inherit; font-size: 12px; }
+.intervention-reply button:disabled { cursor: not-allowed; opacity: .5; }
+.intervention-complete { margin: 12px 0 0; color: #53725f; font-size: 12px; }
+.intervention-card-resolved { border-color: #dce8e1; background: #f7faf8; }
+
+@media (max-width: 600px) {
+  .proposal-card-header { padding: 15px 14px 10px; }
+  .proposal-card-content { padding: 12px 14px; }
+  .proposal-actions { padding: 11px 14px 14px; }
+}
+
 @media (max-width: 560px) {
   .composer-footer {
     align-items: stretch;

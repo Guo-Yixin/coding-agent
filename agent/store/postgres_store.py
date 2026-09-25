@@ -142,8 +142,25 @@ class PostgresBusinessStore:
               prompt TEXT NOT NULL,
               plan_text TEXT NOT NULL,
               plan_path TEXT NOT NULL,
+              version INTEGER NOT NULL DEFAULT 1,
+              supersedes_plan_id TEXT,
+              decision_feedback TEXT,
               created_at TIMESTAMPTZ NOT NULL,
               approved_at TIMESTAMPTZ
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS thread_interventions (
+              intervention_id TEXT PRIMARY KEY,
+              thread_id TEXT NOT NULL,
+              run_id TEXT NOT NULL,
+              tenant_id TEXT NOT NULL DEFAULT 'default',
+              user_id TEXT NOT NULL DEFAULT 'system',
+              status TEXT NOT NULL,
+              payload JSONB NOT NULL,
+              response TEXT,
+              created_at TIMESTAMPTZ NOT NULL,
+              resolved_at TIMESTAMPTZ
             )
             """,
             """
@@ -212,6 +229,9 @@ class PostgresBusinessStore:
                 ("runs", "lease_expires_at", "TIMESTAMPTZ"),
                 ("runs", "heartbeat_at", "TIMESTAMPTZ"),
                 ("runs", "attempt", "INTEGER NOT NULL DEFAULT 0"),
+                ("thread_plans", "version", "INTEGER NOT NULL DEFAULT 1"),
+                ("thread_plans", "supersedes_plan_id", "TEXT"),
+                ("thread_plans", "decision_feedback", "TEXT"),
             ):
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {definition}")
 
@@ -347,14 +367,15 @@ class PostgresBusinessStore:
             row["metadata"] = self._decode(row.get("metadata"), {})
         return rows
 
-    def add_thread_plan(self, *, plan_id: str, thread_id: str, prompt: str, plan_text: str, plan_path: str, run_id: str | None = None, status: str = "pending") -> None:
+    def add_thread_plan(self, *, plan_id: str, thread_id: str, prompt: str, plan_text: str, plan_path: str, run_id: str | None = None, status: str = "pending", version: int = 1, supersedes_plan_id: str | None = None) -> None:
         with self._connection() as conn:
             conn.execute(
-                """INSERT INTO thread_plans (plan_id, thread_id, run_id, tenant_id, user_id, status, prompt, plan_text, plan_path, created_at)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """INSERT INTO thread_plans (plan_id, thread_id, run_id, tenant_id, user_id, status, prompt, plan_text, plan_path, version, supersedes_plan_id, created_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                    ON CONFLICT(plan_id) DO UPDATE SET status=EXCLUDED.status, prompt=EXCLUDED.prompt,
-                   plan_text=EXCLUDED.plan_text, plan_path=EXCLUDED.plan_path""",
-                (plan_id, thread_id, run_id, self.tenant_id, self.user_id, status, prompt.strip(), plan_text.strip(), plan_path, datetime.now(UTC)),
+                   plan_text=EXCLUDED.plan_text, plan_path=EXCLUDED.plan_path,
+                   version=EXCLUDED.version, supersedes_plan_id=EXCLUDED.supersedes_plan_id""",
+                (plan_id, thread_id, run_id, self.tenant_id, self.user_id, status, prompt.strip(), plan_text.strip(), plan_path, version, supersedes_plan_id, datetime.now(UTC)),
             )
 
     def get_latest_thread_plan(self, thread_id: str, *, status: str | None = None) -> dict[str, Any] | None:
@@ -369,8 +390,80 @@ class PostgresBusinessStore:
 
     def approve_thread_plan(self, plan_id: str) -> dict[str, Any] | None:
         with self._connection() as conn:
-            conn.execute("UPDATE thread_plans SET status='approved', approved_at=%s WHERE plan_id=%s", (datetime.now(UTC), plan_id))
+            conn.execute("UPDATE thread_plans SET status='approved', approved_at=%s WHERE plan_id=%s AND status='pending'", (datetime.now(UTC), plan_id))
             return conn.execute("SELECT * FROM thread_plans WHERE plan_id=%s", (plan_id,)).fetchone()
+
+    def get_thread_plan(self, plan_id: str) -> dict[str, Any] | None:
+        with self._connection() as conn:
+            return conn.execute("SELECT * FROM thread_plans WHERE plan_id=%s", (plan_id,)).fetchone()
+
+    def transition_thread_plan(
+        self, plan_id: str, *, thread_id: str, expected_status: str,
+        status: str, decision_feedback: str | None = None,
+    ) -> dict[str, Any] | None:
+        with self._connection() as conn:
+            approved_at = datetime.now(UTC) if status == "approved" else None
+            row = conn.execute(
+                """UPDATE thread_plans
+                   SET status=%s, decision_feedback=%s, approved_at=COALESCE(%s, approved_at)
+                   WHERE plan_id=%s AND thread_id=%s AND status=%s
+                   RETURNING *""",
+                (status, decision_feedback, approved_at, plan_id, thread_id, expected_status),
+            ).fetchone()
+            return row
+
+    def create_thread_intervention(self, *, intervention_id: str, thread_id: str, run_id: str, payload: dict[str, Any]) -> None:
+        with self._connection() as conn:
+            conn.execute(
+                """INSERT INTO thread_interventions
+                   (intervention_id, thread_id, run_id, tenant_id, user_id, status, payload, created_at)
+                   VALUES (%s,%s,%s,%s,%s,'pending',%s::jsonb,%s)""",
+                (intervention_id, thread_id, run_id, self.tenant_id, self.user_id, self._json(payload), datetime.now(UTC)),
+            )
+
+    def get_thread_intervention(self, intervention_id: str) -> dict[str, Any] | None:
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM thread_interventions WHERE intervention_id=%s", (intervention_id,)
+            ).fetchone()
+        if row:
+            row["payload"] = self._decode(row.get("payload"), {})
+        return row
+
+    def get_latest_active_thread_intervention(self, thread_id: str) -> dict[str, Any] | None:
+        """读取会话中最新待答复或正在恢复的人工介入。"""
+
+        with self._connection() as conn:
+            row = conn.execute(
+                """SELECT * FROM thread_interventions
+                   WHERE thread_id=%s AND status IN ('pending', 'resuming')
+                   ORDER BY created_at DESC LIMIT 1""",
+                (thread_id,),
+            ).fetchone()
+        if row:
+            row["payload"] = self._decode(row.get("payload"), {})
+        return row
+
+    def resolve_thread_intervention(self, intervention_id: str, *, thread_id: str, response: str) -> dict[str, Any] | None:
+        with self._connection() as conn:
+            row = conn.execute(
+                """UPDATE thread_interventions SET status='resuming', response=%s
+                   WHERE intervention_id=%s AND thread_id=%s AND status='pending'
+                   RETURNING *""",
+                (response, intervention_id, thread_id),
+            ).fetchone()
+        if row:
+            row["payload"] = self._decode(row.get("payload"), {})
+        return row if row and row.get("status") == "resuming" else None
+
+    def finish_thread_intervention(self, intervention_id: str, *, thread_id: str, status: str = "resolved") -> None:
+        with self._connection() as conn:
+            resolved_at = datetime.now(UTC) if status == "resolved" else None
+            conn.execute(
+                """UPDATE thread_interventions SET status=%s, resolved_at=%s
+                   WHERE intervention_id=%s AND thread_id=%s AND status='resuming'""",
+                (status, resolved_at, intervention_id, thread_id),
+            )
 
     def finish_open_run_events(self, thread_id: str, *, status: str = "completed") -> None:
         with self._connection() as conn:
@@ -385,7 +478,7 @@ class PostgresBusinessStore:
             exists = conn.execute("SELECT 1 FROM threads WHERE thread_id=%s", (thread_id,)).fetchone()
             if not exists:
                 return False
-            for table in ("review_findings", "thread_plans", "thread_messages", "run_events", "runs"):
+            for table in ("review_findings", "thread_plans", "thread_interventions", "thread_messages", "run_events", "runs"):
                 conn.execute(f"DELETE FROM {table} WHERE thread_id=%s", (thread_id,))
             conn.execute("DELETE FROM audit_events WHERE thread_id=%s", (thread_id,))
             conn.execute("DELETE FROM threads WHERE thread_id=%s", (thread_id,))

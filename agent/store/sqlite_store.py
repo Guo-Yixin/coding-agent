@@ -20,7 +20,8 @@ class LocalSqliteStore:
     这个类只负责保存“平台业务摘要”，不保存完整聊天历史：
     - threads：任务列表和当前状态。
     - runs：每次运行的开始、结束、失败原因。
-    - thread_plans：编码前的技术方案、确认状态和 Markdown 归档路径。
+    - thread_plans：编码前的版本化技术方案和用户决策状态。
+    - thread_interventions：LangGraph 暂停点、用户答复及恢复状态。
     - review_findings：Reviewer Agent 发现的问题。
     - settings：项目的少量键值配置。
 
@@ -123,9 +124,23 @@ class LocalSqliteStore:
               prompt TEXT NOT NULL,
               plan_text TEXT NOT NULL,
               plan_path TEXT NOT NULL,
+              version INTEGER NOT NULL DEFAULT 1,
+              supersedes_plan_id TEXT,
+              decision_feedback TEXT,
               created_at TEXT NOT NULL,
               approved_at TEXT,
               FOREIGN KEY(thread_id) REFERENCES threads(thread_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS thread_interventions (
+              intervention_id TEXT PRIMARY KEY,
+              thread_id TEXT NOT NULL,
+              run_id TEXT NOT NULL,
+              status TEXT NOT NULL,
+              payload TEXT NOT NULL,
+              response TEXT,
+              created_at TEXT NOT NULL,
+              resolved_at TEXT
             );
 
             CREATE TABLE IF NOT EXISTS review_findings (
@@ -151,6 +166,9 @@ class LocalSqliteStore:
             """
             )
             self._ensure_column("threads", "user_prompt", "TEXT")
+            self._ensure_column("thread_plans", "version", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column("thread_plans", "supersedes_plan_id", "TEXT")
+            self._ensure_column("thread_plans", "decision_feedback", "TEXT")
             self._conn.commit()
 
     @staticmethod
@@ -420,7 +438,13 @@ class LocalSqliteStore:
                 """,
                 (thread_id,),
             ).fetchall()
-            return [dict(row) for row in rows]
+            messages = [dict(row) for row in rows]
+            for message in messages:
+                try:
+                    message["metadata"] = json.loads(message.get("metadata") or "{}")
+                except (TypeError, ValueError):
+                    message["metadata"] = {}
+            return messages
 
     def add_thread_plan(
         self,
@@ -432,11 +456,13 @@ class LocalSqliteStore:
         plan_path: str,
         run_id: str | None = None,
         status: str = "pending",
+        version: int = 1,
+        supersedes_plan_id: str | None = None,
     ) -> None:
         """保存一份编码前技术方案。
 
-        plan_text 用于前端快速展示；plan_path 指向 data/plans 下的 Markdown 文件，
-        方便开发调试时直接打开，也方便后续让 Agent 读取已确认方案。
+        plan_text 是不可变的方案版本正文；plan_path 为兼容旧 schema 的保留字段，
+        当前不会创建本地 Markdown 归档文件。
         """
 
         with self._lock:
@@ -444,15 +470,17 @@ class LocalSqliteStore:
             self._conn.execute(
                 """
                 INSERT INTO thread_plans (
-                  plan_id, thread_id, run_id, status, prompt, plan_text, plan_path, created_at, approved_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)
+                  plan_id, thread_id, run_id, status, prompt, plan_text, plan_path,
+                  version, supersedes_plan_id, created_at, approved_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)
                 ON CONFLICT(plan_id) DO UPDATE SET
                   status=excluded.status,
                   prompt=excluded.prompt,
                   plan_text=excluded.plan_text,
                   plan_path=excluded.plan_path
                 """,
-                (plan_id, thread_id, run_id, status, prompt.strip(), plan_text.strip(), plan_path, now),
+                (plan_id, thread_id, run_id, status, prompt.strip(), plan_text.strip(), plan_path,
+                 version, supersedes_plan_id, now),
             )
             self._conn.commit()
 
@@ -515,13 +543,96 @@ class LocalSqliteStore:
                 UPDATE thread_plans
                 SET status = 'approved',
                     approved_at = ?
-                WHERE plan_id = ?
+                WHERE plan_id = ? AND status = 'pending'
                 """,
                 (now, plan_id),
             )
             self._conn.commit()
             row = self._conn.execute("SELECT * FROM thread_plans WHERE plan_id = ?", (plan_id,)).fetchone()
             return self._row_to_dict(row)
+
+    def get_thread_plan(self, plan_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM thread_plans WHERE plan_id = ?", (plan_id,)).fetchone()
+            return self._row_to_dict(row)
+
+    def transition_thread_plan(
+        self, plan_id: str, *, thread_id: str, expected_status: str,
+        status: str, decision_feedback: str | None = None,
+    ) -> dict[str, Any] | None:
+        with self._lock:
+            approved_at = utc_now() if status == "approved" else None
+            updated = self._conn.execute(
+                """UPDATE thread_plans
+                   SET status = ?, decision_feedback = ?, approved_at = COALESCE(?, approved_at)
+                   WHERE plan_id = ? AND thread_id = ? AND status = ?""",
+                (status, decision_feedback, approved_at, plan_id, thread_id, expected_status),
+            )
+            self._conn.commit()
+            if updated.rowcount != 1:
+                return None
+            row = self._conn.execute(
+                "SELECT * FROM thread_plans WHERE plan_id = ? AND thread_id = ?", (plan_id, thread_id)
+            ).fetchone()
+            result = self._row_to_dict(row)
+            return result if result and result["status"] == status else None
+
+    def create_thread_intervention(self, *, intervention_id: str, thread_id: str, run_id: str, payload: dict[str, Any]) -> None:
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO thread_interventions
+                   (intervention_id, thread_id, run_id, status, payload, created_at)
+                   VALUES (?, ?, ?, 'pending', ?, ?)""",
+                (intervention_id, thread_id, run_id, json.dumps(payload, ensure_ascii=False), utc_now()),
+            )
+            self._conn.commit()
+
+    def get_thread_intervention(self, intervention_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM thread_interventions WHERE intervention_id = ?", (intervention_id,)
+            ).fetchone()
+            result = self._row_to_dict(row)
+            if result:
+                result["payload"] = json.loads(result["payload"] or "{}")
+            return result
+
+    def get_latest_active_thread_intervention(self, thread_id: str) -> dict[str, Any] | None:
+        """读取会话中最新待答复或正在恢复的人工介入。"""
+
+        with self._lock:
+            row = self._conn.execute(
+                """SELECT * FROM thread_interventions
+                   WHERE thread_id = ? AND status IN ('pending', 'resuming')
+                   ORDER BY created_at DESC LIMIT 1""",
+                (thread_id,),
+            ).fetchone()
+            result = self._row_to_dict(row)
+            if result:
+                result["payload"] = json.loads(result["payload"] or "{}")
+            return result
+
+    def resolve_thread_intervention(self, intervention_id: str, *, thread_id: str, response: str) -> dict[str, Any] | None:
+        with self._lock:
+            updated = self._conn.execute(
+                """UPDATE thread_interventions SET status='resuming', response=?
+                   WHERE intervention_id=? AND thread_id=? AND status='pending'""",
+                (response, intervention_id, thread_id),
+            )
+            self._conn.commit()
+            if updated.rowcount != 1:
+                return None
+            return self.get_thread_intervention(intervention_id)
+
+    def finish_thread_intervention(self, intervention_id: str, *, thread_id: str, status: str = "resolved") -> None:
+        with self._lock:
+            resolved_at = utc_now() if status == "resolved" else None
+            self._conn.execute(
+                """UPDATE thread_interventions SET status=?, resolved_at=?
+                   WHERE intervention_id=? AND thread_id=? AND status='resuming'""",
+                (status, resolved_at, intervention_id, thread_id),
+            )
+            self._conn.commit()
 
     def finish_open_run_events(self, thread_id: str, *, status: str = "completed") -> None:
         """把仍处于运行中的展示事件收尾。
@@ -577,6 +688,7 @@ class LocalSqliteStore:
                 return False
             self._conn.execute("DELETE FROM review_findings WHERE thread_id = ?", (thread_id,))
             self._conn.execute("DELETE FROM thread_plans WHERE thread_id = ?", (thread_id,))
+            self._conn.execute("DELETE FROM thread_interventions WHERE thread_id = ?", (thread_id,))
             self._conn.execute("DELETE FROM thread_messages WHERE thread_id = ?", (thread_id,))
             self._conn.execute("DELETE FROM run_events WHERE thread_id = ?", (thread_id,))
             self._conn.execute("DELETE FROM runs WHERE thread_id = ?", (thread_id,))

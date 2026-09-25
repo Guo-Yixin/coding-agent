@@ -768,9 +768,8 @@ def run_plan_response_task(
 ) -> dict[str, Any]:
     """为编码需求生成技术方案，并把方案作为普通回答直接展示。
 
-    这个流程不再写 thread_plans 表或 Markdown 文件，但会把用户输入和最终方案正文
-    投影到 thread_messages。方案正文仍由 DeepAgents 写入 checkpoint，供 Agent 恢复；
-    Dashboard 刷新时读取消息投影，避免 PostgreSQL checkpoint 历史查询阻塞。
+    方案以版本化记录写入 thread_plans，并同步把卡片 payload 投影到 thread_messages；
+    Dashboard 刷新只读取该轻量投影和业务表，不遍历 PostgreSQL checkpoint delta 链。
     如果传入 previous_plan_message，则表示用户在等待确认阶段提出了补充要求；
     此时会基于上一版方案重新输出完整新版方案，而不是只输出差异。
 
@@ -816,6 +815,13 @@ def run_plan_response_task(
         metadata={"source": "dashboard"},
     )
     run_id = str(uuid.uuid4())
+    previous_metadata = _message_metadata(previous_plan_message or {})
+    previous_proposal = previous_metadata.get("proposal") or {}
+    supersedes_plan_id = previous_metadata.get("plan_id") or previous_proposal.get("plan_id")
+    previous_version = previous_metadata.get("version") or previous_proposal.get("version") or 0
+    version = int(previous_version) + 1 if previous_plan_message else 1
+    previous_plan_status = previous_metadata.get("status") or previous_proposal.get("status") or "pending"
+    plan_id = str(uuid.uuid4())
     store.record_run(run_id=run_id, thread_id=thread_id, status="running")
     try:
         record_event(thread_id, "workspace", "准备所选仓库工作区", status="in_progress")
@@ -863,8 +869,34 @@ def run_plan_response_task(
                 "task_kind": "planning",
                 "awaiting_confirmation": True,
                 "source_prompt": plan_source_prompt,
+                "proposal": {
+                    "plan_id": plan_id,
+                    "version": version,
+                    "status": "pending",
+                    "source_prompt": plan_source_prompt,
+                    "plan_text": plan_text,
+                },
             },
         )
+        store.add_thread_plan(
+            plan_id=plan_id,
+            thread_id=thread_id,
+            run_id=run_id,
+            prompt=plan_source_prompt,
+            plan_text=plan_text,
+            plan_path="",
+            status="pending",
+            version=version,
+            supersedes_plan_id=supersedes_plan_id,
+        )
+        if supersedes_plan_id:
+            store.transition_thread_plan(
+                supersedes_plan_id,
+                thread_id=thread_id,
+                expected_status=str(previous_plan_status),
+                status="superseded",
+                decision_feedback=revision_prompt,
+            )
         store.update_thread_status(thread_id, "completed")
         store.record_run(run_id=run_id, thread_id=thread_id, status="completed", finished=True)
         record_event(thread_id, "plan", "技术方案已输出，等待确认", kind="other", status="completed")
@@ -895,6 +927,9 @@ def run_agent_task(
     prompt: str,
     thread_id: str | None = None,
     event_sink: RuntimeEventSink | None = None,
+    interaction_action: str | None = None,
+    plan_id: str | None = None,
+    intervention_id: str | None = None,
 ) -> dict[str, Any]:
     """运行一次普通 Agent 任务的总入口。
 
@@ -911,27 +946,120 @@ def run_agent_task(
     Dashboard 和 PostgreSQL 方案确认优先读取该投影。
     """
 
-    # 两个直达分支都不需要 LLM，能显著减少模型调用和等待时间。
-    if is_workspace_listing_task(prompt):
-        return run_workspace_listing_task(repo_url=repo_url, prompt=prompt, thread_id=thread_id)
-
-    if is_pull_only_task(prompt):
-        return run_pull_only_task(repo_url=repo_url, prompt=prompt, thread_id=thread_id)
-
-    # 第一层用户意图识别。这里只得到粗粒度 task_kind，后续还会经过方案确认、
-    # 只读权限和 coding 前置方案等 runtime 策略兜底。
-    task_kind = classify_task_kind(prompt)
     # 新任务创建新 thread；继续对话时使用前端已有 thread_id，确保 checkpoint 接上历史。
     thread_id = thread_id or str(uuid.uuid4())
     store = get_store()
     existing_thread = store.get_thread(thread_id)
+    get_active_intervention = getattr(store, "get_latest_active_thread_intervention", None)
+    active_intervention = get_active_intervention(thread_id) if get_active_intervention else None
+    if active_intervention and (
+        interaction_action != "resume_intervention"
+        or intervention_id != active_intervention.get("intervention_id")
+    ):
+        raise ValueError("此会话正等待人工介入答复，请通过介入卡片提交答复后继续")
+    # 两个直达分支都不需要 LLM，能显著减少模型调用和等待时间；先检查待处理 HITL，
+    # 避免任何普通消息（包括看似只读的快捷任务）绕过当前中断。
+    if not interaction_action and is_workspace_listing_task(prompt):
+        return run_workspace_listing_task(repo_url=repo_url, prompt=prompt, thread_id=thread_id)
+    if not interaction_action and is_pull_only_task(prompt):
+        return run_pull_only_task(repo_url=repo_url, prompt=prompt, thread_id=thread_id)
+    # 恢复动作不做普通意图分类：“1/确认/继续”等只能作为 checkpoint 的 resume 值，
+    # 不能重新被判为 qa 并启动一轮新任务。
+    task_kind = (
+        "coding"
+        if interaction_action in {"resume_intervention", "approve_plan"}
+        else classify_task_kind(prompt)
+    )
     approved_plan_text: str | None = None
+    explicit_plan: dict[str, Any] | None = None
     # display_prompt 是本轮用户真实输入，用于前端展示；coding_prompt 是传给 Agent 的执行目标。
     # 在“确认实施”场景下，二者不能混用：用户真实输入可能只有“确认”，而执行目标应是上一轮方案。
     display_prompt = prompt
     coding_prompt = prompt
+    resume_value: dict[str, Any] | None = None
+    if interaction_action == "resume_intervention":
+        if not existing_thread or not intervention_id or not prompt.strip():
+            raise ValueError("人工介入回复缺少有效会话、问题标识或答复内容")
+        intervention = store.resolve_thread_intervention(
+            intervention_id, thread_id=thread_id, response=prompt.strip()
+        )
+        if not intervention:
+            raise ValueError("该人工介入已处理或已失效，请刷新会话后重试")
+        resume_value = {"response": prompt.strip()}
+        task_kind = "coding"
 
-    if existing_thread and _is_approval_prompt(prompt):
+    if interaction_action and interaction_action != "resume_intervention":
+        if not existing_thread or not plan_id:
+            raise ValueError("方案操作缺少有效会话或方案标识")
+        explicit_plan = store.get_thread_plan(plan_id)
+        if not explicit_plan or explicit_plan.get("thread_id") != thread_id:
+            raise ValueError("方案不存在或不属于当前会话")
+        if interaction_action == "reject_plan":
+            transitioned = store.transition_thread_plan(
+                plan_id, thread_id=thread_id, expected_status="pending", status="rejected"
+            )
+            if not transitioned:
+                raise ValueError("该方案已处理或已失效，请刷新会话后重试")
+            _record_thread_message(
+                thread_id=thread_id, author="user", content=prompt,
+                metadata={"source": "plan_decision", "plan_id": plan_id, "action": "reject"},
+            )
+            _record_thread_message(
+                thread_id=thread_id,
+                author="agent",
+                content="已拒绝实施本方案。我不会修改仓库；如需继续，可以在对话中说明新的目标。",
+                metadata={"source": "plan_decision", "plan_id": plan_id, "action": "rejected"},
+            )
+            store.update_thread_status(thread_id, "completed")
+            return {"thread_id": thread_id, "status": "completed", "decision": "rejected"}
+        if interaction_action == "revise_plan":
+            if explicit_plan.get("status") != "pending" or not prompt.strip():
+                raise ValueError("只能调整待确认方案，且需要填写调整要求")
+            reserved_plan = store.transition_thread_plan(
+                plan_id, thread_id=thread_id, expected_status="pending", status="revising",
+                decision_feedback=prompt,
+            )
+            if not reserved_plan:
+                raise ValueError("该方案正在被处理，请刷新会话后重试")
+            previous = {
+                "author": "agent",
+                "content": explicit_plan.get("plan_text") or "",
+                "metadata": {
+                    "source_prompt": explicit_plan.get("prompt") or "",
+                    "plan_id": plan_id,
+                    "version": explicit_plan.get("version") or 1,
+                    "status": "revising",
+                },
+            }
+            try:
+                return run_plan_response_task(
+                    repo_url=repo_url,
+                    prompt=str(explicit_plan.get("prompt") or prompt),
+                    thread_id=thread_id,
+                    previous_plan_message=previous,
+                    revision_prompt=prompt,
+                    event_sink=event_sink,
+                )
+            except Exception:
+                store.transition_thread_plan(
+                    plan_id, thread_id=thread_id, expected_status="revising", status="pending"
+                )
+                raise
+        if interaction_action == "approve_plan":
+            if explicit_plan.get("status") != "pending":
+                raise ValueError("该方案已处理或已失效，请刷新会话后重试")
+            transitioned = store.transition_thread_plan(
+                plan_id, thread_id=thread_id, expected_status="pending", status="approved"
+            )
+            if not transitioned:
+                raise ValueError("该方案已处理或已失效，请刷新会话后重试")
+            approved_plan_text = str(explicit_plan.get("plan_text") or "")
+            coding_prompt = str(explicit_plan.get("prompt") or prompt)
+            task_kind = "coding"
+        else:
+            raise ValueError("未知的方案操作")
+
+    if existing_thread and _is_approval_prompt(prompt) and not interaction_action:
         # 说明重点：
         # “确认实施”不能直接等价于“执行当前这几个字”。
         # 必须先回到当前 thread 的历史消息里，找到最近一条仍在等待确认的技术方案；
@@ -945,7 +1073,7 @@ def run_agent_task(
                 or _latest_non_approval_user_prompt(thread_id, existing_thread.get("user_prompt") or prompt)
             )
             task_kind = "coding"
-    elif existing_thread:
+    elif existing_thread and not interaction_action:
         # 如果当前会话已经有一版等待确认的技术方案，而用户没有确认实施，
         # 只有用户明确说“修改/重新生成/补充方案”时，才把这轮输入视为方案修订。
         # 普通问答、代码审查、查看记忆文件等只读任务不能被历史方案劫持。
@@ -960,14 +1088,14 @@ def run_agent_task(
                 revision_prompt=prompt,
                 event_sink=event_sink,
             )
-    if existing_thread and approved_plan_text is None and _is_approval_prompt(prompt):
+    if existing_thread and approved_plan_text is None and not interaction_action and _is_approval_prompt(prompt):
         # 没有可确认的技术方案时，把“确认”当作普通问题处理，避免误执行旧任务。
         task_kind = classify_task_kind(prompt)
 
     if approved_plan_text is not None:
         task_kind = "coding"
 
-    if task_kind == "coding" and approved_plan_text is None:
+    if task_kind == "coding" and approved_plan_text is None and interaction_action != "resume_intervention":
         # 这是本项目“人在回路”的核心控制点：
         # 只要是 coding 请求，且没有找到用户确认过的方案，就先转入 planning。
         # 这个判断在 runtime 层完成，而不是只写在 Prompt 里，目的是把“先方案、再实施”
@@ -1047,7 +1175,33 @@ def run_agent_task(
                 ),
                 task_kind=task_kind,
                 event_sink=event_sink,
+                resume_value=resume_value,
             )
+        if interaction_action == "resume_intervention":
+            store.finish_thread_intervention(intervention_id, thread_id=thread_id)
+        interrupts = result.get("interrupts") or []
+        if interrupts:
+            for payload in interrupts:
+                intervention_id = str(uuid.uuid4())
+                store.create_thread_intervention(
+                    intervention_id=intervention_id,
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    payload=payload,
+                )
+                _record_thread_message(
+                    thread_id=thread_id,
+                    author="agent",
+                    content=str(payload.get("question") or "需要你提供进一步确认。"),
+                    run_id=run_id,
+                    metadata={"source": "human_intervention", "intervention_id": intervention_id},
+                )
+            store.finish_open_run_events(thread_id, status="completed")
+            current_branch = _detect_current_branch(repo)
+            store.update_thread_status(thread_id, "awaiting_approval", branch_name=current_branch)
+            store.record_run(run_id=run_id, thread_id=thread_id, status="awaiting_approval", finished=True)
+            record_event(thread_id, "human:intervention", "等待你答复后继续", status="completed")
+            return {"thread_id": thread_id, "run_id": run_id, "status": "awaiting_approval", "interrupts": interrupts}
         store.finish_open_run_events(thread_id, status="completed")
         current_branch = _detect_current_branch(repo)
         store.update_thread_status(thread_id, "completed", branch_name=current_branch)
@@ -1079,6 +1233,8 @@ def run_agent_task(
         logger.info("任务完成：thread_id=%s run_id=%s messages=%s", thread_id, run_id, len(messages))
         return {"thread_id": thread_id, "run_id": run_id, "status": "completed", "messages": messages}
     except Exception as exc:
+        if interaction_action == "resume_intervention" and intervention_id:
+            store.finish_thread_intervention(intervention_id, thread_id=thread_id, status="pending")
         # 异常路径必须同时关闭未完成事件、更新 thread 状态和 run 状态。
         # 如果漏掉其中任何一项，前端可能会一直停留在“ 运行中”。
         store.finish_open_run_events(thread_id, status="error")

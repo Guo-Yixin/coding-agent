@@ -67,6 +67,7 @@ from agent.tools import (
     publish_gitee_pr_comment,
     validate_review_finding_location,
     web_search,
+    request_human_intervention,
 )
 from agent.repository import parse_repo_url
 
@@ -346,6 +347,7 @@ def get_agent(config: RunnableConfig):
         model=main_model,
         tools=[
             web_search,
+            request_human_intervention,
             fetch_url,
             hybrid_code_search,
             open_gitee_pull_request,
