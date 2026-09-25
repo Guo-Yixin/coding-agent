@@ -1,267 +1,309 @@
+<div align="center">
+
 # CODING
 
-> 面向大型代码仓库的本地优先 AI Coding Agent：支持仓库感知检索、受控执行、可恢复任务、可复现评测与交付闭环。
+### 一个把“读懂仓库、编写代码、验证结果、提交交付”串成完整流程的 AI 编程 Agent
 
-CODING 将“理解仓库 → 制定计划 → 修改代码 → 执行验证 → 生成补丁 → 交付审计”组织为一条可追踪的 Agent 工作流。当前版本重点补齐了持久化、检索、运行隔离、Worker 恢复和 Agent Eval 基础设施，适合本地开发、团队协作和面试演示。
+基于 DeepAgents 与 LangGraph 构建，提供本地 Web 工作台、实时运行轨迹、人工审批、可恢复会话，以及 GitHub / Gitee 仓库协作。
 
-## 当前能力
+[快速开始](#快速开始) · [功能演示](#功能演示) · [系统架构](#系统架构) · [配置说明](#配置说明) · [项目文档](#项目文档)
 
-| 能力 | 当前实现 | 解决的业务问题 |
-| --- | --- | --- |
-| PostgreSQL 持久化 | Checkpoint、LangGraph Store、业务 Store 可切换 PostgreSQL | 多用户、多 Worker、重启恢复和审计 |
-| SQLite → PostgreSQL | 迁移脚本、幂等导入、报告和事件审计 | 从单机原型平滑升级到共享数据库 |
-| CodeGraph + grep | CodeGraph 结构化检索与 grep 文本检索并行融合 | 大型仓库中快速定位符号、调用链和配置引用 |
-| Agent Eval | fake、real、sandbox 三种执行模式，JSON 报告和聚合汇总 | 用补丁、测试、检索、恢复、Token、延迟指标驱动迭代 |
-| OpenSandbox | 健康检查、上传仓库、受控命令执行和结果回收 | 在隔离环境中运行测试、构建和评测任务 |
-| Worker 租约 | acquire、renew、release、过期恢复和审计事件 | Worker 崩溃或重启后恢复未完成任务 |
-| Git 交付闭环 | 分支、补丁、测试和 Gitee 交付信息可追踪 | 让 Agent 产物进入可审查的研发流程 |
-| Issue Writer Skill | 从代码、检索结果、日志和截图生成可复现 Issue 草稿 | 将问题沉淀为可排重、可验证的开源 Issue |
+[![Python](https://img.shields.io/badge/Python-3.14%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Vue](https://img.shields.io/badge/Vue-3-42B883?logo=vuedotjs&logoColor=white)](https://vuejs.org/)
+[![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
-## 架构概览
+</div>
+
+---
+
+## CODING 是什么
+
+CODING 是一个面向真实 Git 仓库的 AI Coding Agent。你可以在浏览器工作台里选择 GitHub 或 Gitee 仓库，用自然语言描述分析或编码任务；Agent 会读取仓库、制定计划、执行工具、展示过程，并在需要时等待人工确认。
+
+它把任务执行过程做成可追踪、可恢复的会话：计划和工具调用以实时事件呈现，运行状态与对话可持久化；编码任务在独立分支上完成，并可继续创建 Pull Request。
+
+```text
+提出需求 → 分析仓库 → 展示计划 → 人工审批 → 分支开发 → 测试验证 → 查看变更 → 创建 PR
+```
+
+## 功能演示
+
+下面的截图来自 CODING 实际工作台和 GitHub / Gitee 仓库示例。截图展示了运行状态、审批、代码输出及交付结果。
+
+### 运行轨迹与任务进度
+
+任务期间可以查看已完成步骤、当前步骤和工具执行记录，完成后回看 Agent 如何从仓库分析推进到最终交付。
+
+![CODING 任务运行轨迹与步骤进度](assets/demo/run-trace.png)
+
+### 实施计划与人工审批
+
+遇到需要明确范围的改动时，Agent 展示实施方案，并等待用户选择确认、调整方案或拒绝。审批前，分析和计划阶段不会代替用户启动编码实施。
+
+![实施方案审批卡片](assets/demo/approval-plan.png)
+
+### 长会话上下文与压缩
+
+会话可以从持久化状态中恢复；长任务可调用 `compact_conversation` 整理对话上下文，降低历史膨胀对后续推理的影响。
+
+![长会话中的上下文整理与分析记录](assets/demo/context-and-compaction.png)
+
+### 代码块、验证输出与完成结果
+
+工作台会格式化展示 Markdown、代码块与验证结果。任务完成消息可以包含变更摘要、测试状态和 Pull Request 链接，方便直接检查交付。
+
+![代码块与测试验证记录](assets/demo/code-block-and-tests.png)
+
+![编码任务完成及 GitHub Pull Request 结果](assets/demo/completed-github-pr-task.png)
+
+### GitHub 仓库协作
+
+通过仓库选择器绑定 GitHub 仓库。Agent 可读取仓库与 PR 上下文，在任务分支提交变更，并调用 GitHub API 创建或复用 PR。
+
+![GitHub 示例仓库](assets/demo/github-repository.png)
+
+### Gitee 仓库协作
+
+同一工作流支持 Gitee 仓库，包括仓库读取、分支开发和 Pull Request 交付。
+
+![Gitee 示例仓库](assets/demo/gitee-repository.png)
+
+### Gitee Coding Agent 项目示例
+
+![Gitee Coding Agent 仓库读取演示](assets/demo/coding-agent-demo.png)
+
+## 能力一览
+
+| 能力 | 实现方式 |
+| --- | --- |
+| 仓库分析与编码 | DeepAgents 工具调用，结合本地受控工作区、仓库文件与 Git 状态完成任务 |
+| GitHub / Gitee | 解析两种仓库地址，读取仓库、Issue 和 PR 上下文，并支持评论、Issue 和 PR 等协作操作 |
+| 运行轨迹与流式消息 | 后端将 Agent 事件转换为前端可消费的实时事件，展示计划、工具运行和任务状态 |
+| 人工介入 | LangGraph interrupt 暂停当前任务，收到用户答复后从 checkpoint 恢复执行 |
+| 会话恢复 | LangGraph checkpoint 保存对话和图状态；业务 Store 保存任务、运行和界面所需状态 |
+| 上下文管理 | 仓库长期记忆注入、消息清理和 `compact_conversation` 上下文整理工具 |
+| 安全执行 | 工作区边界、命令守卫、输入清理和只读任务写操作拦截 |
+| 代码审查 | Reviewer 子 Agent、评审规则与 finding 工具，辅助检查变更并记录审查发现 |
+| 持久化后端 | 本地默认 SQLite；可配置 PostgreSQL 保存 checkpoint、LangGraph Store 和业务数据 |
+| Agent Eval | 提供评测案例与 fake、real、sandbox 执行入口，生成可复查的运行报告 |
+
+## 系统架构
 
 ```mermaid
 flowchart LR
-    U[用户请求] --> O[Agent Orchestrator]
-    O --> R[CodeGraph + grep 混合检索]
-    O --> P[Plan / Patch]
-    P --> X[Runtime 受控执行]
-    X --> S{执行后端}
-    S --> L[本地进程]
-    S --> B[OpenSandbox]
-    O --> D[(PostgreSQL)]
-    D --> C[Checkpoint]
-    D --> T[Store / 业务状态]
-    X --> A[审计事件]
-    A --> E[Agent Eval 报告]
-    P --> G[Git 分支 / 补丁 / 交付]
+    U[用户] --> UI[Vue 3 工作台]
+    UI -->|HTTP / SSE| API[FastAPI API]
+    API --> RT[任务运行时]
+    RT --> AG[DeepAgents + LangGraph]
+    AG --> MW[中间件 / 工具 / Reviewer 子 Agent]
+    MW --> WS[受控本地仓库工作区]
+    MW --> SCM[GitHub / Gitee API]
+    RT --> CP[(LangGraph Checkpoint)]
+    RT --> ST[(LangGraph Store 与业务 Store)]
+    CP --> DB[(SQLite 默认 / PostgreSQL 可选)]
+    ST --> DB
 ```
 
-代码入口主要位于：
+### 技术栈与依赖
 
-| 目录 | 作用 |
+| 层次 | 主要依赖 |
 | --- | --- |
-| `agent/core/` | Agent 状态、持久化、检索、运行时、租约和审计 |
-| `agent/evals/` | Eval 数据模型、运行器、聚合报告和沙箱适配 |
-| `agent/integrations/` | OpenSandbox、模型和外部服务适配 |
-| `scripts/` | 迁移、评测、恢复、健康检查和验证脚本 |
-| `evals/` | 可复现评测样例、断言和数据说明 |
-| `.agents/skills/` | 项目专用 Agent Skill，包括 Issue Writer |
-| `docs/` | 架构、部署、运行时、Eval 和面试说明 |
+| 后端 API | Python、FastAPI、Uvicorn |
+| Agent 与编排 | DeepAgents `0.6.11`、LangChain、LangGraph |
+| 模型接入 | `langchain-openai`，通过 DeepSeek 的 OpenAI 兼容 API 调用模型 |
+| 会话与业务数据 | SQLite 默认；可选 PostgreSQL、LangGraph checkpoint/store 适配器与 Psycopg |
+| 前端 | Vue 3、Vite、Pinia、Axios、Markdown-It、DOMPurify |
+| 可选沙箱 | OpenSandbox Python SDK（仅 sandbox 评测/执行需要） |
+
+后端依赖及版本范围以 [`pyproject.toml`](pyproject.toml) 为准，前端版本由 [`ui/package.json`](ui/package.json) 与 [`ui/yarn.lock`](ui/yarn.lock) 管理。
+
+### 代码目录
+
+| 路径 | 职责 |
+| --- | --- |
+| `agent/app.py` | FastAPI 服务入口与 API 路由注册 |
+| `agent/api/` | 对话任务、Dashboard、历史和状态等 HTTP API |
+| `agent/core/` | Agent 组装、任务调度、流式事件、checkpoint、持久化与工作区准备 |
+| `agent/backends/` | 本地 Shell、工作区和命令权限控制 |
+| `agent/tools/` | GitHub、Gitee、代码检索、人工介入、网页读取等 Agent 工具 |
+| `agent/store/` | SQLite / PostgreSQL 业务状态存储与迁移支持 |
+| `agent/evals/`、`evals/` | Eval 执行逻辑与评测案例 |
+| `ui/src/` | Vue 3 + Vite 前端工作台、会话状态和界面组件 |
+| `scripts/` | 启动、数据迁移、评测、部署检查和验证脚本 |
+| `docs/` | 架构、运行时、前端、部署与项目学习文档 |
 
 ## 快速开始
 
-### 1. 安装依赖
+### 环境要求
 
-```powershell
+- Python 3.14 或更高版本（见 [`pyproject.toml`](pyproject.toml)）
+- Node.js 与 Yarn Classic（前端依赖由 `ui/yarn.lock` 锁定）
+- DeepSeek API Key
+- GitHub 或 Gitee Token：需要读取私有仓库或进行对应平台写操作时配置
+
+当前 Agent 的 DeepAgents 运行时代码适配 `deepagents==0.6.11`。安装时请固定此版本；升级到 0.7 或更高版本前，需要先完成 backend 与 permission API 兼容改造。
+
+### 1. 克隆并安装后端
+
+```bash
+git clone https://github.com/Guo-Yixin/coding-agent.git
+cd coding-agent
+
 python -m venv .venv
+```
+
+Windows PowerShell：
+
+```powershell
 .\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
+python -m pip install --upgrade pip
+pip install -e . "deepagents==0.6.11"
 ```
 
-需要使用 OpenSandbox 适配器时安装可选依赖：
+macOS / Linux：
+
+```bash
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -e . "deepagents==0.6.11"
+```
+
+### 2. 配置模型、仓库与工作区
+
+复制环境模板：
 
 ```powershell
-pip install -e ".[sandbox]"
+Copy-Item .env.example .env
 ```
 
-### 2. 配置环境变量
+macOS / Linux：
 
-复制 `.env.example` 为 `.env`，至少配置模型和仓库信息。使用 PostgreSQL 时，将 DSN 指向自己的业务数据库，例如：
+```bash
+cp .env.example .env
+```
+
+编辑 `.env`，至少填入模型密钥，并设置 Agent 使用的工作区目录：
 
 ```dotenv
-POSTGRES_DSN=postgresql://user:password@127.0.0.1:5432/coding_agent_db
-PERSISTENCE_BACKEND=postgres
+DEEPSEEK_API_KEY=你的密钥
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+MAIN_MODEL=deepseek-flash
+
+# Agent 拉取和操作的仓库位于该目录下的 projects/ 子目录
+AI_WORKSPACE_ROOT=./workspace
+
+# 根据实际使用的平台填写；没有配置 Token 时只可访问公开且无需认证的内容
+GITHUB_TOKEN=你的GitHub令牌
+GITEE_TOKEN=你的Gitee令牌
 ```
 
-PostgreSQL 只需准备 `coding_agent_db` 数据库；应用启动时会按当前后端初始化所需表。没有 PostgreSQL 时可不配置 DSN，程序会回退到本地 SQLite，适合离线开发和单元测试。
+`.env.example` 还包含 API 地址、默认仓库、日志、Dashboard 和 PostgreSQL 等选项。请勿将真实密钥提交到 Git。
 
-### 3. 启动应用
+### 3. 启动后端
 
-```powershell
-python -m agent
+在仓库根目录运行：
+
+```bash
+python -m uvicorn agent.app:app --host 127.0.0.1 --port 2024
 ```
 
-启动前可以检查环境：
+API 文档地址：<http://127.0.0.1:2024/docs>。
 
-```powershell
-python scripts/check_env.py
+Windows 也可以运行 `scripts/start_backend.cmd`；Linux 可运行 `scripts/start_backend.sh`。脚本默认监听 `0.0.0.0`，用于远程访问前应先按部署环境配置网络访问控制。
+
+### 4. 启动前端
+
+新开一个终端：
+
+```bash
+cd ui
+yarn install --frozen-lockfile
+yarn dev
 ```
 
-## PostgreSQL 持久化与迁移
+如果尚未安装 Yarn Classic，可先运行 `npm install --global yarn`。
 
-### 为什么使用 PostgreSQL
+打开 <http://127.0.0.1:3000>。Vite 会将 `/dashboard/api` 请求代理到 `http://127.0.0.1:2024`；如后端使用其他地址，可通过 `VITE_DASHBOARD_API_BASE_URL` 指定代理目标。
 
-SQLite 适合单机原型和快速测试，但多用户、多 Worker 同时写入、任务租约、审计查询和重启恢复需要共享数据库。PostgreSQL 后端将三类状态统一纳入可配置的持久化层：
+## 配置说明
 
-- LangGraph checkpoint：保存线程、节点状态和中断恢复点。
-- LangGraph store：保存跨会话的长期 Agent 状态。
-- Business store：保存任务、运行、租约和审计事件。
+### 必要配置
 
-配置 `POSTGRES_DSN` 后，`agent/core/persistence.py` 会构造 PostgreSQL 实现；保留 SQLite 适配器用于本地回退和迁移前验证。密码只放在 `.env`，不要提交到仓库。
-
-### SQLite 迁移
-
-迁移前先备份本地数据库，再执行：
-
-```powershell
-python scripts/migrate_sqlite_to_postgres.py `
-  --dsn "$env:POSTGRES_DSN" `
-  --report data/migration-report.json
-```
-
-脚本会迁移业务状态、checkpoint 和 store 数据，输出行数、跳过项、错误和审计信息。重复执行时应保持幂等；迁移完成后重新运行应用并检查 PostgreSQL 中的任务、线程和审计记录。
-
-## CodeGraph + grep 混合检索
-
-`agent/core/hybrid_search.py` 对每次代码问题同时执行：
-
-1. CodeGraph：优先返回符号定义、引用关系和调用路径，适合回答“谁调用了它”和“修改影响什么”。
-2. grep：补充字符串、配置键、错误信息、模板和未被图索引的文件。
-3. 融合排序：按路径和行号去重，结合结构化结果、文本命中和上下文预算输出统一结果。
-4. 可观测回退：记录 CodeGraph 不可用、超时或无命中时的 grep 回退原因。
-
-仓库根目录存在 `.codegraph/` 时，优先使用 CodeGraph；没有索引时仍可使用 grep，保证新仓库和增量文件可检索。
-
-## Agent Eval
-
-Eval 以一个案例目录描述用户任务、目标补丁、目标测试和回归测试，运行器记录每次工具调用和最终结果，生成可复现 JSON 报告。当前指标包括：
-
-- 补丁是否应用成功，以及变更文件和差异摘要。
-- 目标测试、回归测试是否通过。
-- CodeGraph、grep 和混合检索的命中情况。
-- 工具失败后的重试、恢复和最终状态。
-- 输入输出 Token、工具调用数和端到端延迟。
-- 运行环境、模型配置、Git revision 和报告 schema 版本。
-
-### 三种执行模式
-
-```powershell
-# 不依赖外部模型和沙箱的确定性冒烟评测
-python scripts/run_eval.py --mode fake --case-dir evals/smoke
-
-# 使用真实 Agent 配置运行
-python scripts/run_eval.py --mode real --case-dir evals/smoke
-
-# 在 OpenSandbox 中运行
-python scripts/run_eval.py --mode sandbox --case-dir evals/smoke
-```
-
-报告默认写入 `eval_runs/`，可以提交到 CI 或作为 Prompt、检索策略和运行策略迭代的比较基线。案例建议至少包含：
-
-```text
-evals/smoke/cases/<case-id>/task.md
-evals/smoke/cases/<case-id>/expected.patch
-evals/smoke/cases/<case-id>/target-tests.txt
-evals/smoke/cases/<case-id>/regression-tests.txt
-```
-
-更多案例格式和指标说明见 [`evals/README.md`](evals/README.md)。
-
-## OpenSandbox 轻量隔离执行
-
-OpenSandbox 是可选执行后端，不是应用启动的硬依赖。配置示例：
-
-```dotenv
-OPEN_SANDBOX_DOMAIN=http://127.0.0.1:8080
-OPEN_SANDBOX_API_KEY=
-OPEN_SANDBOX_IMAGE=python:3.11-slim
-OPEN_SANDBOX_TIMEOUT_SECONDS=300
-OPEN_SANDBOX_KEEP=false
-```
-
-启动 OpenSandbox Server 后验证连接：
-
-```powershell
-python scripts/verify_opensandbox.py --domain "$env:OPEN_SANDBOX_DOMAIN"
-```
-
-健康检查成功只代表服务端可达，不代表节点能够拉取指定镜像。若创建沙箱时出现镜像仓库 DNS、网络或权限错误，应先在 OpenSandbox 所在节点验证镜像拉取，再运行 sandbox Eval。生产环境应配置 API Key、资源上限、命令超时和允许的工作目录，并避免把真实密钥上传到沙箱。
-
-## 多 Worker、租约与重启恢复
-
-业务任务通过租约避免多个 Worker 重复执行：
-
-```text
-acquire → renew heartbeat → execute → release
-                     └───── worker 崩溃后由 recover 接管过期任务
-```
-
-`WorkerLeaseManager` 会记录租约获取、续租、释放、恢复和失败事件。Worker 重启后运行：
-
-```powershell
-python scripts/recover_stale_runs.py
-```
-
-恢复动作必须结合幂等任务 ID、最大重试次数和审计事件使用；对外部副作用操作仍应设计 outbox 或人工确认流程。
-
-## Git 交付与 Issue Writer
-
-Agent 的交付边界是“可审查的补丁”，推荐流程如下：
-
-```text
-需求 → 检索 → 计划 → 小步修改 → 目标/回归测试 → Eval 报告 → Git commit → PR/Issue
-```
-
-`.agents/skills/coding-agent-issue-writer/SKILL.md` 用于把代码、CodeGraph/grep 结果、运行日志和截图整理成 Issue 草稿。它负责结构化和验证信息，不会在缺少标题、正文、标签或目标仓库确认时直接创建 Issue。
-
-## 关键配置
-
-| 配置 | 说明 |
+| 变量 | 用途 |
 | --- | --- |
-| `MODEL_PROVIDER` / `MODEL_NAME` | 模型提供商和模型名 |
-| `REPO_PATH` | Agent 操作的仓库路径 |
-| `POSTGRES_DSN` | PostgreSQL 连接串，目标数据库为用户自己的 `coding_agent_db` |
-| `PERSISTENCE_BACKEND` | `postgres` 或 `sqlite`；留空时按 DSN 自动选择 |
-| `CHECKPOINT_DB_PATH` | SQLite checkpoint 文件路径 |
-| `STORE_DB_PATH` | SQLite 业务 Store 文件路径 |
-| `LANGGRAPH_STORE_DB_PATH` | SQLite LangGraph Store 文件路径 |
-| `OPEN_SANDBOX_DOMAIN` | OpenSandbox 服务地址 |
-| `OPEN_SANDBOX_API_KEY` | OpenSandbox API Key |
-| `OPEN_SANDBOX_IMAGE` | 沙箱基础镜像 |
-| `OPEN_SANDBOX_TIMEOUT_SECONDS` | 沙箱任务总超时 |
+| `DEEPSEEK_API_KEY` | 调用 DeepSeek 模型的凭证 |
+| `DEEPSEEK_BASE_URL` | 模型 API 地址 |
+| `MAIN_MODEL` | Agent 使用的主模型名称 |
+| `AI_WORKSPACE_ROOT` | 隔离项目源码的 Agent 工作区根目录；仓库克隆到其 `projects/` 下 |
 
-完整变量和默认值以 [`.env.example`](.env.example) 为准。
+### 可选配置
 
-## 测试与验证
+| 变量 | 用途 |
+| --- | --- |
+| `GITHUB_TOKEN` | GitHub 仓库、Issue、PR 等 API 操作 |
+| `GITEE_TOKEN` | Gitee 仓库、Issue、PR 等 API 操作 |
+| `DEFAULT_REPO_PROVIDER`、`DEFAULT_REPO_URL` | 新会话的初始仓库平台与仓库地址 |
+| `PERSISTENCE_BACKEND` | 选择 `sqlite` 或 `postgres`；默认根据 `POSTGRES_DSN` 自动选择 |
+| `POSTGRES_DSN` | PostgreSQL 连接串；配置后可用于共享持久化 |
+| `CHECKPOINT_DB_PATH` | SQLite checkpoint 文件位置 |
+| `STORE_DB_PATH` | SQLite 业务 Store 文件位置 |
+| `LANGGRAPH_STORE_DB_PATH` | SQLite LangGraph Store 文件位置 |
+| `LOCAL_SHELL_ALLOW_NETWORK` | 控制本地 Shell 命令是否允许网络访问 |
+| `AGENT_MAX_TOOL_CALLS`、`AGENT_MAX_SECONDS` | 每次运行的工具调用数与时长上限 |
 
-运行单元测试：
+完整配置项及示例值见 [`.env.example`](.env.example)。没有 PostgreSQL DSN 时，应用默认使用本地 SQLite。
 
-```powershell
+## 开发与验证
+
+安装测试工具并运行单元测试：
+
+```bash
+pip install pytest
 python -m pytest tests/unit -q
 ```
 
-运行 PostgreSQL 集成测试前，确保 PostgreSQL 服务可连接：
+前端生产构建：
 
-```powershell
-python -m pytest tests/integration -q
+```bash
+cd ui
+yarn build
 ```
 
-验证迁移、Eval 和 OpenSandbox：
+项目还提供以下验证入口：
 
-```powershell
-python scripts/migrate_sqlite_to_postgres.py --help
+```bash
 python scripts/run_eval.py --mode fake --case-dir evals/smoke
-python scripts/verify_opensandbox.py --help
+python scripts/verify_backend.py
+python scripts/verify_streaming_runtime.py
 ```
 
-## 安全边界与当前限制
+`fake` Eval 使用确定性模拟运行，不依赖真实模型；`real` 模式需要可用的模型配置；`sandbox` 模式还需要额外安装并启动 OpenSandbox。
 
-- `.env`、模型密钥、数据库密码和沙箱 API Key 不应提交到 Git。
-- Agent 默认只应操作显式授权的仓库路径；生产部署需要额外的权限、网络和资源限制。
-- OpenSandbox 服务健康不等于沙箱任务成功，镜像拉取和节点网络需要单独验证。
-- PostgreSQL 迁移前应备份 SQLite 文件，并在业务低峰期执行；迁移报告应保留用于审计。
-- Eval 报告是决策依据，不等于业务正确性证明；高风险变更仍需人工 Review。
+## 持久化与部署
 
-## 文档索引
+- **本地开发：** 默认 SQLite，将 checkpoint、LangGraph Store 与业务状态保存在 `data/`。
+- **共享部署：** 设置 `POSTGRES_DSN` 和 `PERSISTENCE_BACKEND=postgres`，由 PostgreSQL 提供共享持久化。
+- **隔离执行：** OpenSandbox 为可选适配器，安装额外依赖 `pip install -e ".[sandbox]"`，并配置 OpenSandbox 服务。
+- **线上部署：** 需要单独配置密钥、数据库、工作区权限、监听地址、网络策略和资源限制。
 
-- [核心架构](docs/CODING_AGENT_CORE.md)
-- [运行时与流式执行](docs/CODING_AGENT_RUNTIME_STREAMING.md)
-- [Harness 与 Agent Eval](docs/CODING_HARNESS_AGENT_EVAL_INTERVIEW_QA.md)
-- [重建与演进计划](docs/CODING_REBUILD_PLAN.md)
-- [云端 Docker 部署](docs/CODING_CLOUD_DOCKER_DEPLOYMENT.md)
-- [GitHub Token 与 Provider](docs/GITHUB_TOKEN_AND_PROVIDER.md)
-- [Issue Writer Skill](.agents/skills/coding-agent-issue-writer/SKILL.md)
+SQLite 到 PostgreSQL 的迁移、Linux 部署与 Docker 方案见下方文档索引。迁移前应备份数据库并检查迁移报告。
 
-## License
+## 项目文档
 
-MIT
+- [CODING 核心架构](docs/CODING_AGENT_CORE.md)
+- [运行时与流式输出](docs/CODING_AGENT_RUNTIME_STREAMING.md)
+- [前端环境与 API 配置](docs/CODING_FRONTEND_ENV_SETUP.md)
+- [Linux 部署手册](docs/CODING_LINUX_DEPLOYMENT_RUNBOOK.md)
+- [Docker 云端部署方案](docs/CODING_CLOUD_DOCKER_DEPLOYMENT.md)
+- [GitHub Token 与仓库平台配置](docs/GITHUB_TOKEN_AND_PROVIDER.md)
+- [Agent Eval 与 Harness 说明](docs/CODING_HARNESS_AGENT_EVAL_INTERVIEW_QA.md)
+- [Agent Eval 案例说明](evals/README.md)
+
+## 参与贡献
+
+欢迎通过 Issue 反馈问题和建议，也欢迎提交 Pull Request。提交前请说明改动背景、验证方式和可能影响的模块；涉及 Agent 行为或工具权限的改动，请补充对应测试或 Eval 案例。
+
+## 许可证
+
+本项目基于 [MIT License](LICENSE) 发布。
