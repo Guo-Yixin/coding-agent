@@ -32,6 +32,7 @@ from agent.core.repository_workspace import prepare_repository_workspace, task_b
 from agent.core.repo_memory_update import RepoMemoryUpdate, update_repo_memory_from_text
 from agent.core.settings import PERSISTENCE_BACKEND, WORKSPACE_ROOT
 from agent.core.streaming_runtime import run_agent_with_event_stream
+from agent.core.todo_completion import summarize_latest_todos
 from agent.core.task_intent import classify_task_kind, is_pull_only_task, is_workspace_listing_task
 from agent.core.worker import WorkerLeaseManager
 from agent.env_utils import get_env
@@ -44,6 +45,31 @@ logger = logging.getLogger("agent.run.runtime")
 # event_sink 是 FastAPI SSE 层传进来的回调。
 # runtime 自己不关心 HTTP 细节，只把“有新内容了”通知给上层。
 RuntimeEventSink = Callable[[str, dict[str, Any]], None]
+
+
+def _record_todo_completion_guard(store: Any, *, thread_id: str, run_id: str) -> dict[str, int | bool] | None:
+    """Persist a visible warning when a normal run ends with unfinished todos."""
+
+    list_run_events = getattr(store, "list_run_events_for_run", None)
+    if list_run_events is None:
+        return None
+    try:
+        summary = summarize_latest_todos(list_run_events(thread_id, run_id))
+    except Exception:
+        # Activity telemetry must not turn an otherwise successful Agent run into a failure.
+        logger.exception("读取任务清单终态失败：thread_id=%s run_id=%s", thread_id, run_id)
+        return None
+    if summary and not summary["complete"]:
+        record_event(
+            thread_id,
+            "todo:completion-check",
+            "运行已结束，但任务清单仍有未完成项",
+            kind="todo_guard",
+            status="warning",
+            detail=json.dumps(summary, ensure_ascii=False),
+            run_id=run_id,
+        )
+    return summary
 
 
 def _build_agent_for_runtime(
@@ -857,6 +883,7 @@ def run_plan_response_task(
             event_sink=event_sink,
             model_id=model_id,
         )
+        _record_todo_completion_guard(store, thread_id=thread_id, run_id=run_id)
         store.finish_open_run_events(thread_id, status="completed", run_id=run_id)
         messages = result.get("messages", [])
         plan_text = _extract_best_plan_text(messages)
@@ -1211,11 +1238,13 @@ def run_agent_task(
             store.record_run(run_id=run_id, thread_id=thread_id, status="awaiting_approval", finished=True)
             record_event(thread_id, "human:intervention", "等待你答复后继续", status="completed")
             return {"thread_id": thread_id, "run_id": run_id, "status": "awaiting_approval", "interrupts": interrupts}
+        todo_summary = _record_todo_completion_guard(store, thread_id=thread_id, run_id=run_id)
         store.finish_open_run_events(thread_id, status="completed", run_id=run_id)
         current_branch = _detect_current_branch(repo)
         store.update_thread_status(thread_id, "completed", branch_name=current_branch)
         store.record_run(run_id=run_id, thread_id=thread_id, status="completed", finished=True)
-        record_event(thread_id, "done", "任务完成", status="completed")
+        run_title = "任务完成" if not todo_summary or todo_summary["complete"] else "任务运行结束（清单未完成）"
+        record_event(thread_id, "done", run_title, status="completed")
         messages = result.get("messages", [])
         final_answer = _extract_final_assistant_text(messages)
         if final_answer:

@@ -271,6 +271,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .run-activity-status { margin-left: auto; border-radius: 999px; padding: 3px 9px; background: #e8f1ed; color: #527267; font-size: 11px; white-space: nowrap; }
 .run-activity-failed .run-activity-status { background: #fff0ef; color: #ad514d; }
 .run-activity-awaiting_approval .run-activity-status { background: #fff6e5; color: #946d24; }
+.run-activity-incomplete .run-activity-status { background: #fff6e5; color: #946d24; }
 .run-activity-content { border-top: 1px solid #e3ece8; padding: 12px 14px; }
 .run-activity-content .todo-card { margin: 0 0 12px; }
 .run-activity-timeline { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }

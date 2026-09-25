@@ -5,7 +5,87 @@ import pytest
 from fastapi import HTTPException
 
 import agent.api.dashboard_routes as dashboard_routes
+import agent.core.runtime as runtime
+from agent.core.todo_completion import summarize_latest_todos
 from agent.store.sqlite_store import LocalSqliteStore
+
+
+@pytest.mark.parametrize(
+    ("todos", "expected"),
+    [
+        ([{"content": "A", "status": "completed"}, {"content": "B", "status": "completed"}],
+         {"total": 2, "completed": 2, "in_progress": 0, "pending": 0, "complete": True}),
+        ([{"content": "A", "status": "in_progress"}, {"content": "B", "status": "pending"}],
+         {"total": 2, "completed": 0, "in_progress": 1, "pending": 1, "complete": False}),
+    ],
+)
+def test_summarize_latest_todos_uses_item_status_not_event_status(todos, expected):
+    assert summarize_latest_todos([{
+        "kind": "todo", "status": "completed", "detail": {"todos": todos},
+    }]) == expected
+
+
+def test_summarize_latest_todos_uses_latest_snapshot_and_ignores_malformed_events():
+    events = [
+        {"kind": "todo", "detail": '{"todos":[{"content":"A","status":"pending"}]}'},
+        {"kind": "todo", "detail": "not-json"},
+        {"kind": "todo", "detail": {"todos": [{"content": "A", "status": "completed"}]}},
+    ]
+
+    assert summarize_latest_todos(events) == {
+        "total": 1, "completed": 1, "in_progress": 0, "pending": 0, "complete": True,
+    }
+    assert summarize_latest_todos([]) is None
+
+
+def test_summarize_latest_todos_respects_an_explicit_empty_latest_snapshot():
+    events = [
+        {"kind": "todo", "detail": {"todos": [{"content": "A", "status": "pending"}]}},
+        {"kind": "todo", "detail": {"todos": []}},
+    ]
+
+    assert summarize_latest_todos(events) is None
+
+
+def test_runtime_records_warning_when_run_ends_with_incomplete_todos(tmp_path, monkeypatch):
+    store = LocalSqliteStore(tmp_path / "store.sqlite")
+    store.record_run(run_id="run-1", thread_id="thread-1", status="running")
+    store.add_run_event(
+        event_id="todo-1", thread_id="thread-1", run_id="run-1", kind="todo",
+        title="任务清单", status="completed",
+        detail='{"todos":[{"content":"实现接口","status":"in_progress"},{"content":"补测试","status":"pending"}]}',
+    )
+    recorded = []
+    monkeypatch.setattr(runtime, "record_event", lambda *args, **kwargs: recorded.append((args, kwargs)))
+
+    try:
+        summary = runtime._record_todo_completion_guard(store, thread_id="thread-1", run_id="run-1")
+
+        assert summary == {"total": 2, "completed": 0, "in_progress": 1, "pending": 1, "complete": False}
+        assert recorded[0][1]["kind"] == "todo_guard"
+        assert recorded[0][1]["status"] == "warning"
+        assert recorded[0][1]["run_id"] == "run-1"
+    finally:
+        store.close()
+
+
+def test_runtime_does_not_record_warning_when_all_todos_are_complete(tmp_path, monkeypatch):
+    store = LocalSqliteStore(tmp_path / "store.sqlite")
+    store.record_run(run_id="run-1", thread_id="thread-1", status="running")
+    store.add_run_event(
+        event_id="todo-1", thread_id="thread-1", run_id="run-1", kind="todo",
+        title="任务清单", status="completed",
+        detail='{"todos":[{"content":"实现接口","status":"completed"}]}',
+    )
+    recorded = []
+    monkeypatch.setattr(runtime, "record_event", lambda *args, **kwargs: recorded.append((args, kwargs)))
+
+    try:
+        summary = runtime._record_todo_completion_guard(store, thread_id="thread-1", run_id="run-1")
+        assert summary["complete"] is True
+        assert recorded == []
+    finally:
+        store.close()
 
 
 def test_sqlite_run_events_are_kept_and_scoped_to_each_run(tmp_path):
@@ -106,8 +186,13 @@ def test_run_activity_endpoint_returns_safe_run_scoped_events(monkeypatch):
                     "detail": '{"text":"完成了"}',
                 },
                 {
+                    "id": "todo-guard", "kind": "todo_guard", "title": "运行已结束，但任务清单仍有未完成项",
+                    "status": "warning", "created_at": datetime(2026, 9, 25, 8, 0, 2, tzinfo=UTC),
+                    "detail": '{"total":2,"completed":0,"in_progress":1,"pending":1,"complete":false}',
+                },
+                {
                     "id": "failure-detail", "kind": "execute", "title": "运行测试", "status": "error",
-                    "created_at": datetime(2026, 9, 25, 8, 0, 2, tzinfo=UTC),
+                    "created_at": datetime(2026, 9, 25, 8, 0, 3, tzinfo=UTC),
                     "detail": "secret output should not be exposed",
                 },
             ]
@@ -123,7 +208,8 @@ def test_run_activity_endpoint_returns_safe_run_scoped_events(monkeypatch):
     assert result["run_id"] == "run-1"
     assert result["events"][0]["detail"]["todos"][0]["content"] == "写测试"
     assert result["events"][1]["detail"] == {}
-    assert result["events"][2]["detail"] == {}
+    assert result["events"][2]["detail"]["complete"] is False
+    assert result["events"][3]["detail"] == {}
 
 
 def test_run_activity_endpoint_rejects_run_from_another_thread(monkeypatch):
