@@ -138,6 +138,7 @@ class LocalShellBackend(BaseSandbox):
         workspace: Workspace | str | os.PathLike[str] | None = None,
         *,
         provider: str | None = None,
+        working_dir: str | None = None,
         timeout: int = 3600,
     ) -> None:
         # 确定工作区根目录：传入的 workspace > 环境变量 > settings.py 的默认值
@@ -151,6 +152,7 @@ class LocalShellBackend(BaseSandbox):
         self.root = Path(configured_root).expanduser().resolve()
         # 工作区子目录规划
         self.projects_dir = self.root / os.environ.get("LOCAL_SHELL_PROJECTS_DIR", "projects")
+        self.working_dir = self._normalize_working_dir(working_dir or VIRTUAL_PROJECTS)
         self.skills_dir = self.root / "skills"
         self.policies_dir = self.root / "policies"
         self.reviews_dir = self.root / "reviews"
@@ -179,7 +181,22 @@ class LocalShellBackend(BaseSandbox):
 
     def get_work_dir(self) -> str:
         # DeepAgents 协议：返回默认工作目录的虚拟路径
-        return VIRTUAL_PROJECTS
+        return self.working_dir
+
+    def set_working_dir(self, path: str | None) -> None:
+        """Bind this thread's command default to its selected repository directory."""
+
+        self.working_dir = self._normalize_working_dir(path or VIRTUAL_PROJECTS)
+        self._resolve_virtual_path(self.working_dir)
+
+    @staticmethod
+    def _normalize_working_dir(path: str) -> str:
+        normalized = str(path).strip().replace("\\", "/") or VIRTUAL_PROJECTS
+        if not normalized.startswith(VIRTUAL_PROJECTS + "/") and normalized != VIRTUAL_PROJECTS:
+            raise ValueError("Agent working directory must be inside /projects")
+        if any(part in {".", ".."} for part in normalized.split("/")):
+            raise ValueError("Agent working directory cannot contain traversal segments")
+        return normalized.rstrip("/") or VIRTUAL_PROJECTS
 
     def get_workspace_root(self) -> str:
         # DeepAgents 协议：返回虚拟根路径
@@ -259,12 +276,13 @@ class LocalShellBackend(BaseSandbox):
             if denied:
                 return ExecuteResponse(output=f"命令被拒绝：{denied}", exit_code=126, truncated=False)
 
-        prepared_command = self._prepare_command(command, cwd_path=self.projects_dir)
+        cwd_path = self._resolve_virtual_path(self.working_dir)
+        prepared_command = self._prepare_command(command, cwd_path=cwd_path)
         effective_timeout = timeout if timeout is not None else self.default_timeout
         try:
             completed = subprocess.run(
                 prepared_command,  # 最终执行的命令字符串，已经完成虚拟路径转换、Git 认证注入等预处理
-                cwd=self.projects_dir,  # 子进程工作目录，默认限制在 projects 目录下执行
+                cwd=cwd_path,  # 默认限定在当前 thread 绑定的仓库目录下执行
                 capture_output=True,  # 捕获 stdout 和 stderr，避免命令输出直接写到后端进程控制台
                 text=True,  # 以文本模式返回输出内容，而不是 bytes
                 encoding="utf-8",  # 使用 UTF-8 解码 stdout/stderr，保持日志和模型上下文编码一致
@@ -905,7 +923,10 @@ class LocalShellBackend(BaseSandbox):
         这里不会直接把整段 shell 原样执行，而是提取 `cd` 后的目录作为 subprocess 的 cwd，
         再对后半段命令做安全检查和白名单归一化。
         """
-        cwd_path = self._resolve_virtual_path(self._normalize_compat_path(cwd))
+        normalized_cwd = self._normalize_compat_path(cwd)
+        if normalized_cwd == "/":
+            normalized_cwd = self.working_dir
+        cwd_path = self._resolve_virtual_path(normalized_cwd)
         command = re.sub(r"\s+2>&1(?=\s*(?:&&|\|\||$))", "", command.strip())
         first_part = command.split("&&", 1)[0].strip()
         cd_match = re.fullmatch(r"cd\s+(.+)", first_part, flags=re.IGNORECASE)

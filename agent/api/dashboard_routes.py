@@ -155,6 +155,11 @@ def _repo_provider(thread: dict[str, Any]) -> str:
         return DEFAULT_REPO_PROVIDER
 
 
+def _repository_identity(repo_url: str) -> tuple[str, str, str]:
+    repo = parse_repo_url(repo_url)
+    return repo.provider, repo.owner.casefold(), repo.repo.casefold()
+
+
 def _pr_payload(thread: dict[str, Any]) -> dict[str, Any] | None:
     """把 Store 中的 PR 字段转换成前端期望的 PR 对象。
 
@@ -631,6 +636,15 @@ async def dashboard_stream_existing_message(
         provider=body.provider,
         fallback=(task or {}).get("repo_url"),
     )
+    existing_repo = (task or {}).get("repo_url")
+    if existing_repo and _repository_identity(str(existing_repo)) != _repository_identity(repo_url):
+        raise HTTPException(
+            status_code=409,
+            detail="同一会话不能切换 GitHub/Gitee 仓库；请新建会话后选择目标仓库。",
+        )
+    if existing_repo:
+        # Keep the persisted canonical casing/URL stable for case-insensitive providers.
+        repo_url = parse_repo_url(str(existing_repo)).clone_url
     return _post_streaming_response(thread_id=thread_id, repo_url=repo_url, content=body.content)
 
 
