@@ -177,6 +177,10 @@ function handleInterventionResponse({ intervention_id, response }) {
   agent.submit(response, { interaction_action: 'resume_intervention', intervention_id })
 }
 
+function handleRunActivityExpand({ run_id }) {
+  agent.loadRunActivity(run_id)
+}
+
 onMounted(() => {
   try {
     sidebarCollapsed.value = window.localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'true'
@@ -278,8 +282,11 @@ watch(sidebarCollapsed, (value) => {
           :key="message.id"
           :message="message"
           :disabled="agent.streaming"
+          :run-activity-events="agent.runActivityEvents"
+          :run-activity-loading="agent.runActivityLoading"
           @plan-action="handlePlanAction"
           @intervention-response="handleInterventionResponse"
+          @run-activity-expand="handleRunActivityExpand"
         />
 
         <div v-if="agent.error" class="error-banner">{{ agent.error }}</div>

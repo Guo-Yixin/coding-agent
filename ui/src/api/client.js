@@ -22,6 +22,10 @@ export const dashboardApi = {
     const { data } = await http.get(`/threads/${threadId}`)
     return data
   },
+  async getRunActivity(threadId, runId) {
+    const { data } = await http.get(`/threads/${threadId}/runs/${runId}/events`)
+    return data
+  },
   async deleteThread(threadId) {
     await http.delete(`/threads/${threadId}`)
   },

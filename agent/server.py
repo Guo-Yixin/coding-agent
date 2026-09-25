@@ -327,12 +327,13 @@ def get_agent(config: RunnableConfig):
     if repo_memory_content:
         configurable["_repo_memory_content"] = repo_memory_content
 
-    # 本地部署版暂时主 Agent 和子 Agent 共用 deepseek-v4-pro。
+    # 主 Agent 和子 Agent 共用当前请求经服务端校验后的 MAIN_MODEL。
     # 后续如果要演示 之前项目 的 profile / fallback / team defaults，
     # 可以从这里拆出 main_model 和 subagent_model 的不同配置。
     # 这里每次创建 Agent 都重新创建 model wrapper，但模型调用状态不依赖该对象保存。
-    main_model = make_main_model()
-    subagent_model = make_main_model()
+    model_id = configurable.get("model_id")
+    main_model = make_main_model(model_id) if model_id else make_main_model()
+    subagent_model = make_main_model(model_id) if model_id else make_main_model()
 
     from agent.core.graph import get_checkpointer
 

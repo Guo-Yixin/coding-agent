@@ -24,6 +24,7 @@ from langchain_core.messages import BaseMessage
 
 from agent.core.events import record_event
 from agent.core.middleware.run_limits import AgentRunLimitExceeded, AgentRunLimitTracker
+from agent.env_utils import get_env
 from agent.tools.gitee_api import mask_token
 
 logger = logging.getLogger("agent.run.streaming")
@@ -329,6 +330,7 @@ def _record_write_todos(thread_id: str, run_id: str, tool_call: Any, index: int)
         kind="todo",
         status="completed",
         detail=json.dumps({"todos": todos}, ensure_ascii=False),
+        run_id=run_id,
     )
     return True
 
@@ -395,6 +397,7 @@ def _record_todos(
         kind="todo",
         status=status,
         detail=json.dumps({"todos": todos}, ensure_ascii=False),
+        run_id=run_id,
     )
     if event_sink is not None:
         # 立即推给前端，让任务计划列表在工具调用参数逐步生成时也能更新。
@@ -458,6 +461,7 @@ def _record_assistant_stream_message(
         kind="other",
         status="in_progress",
         detail=json.dumps({"text": text}, ensure_ascii=False),
+        run_id=run_id,
     )
     if event_sink is not None:
         message_id = f"{thread_id}-live-assistant-{run_id}-{index}"
@@ -514,6 +518,7 @@ def _record_subagent(thread_id: str, run_id: str, subagent: Any, index: int) -> 
         kind="think",
         status=event_status,
         detail=_stringify(path, limit=500) or None,
+        run_id=run_id,
     )
 
 
@@ -725,6 +730,7 @@ def run_agent_with_event_stream(
     task_kind: str | None = None,
     event_sink: StreamEventSink | None = None,
     resume_value: Any | None = None,
+    model_id: str | None = None,
 ) -> dict[str, Any]:
     """使用官方 v3 event streaming 驱动 DeepAgent。
 
@@ -742,7 +748,9 @@ def run_agent_with_event_stream(
         version="v3",
         config={"configurable": {"thread_id": thread_id}},
     )
-    record_event(thread_id, "model", "调用 deepseek-v4-pro", kind="other", status="in_progress")
+    model_name = model_id or get_env("MAIN_MODEL", "deepseek-v4-pro").strip()
+    model_title = f"调用 {model_name}"
+    record_event(thread_id, "model", model_title, kind="other", status="in_progress", run_id=run_id)
     # raw protocol events 是当前版本里唯一能拿到 token/chunk 的通道。
     # 这里同时解析 text-delta 和 write_todos 的 tool_call_chunk，保证正文和任务计划都能流式更新。
     try:
@@ -762,7 +770,9 @@ def run_agent_with_event_stream(
             status="error",
             detail=str(exc),
         )
-        record_event(thread_id, "model", "调用 deepseek-v4-pro", kind="other", status="error", detail=str(exc))
+        record_event(
+            thread_id, "model", model_title, kind="other", status="error", detail=str(exc), run_id=run_id
+        )
         raise
 
     output = stream.output
@@ -772,7 +782,7 @@ def run_agent_with_event_stream(
         value = getattr(item, "value", item)
         if isinstance(value, dict):
             interrupts.append(value)
-    record_event(thread_id, "model", "调用 deepseek-v4-pro", kind="other", status="completed")
+    record_event(thread_id, "model", model_title, kind="other", status="completed", run_id=run_id)
     logger.info(
         "官方事件流消费完成：thread_id=%s tool_calls=%s subagents=%s",
         thread_id,

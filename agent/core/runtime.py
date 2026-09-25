@@ -34,6 +34,7 @@ from agent.core.settings import PERSISTENCE_BACKEND, WORKSPACE_ROOT
 from agent.core.streaming_runtime import run_agent_with_event_stream
 from agent.core.task_intent import classify_task_kind, is_pull_only_task, is_workspace_listing_task
 from agent.core.worker import WorkerLeaseManager
+from agent.env_utils import get_env
 from agent.server import get_agent
 from agent.tools.gitee_api import mask_token
 from agent.repository import parse_repo_url
@@ -50,6 +51,7 @@ def _build_agent_for_runtime(
     thread_id: str,
     task_kind: str,
     repo_url: str | None = None,
+    model_id: str | None = None,
 ):
     """为 FastAPI runtime 构造 open-swe 风格的 Agent config。
 
@@ -75,6 +77,8 @@ def _build_agent_for_runtime(
     if repo_url:
         # 仓库地址在 Agent 工厂中会被用于初始化本地仓库上下文和仓库记忆。
         configurable["repo_url"] = repo_url
+    if model_id:
+        configurable["model_id"] = model_id
     return get_agent({"configurable": configurable})
 
 
@@ -645,7 +649,6 @@ def initialize_task_record(
             content=prompt,
             metadata={"source": "dashboard"},
         )
-    record_event(thread_id, "created", "任务已创建", status="completed")
     return thread_id
 
 
@@ -664,7 +667,6 @@ def run_workspace_listing_task(*, repo_url: str, prompt: str, thread_id: str | N
         record_user_message=should_record_user_message,
     )
     store = get_store()
-    store.clear_run_events(thread_id)
     # run_id 区分同一个 thread 内的多轮运行，前端实时事件依赖它避免跨轮覆盖。
     run_id = str(uuid.uuid4())
     store.record_run(run_id=run_id, thread_id=thread_id, status="running")
@@ -716,7 +718,6 @@ def run_pull_only_task(*, repo_url: str, prompt: str, thread_id: str | None = No
         record_user_message=should_record_user_message,
     )
     store = get_store()
-    store.clear_run_events(thread_id)
     run_id = str(uuid.uuid4())
     store.record_run(run_id=run_id, thread_id=thread_id, status="running")
     repo = parse_repo_url(repo_url)
@@ -765,6 +766,7 @@ def run_plan_response_task(
     previous_plan_message: dict[str, Any] | None = None,
     revision_prompt: str | None = None,
     event_sink: RuntimeEventSink | None = None,
+    model_id: str | None = None,
 ) -> dict[str, Any]:
     """为编码需求生成技术方案，并把方案作为普通回答直接展示。
 
@@ -779,12 +781,8 @@ def run_plan_response_task(
 
     thread_id = thread_id or str(uuid.uuid4())
     store = get_store()
-    store.clear_run_events(thread_id)
     logger.info("开始生成技术方案：thread_id=%s repo_url=%s", thread_id, repo_url)
-    record_event(thread_id, "created", "任务已创建", status="completed")
-    record_event(thread_id, "repo", "解析 GitHub/Gitee 仓库", status="in_progress")
     repo = parse_repo_url(repo_url)
-    record_event(thread_id, "repo", "解析 GitHub/Gitee 仓库", status="completed")
 
     plan_source_prompt = prompt
     previous_plan_text: str | None = None
@@ -824,6 +822,8 @@ def run_plan_response_task(
     plan_id = str(uuid.uuid4())
     store.record_run(run_id=run_id, thread_id=thread_id, status="running")
     try:
+        record_event(thread_id, "created", "任务已创建", status="completed", run_id=run_id)
+        record_event(thread_id, "repo", "解析 GitHub/Gitee 仓库", status="completed", run_id=run_id)
         record_event(thread_id, "workspace", "准备所选仓库工作区", status="in_progress")
         prepared_workspace = _prepare_selected_repository(repo, thread_id=thread_id)
         record_event(
@@ -835,7 +835,9 @@ def run_plan_response_task(
         )
         record_event(thread_id, "agent", "构建方案生成 Agent", status="in_progress")
         # 方案任务需要读取仓库结构，因此先确保加载的是用户所选仓库。
-        agent = _build_agent_for_runtime(thread_id=thread_id, task_kind="planning", repo_url=repo.clone_url)
+        agent = _build_agent_for_runtime(
+            thread_id=thread_id, task_kind="planning", repo_url=repo.clone_url, model_id=model_id
+        )
         record_event(thread_id, "agent", "构建方案生成 Agent", status="completed")
         # 事件流消费由 streaming_runtime.py 负责。runtime 只关心最终是否成功、
         # 以及最终 messages 里是否能提取到一份可确认的技术方案。
@@ -853,8 +855,9 @@ def run_plan_response_task(
             ),
             task_kind="planning",
             event_sink=event_sink,
+            model_id=model_id,
         )
-        store.finish_open_run_events(thread_id, status="completed")
+        store.finish_open_run_events(thread_id, status="completed", run_id=run_id)
         messages = result.get("messages", [])
         plan_text = _extract_best_plan_text(messages)
         if not plan_text:
@@ -907,7 +910,7 @@ def run_plan_response_task(
             "status": "completed",
         }
     except Exception as exc:
-        store.finish_open_run_events(thread_id, status="error")
+        store.finish_open_run_events(thread_id, status="error", run_id=run_id)
         store.update_thread_status(thread_id, "failed")
         record_event(thread_id, "failed", "技术方案生成失败", status="error", detail=mask_token(str(exc)))
         store.record_run(
@@ -930,6 +933,7 @@ def run_agent_task(
     interaction_action: str | None = None,
     plan_id: str | None = None,
     intervention_id: str | None = None,
+    model_id: str | None = None,
 ) -> dict[str, Any]:
     """运行一次普通 Agent 任务的总入口。
 
@@ -1039,6 +1043,7 @@ def run_agent_task(
                     previous_plan_message=previous,
                     revision_prompt=prompt,
                     event_sink=event_sink,
+                    model_id=model_id,
                 )
             except Exception:
                 store.transition_thread_plan(
@@ -1087,6 +1092,7 @@ def run_agent_task(
                 previous_plan_message=plan_message,
                 revision_prompt=prompt,
                 event_sink=event_sink,
+                model_id=model_id,
             )
     if existing_thread and approved_plan_text is None and not interaction_action and _is_approval_prompt(prompt):
         # 没有可确认的技术方案时，把“确认”当作普通问题处理，避免误执行旧任务。
@@ -1100,19 +1106,15 @@ def run_agent_task(
         # 只要是 coding 请求，且没有找到用户确认过的方案，就先转入 planning。
         # 这个判断在 runtime 层完成，而不是只写在 Prompt 里，目的是把“先方案、再实施”
         # 做成确定性的产品流程，降低 Agent 首轮直接误改代码的风险。
-        return run_plan_response_task(repo_url=repo_url, prompt=prompt, thread_id=thread_id, event_sink=event_sink)
+        return run_plan_response_task(
+            repo_url=repo_url, prompt=prompt, thread_id=thread_id, event_sink=event_sink, model_id=model_id
+        )
 
     # 到这里说明本轮不是直达任务，也不是“未确认的 coding 需求”。
     # 接下来进入通用 Agent 执行分支：qa/analysis/review/coding 都会通过事件流运行。
-    get_store().clear_run_events(thread_id)
-    if approved_plan_text is not None:
-        record_event(thread_id, "plan:approved", "用户已确认技术方案", kind="other", status="completed")
     logger.info("任务开始：thread_id=%s repo_url=%s", thread_id, repo_url)
-    record_event(thread_id, "created", "任务已创建", status="completed")
-    record_event(thread_id, "repo", "解析 GitHub/Gitee 仓库", status="in_progress")
     repo = parse_repo_url(repo_url)
     logger.info("仓库解析成功：provider=%s owner=%s repo=%s", repo.provider, repo.owner, repo.repo)
-    record_event(thread_id, "repo", "解析 GitHub/Gitee 仓库", status="completed")
     store.upsert_thread(
         thread_id=thread_id,
         title=coding_prompt[:80] or f"{repo.provider.title()}: {repo.owner}/{repo.repo}",
@@ -1138,6 +1140,10 @@ def run_agent_task(
     store.record_run(run_id=run_id, thread_id=thread_id, status="running")
     logger.info("业务 Store 已记录运行：thread_id=%s run_id=%s", thread_id, run_id)
     try:
+        if approved_plan_text is not None:
+            record_event(thread_id, "plan:approved", "用户已确认技术方案", kind="other", status="completed", run_id=run_id)
+        record_event(thread_id, "created", "任务已创建", status="completed", run_id=run_id)
+        record_event(thread_id, "repo", "解析 GitHub/Gitee 仓库", status="completed", run_id=run_id)
         record_event(thread_id, "workspace", "准备所选仓库工作区", status="in_progress")
         prepared_workspace = _prepare_selected_repository(
             repo,
@@ -1153,7 +1159,9 @@ def run_agent_task(
         )
         record_event(thread_id, "agent", "构建 Agent 运行图", status="in_progress")
         # Agent 在仓库校验成功后才创建，backend 默认 cwd 已绑定到本轮仓库。
-        agent = _build_agent_for_runtime(thread_id=thread_id, task_kind=task_kind, repo_url=repo.clone_url)
+        agent = _build_agent_for_runtime(
+            thread_id=thread_id, task_kind=task_kind, repo_url=repo.clone_url, model_id=model_id
+        )
         logger.info("Agent 图已构建：thread_id=%s", thread_id)
         record_event(thread_id, "agent", "构建 Agent 运行图", status="completed")
         logger.info("开始通过官方事件流调用 Agent：thread_id=%s", thread_id)
@@ -1176,6 +1184,7 @@ def run_agent_task(
                 task_kind=task_kind,
                 event_sink=event_sink,
                 resume_value=resume_value,
+                model_id=model_id,
             )
         if interaction_action == "resume_intervention":
             store.finish_thread_intervention(intervention_id, thread_id=thread_id)
@@ -1196,13 +1205,13 @@ def run_agent_task(
                     run_id=run_id,
                     metadata={"source": "human_intervention", "intervention_id": intervention_id},
                 )
-            store.finish_open_run_events(thread_id, status="completed")
+            store.finish_open_run_events(thread_id, status="completed", run_id=run_id)
             current_branch = _detect_current_branch(repo)
             store.update_thread_status(thread_id, "awaiting_approval", branch_name=current_branch)
             store.record_run(run_id=run_id, thread_id=thread_id, status="awaiting_approval", finished=True)
             record_event(thread_id, "human:intervention", "等待你答复后继续", status="completed")
             return {"thread_id": thread_id, "run_id": run_id, "status": "awaiting_approval", "interrupts": interrupts}
-        store.finish_open_run_events(thread_id, status="completed")
+        store.finish_open_run_events(thread_id, status="completed", run_id=run_id)
         current_branch = _detect_current_branch(repo)
         store.update_thread_status(thread_id, "completed", branch_name=current_branch)
         store.record_run(run_id=run_id, thread_id=thread_id, status="completed", finished=True)
@@ -1237,9 +1246,14 @@ def run_agent_task(
             store.finish_thread_intervention(intervention_id, thread_id=thread_id, status="pending")
         # 异常路径必须同时关闭未完成事件、更新 thread 状态和 run 状态。
         # 如果漏掉其中任何一项，前端可能会一直停留在“ 运行中”。
-        store.finish_open_run_events(thread_id, status="error")
+        store.finish_open_run_events(thread_id, status="error", run_id=run_id)
         store.update_thread_status(thread_id, "failed")
-        record_event(thread_id, "model", "调用 deepseek-v4-pro", status="error")
+        record_event(
+            thread_id,
+            "model",
+            f"调用 {model_id or get_env('MAIN_MODEL', 'deepseek-v4-pro').strip()}",
+            status="error",
+        )
         record_event(thread_id, "failed", "任务失败", status="error", detail=mask_token(str(exc)))
         store.record_run(
             run_id=run_id,

@@ -3,7 +3,9 @@ import { computed, shallowRef } from 'vue'
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
 
+import MessageActions from './MessageActions.vue'
 import TodoPlan from './TodoPlan.vue'
+import RunActivityCard from './RunActivityCard.vue'
 import ProposalCard from './ProposalCard.vue'
 import HumanInterventionCard from './HumanInterventionCard.vue'
 
@@ -13,8 +15,10 @@ const props = defineProps({
     required: true,
   },
   disabled: { type: Boolean, default: false },
+  runActivityEvents: { type: Object, default: () => ({}) },
+  runActivityLoading: { type: Object, default: () => ({}) },
 })
-const emit = defineEmits(['plan-action', 'intervention-response'])
+const emit = defineEmits(['plan-action', 'intervention-response', 'run-activity-expand'])
 
 const userExpanded = shallowRef(false)
 
@@ -42,6 +46,7 @@ function textChunks() {
 }
 
 const userText = computed(() => textChunks().map((chunk) => chunk.text || '').join('\n'))
+const assistantText = computed(() => textChunks().map((chunk) => chunk.text || '').join('\n').trim())
 const userLines = computed(() => userText.value.split(/\r?\n/))
 const userHasMore = computed(() => userLines.value.length > 7)
 const visibleUserText = computed(() => {
@@ -67,6 +72,10 @@ function proposalChunks() {
 
 function interventionChunks() {
   return (props.message.chunks || []).filter((chunk) => chunk.kind === 'intervention')
+}
+
+function runActivityChunks() {
+  return (props.message.chunks || []).filter((chunk) => chunk.kind === 'run_activity')
 }
 
 function handleCodeClick(event) {
@@ -114,6 +123,7 @@ function handleCodeClick(event) {
           ></span>
         </button>
       </div>
+      <MessageActions v-if="userText.trim()" :text="userText" :timestamp="message.timestamp" />
     </div>
 
     <div v-else class="assistant-message-content">
@@ -128,6 +138,15 @@ function handleCodeClick(event) {
           class="markdown-body"
           v-html="renderMarkdown(chunk.text)"
         ></div>
+
+        <RunActivityCard
+          v-for="chunk in runActivityChunks()"
+          :key="`run-activity-${chunk.activity.run_id}`"
+          :activity="chunk.activity"
+          :events="runActivityEvents[chunk.activity.run_id] || []"
+          :loading="!!runActivityLoading[chunk.activity.run_id]"
+          @expand="emit('run-activity-expand', $event)"
+        />
 
         <TodoPlan
           v-for="(chunk, index) in todoChunks()"
@@ -159,6 +178,7 @@ function handleCodeClick(event) {
           {{ chunk.text }}
         </div>
       </div>
+      <MessageActions v-if="assistantText" :text="assistantText" :timestamp="message.timestamp" />
     </div>
   </article>
 </template>

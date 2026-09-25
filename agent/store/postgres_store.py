@@ -213,6 +213,7 @@ class PostgresBusinessStore:
             "CREATE INDEX IF NOT EXISTS idx_threads_scope_updated ON threads (tenant_id, user_id, updated_at DESC)",
             "CREATE INDEX IF NOT EXISTS idx_runs_status_lease ON runs (status, lease_expires_at)",
             "CREATE INDEX IF NOT EXISTS idx_events_thread_created ON run_events (thread_id, created_at)",
+            "CREATE INDEX IF NOT EXISTS idx_events_run_created ON run_events (thread_id, run_id, created_at)",
             "CREATE INDEX IF NOT EXISTS idx_audit_scope_created ON audit_events (tenant_id, created_at)",
         ]
         with self._connection() as conn:
@@ -338,6 +339,20 @@ class PostgresBusinessStore:
     def list_run_events(self, thread_id: str) -> list[dict[str, Any]]:
         with self._connection() as conn:
             return list(conn.execute("SELECT * FROM run_events WHERE thread_id=%s ORDER BY created_at ASC", (thread_id,)).fetchall())
+
+    def list_run_events_for_run(self, thread_id: str, run_id: str) -> list[dict[str, Any]]:
+        with self._connection() as conn:
+            return list(conn.execute(
+                "SELECT * FROM run_events WHERE thread_id=%s AND run_id=%s ORDER BY created_at ASC, id ASC",
+                (thread_id, run_id),
+            ).fetchall())
+
+    def list_runs(self, thread_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connection() as conn:
+            return list(conn.execute(
+                "SELECT * FROM runs WHERE thread_id=%s ORDER BY started_at DESC LIMIT %s",
+                (thread_id, max(1, min(limit, 100))),
+            ).fetchall())
 
     def clear_run_events(self, thread_id: str) -> None:
         with self._connection() as conn:
@@ -465,9 +480,20 @@ class PostgresBusinessStore:
                 (status, resolved_at, intervention_id, thread_id),
             )
 
-    def finish_open_run_events(self, thread_id: str, *, status: str = "completed") -> None:
+    def finish_open_run_events(
+        self, thread_id: str, *, status: str = "completed", run_id: str | None = None
+    ) -> None:
         with self._connection() as conn:
-            conn.execute("UPDATE run_events SET status=%s, updated_at=%s WHERE thread_id=%s AND status IN ('pending','in_progress')", (status, datetime.now(UTC), thread_id))
+            if run_id is None:
+                conn.execute(
+                    "UPDATE run_events SET status=%s, updated_at=%s WHERE thread_id=%s AND status IN ('pending','in_progress')",
+                    (status, datetime.now(UTC), thread_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE run_events SET status=%s, updated_at=%s WHERE thread_id=%s AND run_id=%s AND status IN ('pending','in_progress')",
+                    (status, datetime.now(UTC), thread_id, run_id),
+                )
 
     def get_latest_run(self, thread_id: str) -> dict[str, Any] | None:
         with self._connection() as conn:

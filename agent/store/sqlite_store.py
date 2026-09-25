@@ -96,6 +96,7 @@ class LocalSqliteStore:
             CREATE TABLE IF NOT EXISTS run_events (
               id TEXT PRIMARY KEY,
               thread_id TEXT NOT NULL,
+              run_id TEXT,
               kind TEXT NOT NULL,
               title TEXT NOT NULL,
               status TEXT NOT NULL,
@@ -166,6 +167,11 @@ class LocalSqliteStore:
             """
             )
             self._ensure_column("threads", "user_prompt", "TEXT")
+            self._ensure_column("run_events", "run_id", "TEXT")
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_run_events_thread_run_created "
+                "ON run_events(thread_id, run_id, created_at)"
+            )
             self._ensure_column("thread_plans", "version", "INTEGER NOT NULL DEFAULT 1")
             self._ensure_column("thread_plans", "supersedes_plan_id", "TEXT")
             self._ensure_column("thread_plans", "decision_feedback", "TEXT")
@@ -321,6 +327,7 @@ class LocalSqliteStore:
         title: str,
         status: str,
         detail: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         """记录 Agent 运行过程中的简洁步骤。
 
@@ -333,8 +340,8 @@ class LocalSqliteStore:
             self._conn.execute(
                 """
                 INSERT INTO run_events (
-                  id, thread_id, kind, title, status, detail, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                  id, thread_id, run_id, kind, title, status, detail, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                   kind=excluded.kind,
                   title=excluded.title,
@@ -342,7 +349,7 @@ class LocalSqliteStore:
                   detail=excluded.detail,
                   updated_at=excluded.updated_at
                 """,
-                (event_id, thread_id, kind, title, status, detail, now, now),
+                (event_id, thread_id, run_id, kind, title, status, detail, now, now),
             )
             self._conn.commit()
 
@@ -358,6 +365,22 @@ class LocalSqliteStore:
                 ORDER BY created_at ASC
                 """,
                 (thread_id,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_run_events_for_run(self, thread_id: str, run_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM run_events WHERE thread_id = ? AND run_id = ? ORDER BY created_at ASC, id ASC",
+                (thread_id, run_id),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def list_runs(self, thread_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM runs WHERE thread_id = ? ORDER BY started_at DESC LIMIT ?",
+                (thread_id, max(1, min(limit, 100))),
             ).fetchall()
             return [dict(row) for row in rows]
 
@@ -634,7 +657,9 @@ class LocalSqliteStore:
             )
             self._conn.commit()
 
-    def finish_open_run_events(self, thread_id: str, *, status: str = "completed") -> None:
+    def finish_open_run_events(
+        self, thread_id: str, *, status: str = "completed", run_id: str | None = None
+    ) -> None:
         """把仍处于运行中的展示事件收尾。
 
         Agent 的官方 tool_calls 流有时只发起始事件，真正完成状态由工具内部事件记录。
@@ -648,9 +673,10 @@ class LocalSqliteStore:
                 SET status = ?,
                     updated_at = ?
                 WHERE thread_id = ?
+                  AND (? IS NULL OR run_id = ?)
                   AND status IN ('pending', 'in_progress')
                 """,
-                (status, utc_now(), thread_id),
+                (status, utc_now(), thread_id, run_id, run_id),
             )
             self._conn.commit()
 
