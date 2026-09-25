@@ -1,17 +1,19 @@
 from __future__ import annotations
 
-"""仓库级长期记忆写回中间件。
+"""仓库级长期记忆写回中间件实现（当前未接入生产 Agent）。
 
-这个中间件负责在整轮 Agent 结束后，尝试把“稳定、可复用”的任务结论写回
-仓库级记忆。它的定位是兜底机制：
+当前状态：`MemoryUpdateMiddleware` 没有加入 `server.py` 的 `create_deep_agent`
+中间件列表，因此它的 `after_agent/aafter_agent` 钩子在正常服务请求中不会自动执行。
+生产路径是在 `runtime.py` 确认任务成功并提取最终答复后，直接调用
+`repo_memory_update.py` 写回仓库记忆。
 
-1. 主要写回路径在 runtime.py。runtime.py 更清楚当前任务类型、最终输出内容、
-   分支和 PR 等运行结果，因此成功任务优先由 runtime.py 主动调用
-   repo_memory_update.py。
-2. 本中间件在 after_agent/aafter_agent 阶段再次尝试提取最后一条 assistant
-   消息，避免未来新增运行路径时忘记写回仓库记忆。
-3. 本中间件不会把整段对话原样写入记忆，只把最终 assistant 消息交给
-   repo_memory_update.py 做提炼和结构化更新。
+不要在保留 runtime 直接写回的同时注册本中间件。两条路径职责重叠；虽然完全相同的
+“最近结论”条目有去重保护，但提取文本和任务类型可能不同，而且 runtime 还会写入
+分支/PR 元数据。若将来要改用本中间件，应同时迁移 runtime 写回逻辑，并验证任务成功、
+失败和 HITL 暂停等生命周期边界。
+
+本中间件不会把整段对话原样写入记忆，只把最终 assistant 消息交给
+`repo_memory_update.py` 做提炼和结构化更新。
 
 安全边界：
 - 如果最终消息疑似包含 `.env`、`.secrets`、api_key、私钥等敏感信息，
@@ -110,7 +112,7 @@ def _message_type_summary(state: AgentState) -> str:
 
 
 class MemoryUpdateMiddleware(AgentMiddleware):
-    """在整轮 Agent 结束后把稳定结论追加到仓库记忆。
+    """可选的 after-agent 仓库记忆写回钩子；当前未注册，生产中不会自动运行。
 
     当前项目已经使用仓库维度的记忆文件：
     `/memories/{owner}/{repo}.md`。
@@ -119,7 +121,7 @@ class MemoryUpdateMiddleware(AgentMiddleware):
     它只负责从 AgentState 中提取最终 assistant 文本，然后交给
     `repo_memory_update.py` 做清洗、提炼、去重和结构化写回。
 
-    注意：这是兜底写回。正常情况下 runtime.py 会在任务成功结束后主动更新记忆。
+    激活前必须先协调迁移 `runtime.py` 的成功后直接写回，避免两处同时负责更新。
     """
 
     state_schema = AgentState
@@ -144,8 +146,7 @@ class MemoryUpdateMiddleware(AgentMiddleware):
             )
             return None
 
-        # 4. 解析 Gitee 仓库地址，并委托 repo_memory_update.py 执行真正的记忆更新。
-        #    parse_gitee_repo_url 会保证这里只处理 Gitee 仓库，符合当前项目范围。
+        # 4. 解析 GitHub/Gitee 仓库地址，并委托 repo_memory_update.py 执行记忆更新。
         repo = parse_repo_url(repo_url)
         update_repo_memory_from_text(
             store=get_langgraph_store(),
