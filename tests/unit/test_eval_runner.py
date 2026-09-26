@@ -31,4 +31,18 @@ def test_eval_runner_generates_stable_report_artifacts(tmp_path: Path) -> None:
     assert report.cases[0].total_tokens == 5
     assert (output / "report.json").exists()
     assert (output / "summary.md").exists()
+    assert (output / "report.md").exists()
+    assert (output / "report.html").exists()
     assert json.loads((output / "report.json").read_text(encoding="utf-8"))["report_id"] == report.report_id
+
+
+def test_real_agent_adapter_is_resolved_from_agent_source_tree(tmp_path: Path) -> None:
+    source_root = tmp_path / "agent-source"
+    adapter = source_root / "scripts" / "run_eval_agent.py"
+    adapter.parent.mkdir(parents=True)
+    adapter.write_text("# adapter", encoding="utf-8")
+
+    runner = EvalRunner(output_dir=tmp_path / "output", mode="real", agent_source_root=source_root)
+
+    assert runner.agent_source_root == source_root.resolve()
+    assert (runner.agent_source_root / "scripts" / "run_eval_agent.py").is_file()

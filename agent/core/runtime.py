@@ -20,6 +20,7 @@ import logging
 import json
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from agent.backends.local_shell import LocalShellBackend
@@ -28,7 +29,12 @@ from agent.core.events import record_event
 from agent.core.graph import get_checkpointer, get_langgraph_store, get_store
 from agent.core.checkpoint_history import visible_checkpoint_messages
 from agent.core.repo_memory import ensure_repo_memory_initialized, repo_project_dir
-from agent.core.repository_workspace import prepare_repository_workspace, task_branch_name
+from agent.core.repository_workspace import (
+    PreparedRepositoryWorkspace,
+    RepositoryWorkspaceError,
+    prepare_repository_workspace,
+    task_branch_name,
+)
 from agent.core.repo_memory_update import RepoMemoryUpdate, update_repo_memory_from_text
 from agent.core.settings import PERSISTENCE_BACKEND, WORKSPACE_ROOT
 from agent.core.streaming_runtime import run_agent_with_event_stream
@@ -117,6 +123,25 @@ def _prepare_selected_repository(
     """Prepare the selected repository before any Agent can inspect or edit files."""
 
     backend = LocalShellBackend(Workspace(WORKSPACE_ROOT), provider=repo.provider)
+    if get_env("CODING_AGENT_EVAL_MODE", "").strip() == "1":
+        eval_repo_value = get_env("EVAL_CASE_REPO", "").strip()
+        if not eval_repo_value:
+            raise RepositoryWorkspaceError("Eval mode requires EVAL_CASE_REPO")
+        eval_repo = Path(eval_repo_value).expanduser().resolve()
+        expected_repo = (WORKSPACE_ROOT / repo_project_dir(repo)).resolve()
+        if eval_repo != expected_repo:
+            raise RepositoryWorkspaceError("Eval repo path does not match the selected repository workspace")
+        if not eval_repo.is_dir() or not (eval_repo / ".git").exists():
+            raise RepositoryWorkspaceError("Eval target must be a prepared Git checkout")
+        if WORKSPACE_ROOT not in eval_repo.parents:
+            raise RepositoryWorkspaceError("Eval target is outside its isolated workspace root")
+        directory = "/" + repo_project_dir(repo).replace("\\", "/")
+        backend.set_working_dir(directory)
+        branch_result = backend.run("git branch --show-current", cwd=directory, timeout=30)
+        if branch_result.exit_code != 0:
+            raise RepositoryWorkspaceError("Cannot read the isolated Eval repository branch")
+        branch = branch_result.stdout.strip() or "eval"
+        return PreparedRepositoryWorkspace(directory=directory, default_branch=branch, current_branch=branch)
     return prepare_repository_workspace(
         repo,
         backend,
@@ -329,11 +354,18 @@ def _build_agent_user_content(
         plan_instruction = ""
         if approved_plan:
             plan_instruction = f"\n\n用户已经确认以下技术方案，请按该方案实施；如执行中发现必要调整，请在最终总结中说明：\n{approved_plan}"
-        task_instruction = (
-            "这是开发实现任务。请按系统开发流程完成任务，必要时修改代码、验证，并创建或复用 GitHub/Gitee Pull Request。"
-            f"{branch_instruction}创建 PR 时不要猜测 base；留空让对应平台 API 使用仓库真实默认分支。"
-            f"{plan_instruction}"
-        )
+        if get_env("CODING_AGENT_EVAL_MODE", "").strip() == "1":
+            task_instruction = (
+                "这是隔离评测中的开发实现任务。可以修改当前隔离仓库并运行验证；禁止提交、push、创建/评论 PR 或 Issue，"
+                "禁止访问当前仓库之外的文件。完成后说明改动和真实运行的验证结果。"
+                f"{plan_instruction}"
+            )
+        else:
+            task_instruction = (
+                "这是开发实现任务。请按系统开发流程完成任务，必要时修改代码、验证，并创建或复用 GitHub/Gitee Pull Request。"
+                f"{branch_instruction}创建 PR 时不要猜测 base；留空让对应平台 API 使用仓库真实默认分支。"
+                f"{plan_instruction}"
+            )
     else:
         task_instruction = (
             "这是只读任务。请使用 write_todos 生成适合该任务的清单；"
@@ -931,11 +963,15 @@ def run_plan_response_task(
         store.record_run(run_id=run_id, thread_id=thread_id, status="completed", finished=True)
         record_event(thread_id, "plan", "技术方案已输出，等待确认", kind="other", status="completed")
         logger.info("技术方案输出完成：thread_id=%s", thread_id)
-        return {
+        plan_result = {
             "thread_id": thread_id,
             "run_id": run_id,
             "status": "completed",
+            "plan_id": plan_id,
         }
+        if get_env("CODING_AGENT_EVAL_MODE", "").strip() == "1":
+            plan_result["messages"] = messages
+        return plan_result
     except Exception as exc:
         store.finish_open_run_events(thread_id, status="error", run_id=run_id)
         store.update_thread_status(thread_id, "failed")

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Eval · df50d8a05b3689cd</title>
+  <style>
+    :root { color-scheme: light; --ink:#172033; --muted:#65718a; --line:#e3e8f0; --paper:#fff; --bg:#f4f7fb; --blue:#3157d5; --green:#16845b; --red:#bd3f45; --amber:#9a6500; }
+    * { box-sizing:border-box } body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif }
+    .shell { max-width:1120px; margin:36px auto; padding:0 20px 48px }
+    .hero { padding:30px 34px; border-radius:20px; color:white; background:radial-gradient(circle at 90% 0%,#6c85f4 0,transparent 36%),linear-gradient(125deg,#17264d,#314fc1); box-shadow:0 18px 44px #253b7526 }
+    .eyebrow { color:#c6d1ff; font-size:12px; font-weight:750; letter-spacing:.14em; text-transform:uppercase } h1 { margin:8px 0 6px; font-size:clamp(28px,4vw,42px); line-height:1.1 }
+    .hero p { margin:0; color:#e0e7ff } .meta { display:flex; gap:12px 26px; flex-wrap:wrap; margin-top:22px; color:#d1daf9; font-size:13px }
+    .badge { display:inline-flex; align-items:center; gap:7px; padding:6px 11px; border:1px solid #ffffff45; border-radius:999px; font-size:12px; font-weight:750; text-transform:uppercase; letter-spacing:.06em } .badge.good { background:#16845b30 } .badge.bad { background:#bd3f4530 }
+    .grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:14px; margin:18px 0 28px } .metric { background:var(--paper); border:1px solid var(--line); border-radius:14px; padding:17px 18px; box-shadow:0 3px 10px #1b2b4a08 } .metric span { display:block; color:var(--muted); font-size:12px; font-weight:650 } .metric strong { display:block; margin-top:5px; font-size:24px; letter-spacing:-.03em }
+    h2 { margin:28px 0 12px; font-size:21px } .case { margin:12px 0; overflow:hidden; background:var(--paper); border:1px solid var(--line); border-radius:15px; box-shadow:0 3px 10px #1b2b4a08 } .case-head { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:17px 20px; border-bottom:1px solid var(--line) } .case-title { font-weight:760; overflow-wrap:anywhere } .status { padding:4px 10px; border-radius:999px; font-size:12px; font-weight:750; text-transform:uppercase } .status.passed { color:#106b49; background:#e4f6ed } .status.failed { color:#a52d35; background:#fdebed }
+    .checks { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:9px; padding:16px 20px } .check { border:1px solid var(--line); border-radius:10px; padding:10px 12px } .check span { display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em } .check strong { display:block; margin-top:3px; font-size:14px } .yes { color:var(--green) } .no { color:var(--red) } .na { color:var(--muted) }
+    details { border-top:1px solid var(--line); padding:12px 20px } summary { color:var(--blue); cursor:pointer; font-weight:650 } .details { padding-top:8px; color:#34415b } ul { padding-left:20px } li { margin:4px 0 } code { overflow-wrap:anywhere; color:#273c82; background:#eef2ff; padding:2px 5px; border-radius:5px } a { color:var(--blue); text-decoration:none } a:hover { text-decoration:underline } .empty { padding:20px; color:var(--muted) } .foot { margin-top:26px; color:var(--muted); font-size:12px }
+    @media(max-width:850px) { .grid { grid-template-columns:repeat(2,minmax(0,1fr)) } .checks { grid-template-columns:repeat(3,minmax(0,1fr)) } }
+    @media(max-width:520px) { .shell { margin:16px auto; padding:0 12px 30px } .hero { padding:23px 20px } .grid { gap:8px } .metric { padding:13px } .metric strong { font-size:19px } .checks { grid-template-columns:repeat(2,minmax(0,1fr)); padding:12px } .case-head { padding:14px } }
+    @media print { body { background:#fff } .shell { margin:0 auto } .hero { box-shadow:none; print-color-adjust:exact } .metric,.case { box-shadow:none; break-inside:avoid } details { break-inside:avoid } }
+  </style>
+</head>
+<body><main class="shell">
+  <header class="hero">
+    <div class="eyebrow">Coding Agent · Evaluation Report</div>
+    <h1>df50d8a05b3689cd</h1>
+    <p>Reproducible task results with linked artifacts and explicit pass criteria.</p>
+    <div class="meta"><span class="badge good">Passed · 2/2</span><span>Mode: real</span><span>Created: 2026-09-26T11:07:44.636671+00:00</span></div>
+    <div class="meta"><span>Agent SHA: 710862e51e382762de1b3cccf63fdf965d369f4e</span><span>Target: test-coding-eval</span><span>Runner: 2</span><span>Model: DeepSeek deepseek-flash</span></div>
+    <div class="meta"><span>Eval source patch: e406940e415d</span></div>
+  </header>
+  <section class="grid" aria-label="Run summary">
+    <div class="metric"><span>Cases passed</span><strong>2 / 2</strong></div>
+    <div class="metric"><span>Failed cases</span><strong>0</strong></div>
+    <div class="metric"><span>Patch apply</span><strong>100%</strong></div>
+    <div class="metric"><span>Total tokens</span><strong>1,389,779</strong></div>
+    <div class="metric"><span>Total run time</span><strong>2.1m</strong></div>
+  </section>
+  <h2>Case results</h2>
+  <article class="case">
+    <div class="case-head"><div class="case-title">taskboard-status-filter</div><span class="status passed">passed</span></div>
+    <div class="checks"><div class="check"><span>Agent</span><strong class="na">exit 0</strong></div><div class="check"><span>Patch</span><strong class="yes">PASS</strong></div><div class="check"><span>Target tests</span><strong class="yes">PASS</strong></div><div class="check"><span>Regression</span><strong class="yes">PASS</strong></div><div class="check"><span>Oracle</span><strong class="yes">PASS</strong></div><div class="check"><span>Retrieval hit@5</span><strong class="na">1.0</strong></div><div class="check"><span>Tool calls</span><strong class="na">35</strong></div></div>
+    <details><summary>Details · 55.7s · 604,297 tokens</summary><div class="details"><p><strong>Model</strong>: DeepSeek deepseek-flash</p><p><strong>Required test files modified</strong>: PASS</p><p><strong>Tool results</strong>: 35 successful, 0 failed; edit_file: 4, execute: 8, hybrid_code_search: 2, ls: 4, read_file: 11, write_file: 1, write_todos: 5</p><strong>Changed files</strong><ul><li><code>taskboard/tasks.py</code></li><li><code>tests/test_filter_by_status.py</code></li></ul><strong>Artifacts</strong><ul><li><a href="cases/taskboard-status-filter/artifacts/agent-output.txt">agent_output</a></li><li><a href="cases/taskboard-status-filter/artifacts/patch.diff">patch</a></li><li><a href="cases/taskboard-status-filter/artifacts/tests.log">tests</a></li><li><a href="cases/taskboard-status-filter/traces/agent-events.jsonl">trace</a></li></ul></div></details>
+  </article>
+<article class="case">
+    <div class="case-head"><div class="case-title">taskboard-title-search</div><span class="status passed">passed</span></div>
+    <div class="checks"><div class="check"><span>Agent</span><strong class="na">exit 0</strong></div><div class="check"><span>Patch</span><strong class="yes">PASS</strong></div><div class="check"><span>Target tests</span><strong class="yes">PASS</strong></div><div class="check"><span>Regression</span><strong class="yes">PASS</strong></div><div class="check"><span>Oracle</span><strong class="yes">PASS</strong></div><div class="check"><span>Retrieval hit@5</span><strong class="na">1.0</strong></div><div class="check"><span>Tool calls</span><strong class="na">37</strong></div></div>
+    <details><summary>Details · 69.2s · 785,482 tokens</summary><div class="details"><p><strong>Model</strong>: DeepSeek deepseek-flash</p><p><strong>Required test files modified</strong>: PASS</p><p><strong>Tool results</strong>: 37 successful, 0 failed; edit_file: 4, execute: 8, grep: 1, hybrid_code_search: 2, ls: 4, read_file: 10, write_file: 1, write_todos: 7</p><strong>Changed files</strong><ul><li><code>taskboard/tasks.py</code></li><li><code>tests/test_search_tasks.py</code></li></ul><strong>Artifacts</strong><ul><li><a href="cases/taskboard-title-search/artifacts/agent-output.txt">agent_output</a></li><li><a href="cases/taskboard-title-search/artifacts/patch.diff">patch</a></li><li><a href="cases/taskboard-title-search/artifacts/tests.log">tests</a></li><li><a href="cases/taskboard-title-search/traces/agent-events.jsonl">trace</a></li></ul></div></details>
+  </article>
+  <p class="foot">Generated from report.json. Token values use provider-reported usage when available; missing values are shown as unavailable, never estimated.</p>
+</main></body></html>

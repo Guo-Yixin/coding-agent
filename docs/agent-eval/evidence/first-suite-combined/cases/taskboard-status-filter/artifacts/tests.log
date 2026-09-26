@@ -1,0 +1,21 @@
+COMMAND: [LOCAL_PATH] -m pytest tests/test_filter_by_status.py -q
+EXIT: 0
+STDOUT:
+........                                                                 [100%]
+8 passed in 0.05s
+
+STDERR:
+
+COMMAND: [LOCAL_PATH] -m pytest tests/test_baseline.py -q
+EXIT: 0
+STDOUT:
+...                                                                      [100%]
+3 passed in 0.01s
+
+STDERR:
+
+COMMAND: [LOCAL_PATH] [LOCAL_PATH] [LOCAL_PATH]
+EXIT: 0
+STDOUT:
+
+STDERR:

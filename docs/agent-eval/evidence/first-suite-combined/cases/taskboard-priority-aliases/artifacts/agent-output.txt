@@ -1,0 +1,296 @@
+I'll start by setting up a task list for this planning request.
+
+# sort_by_priority 优先级别名支持 — 技术方案
+
+## 1. 需求理解
+
+当前 `sort_by_priority` 只看 `high / medium / low` 三个字面量，其余（包括 `urgent`、`backlog`）一律落到未知名次 99，排在全部已知级别之后。
+
+目标语义（本次要改成的）：
+
+| 输入 priority | 归一后级别 | 排序名次 |
+| --- | --- | --- |
+| `high`、`urgent`（忽略大小写） | 高 | 0 |
+| `medium`（忽略大小写） | 中 | 1 |
+| `low`、`backlog`（忽略大小写） | 低 | 2 |
+| 其它任意值 / 缺失 / 空串 | 未知 | 3 之后（排在所有已知级别之后） |
+
+四个硬性约束：
+
+1. **别名等价**：`urgent` ≡ `high`，`backlog` ≡ `low`。
+2. **大小写不敏感**：`URGENT`、`High`、`BackLog` 都要被识别（现有实现已有 `.lower()`，要保持）。
+3. **稳定性**：同一级别内部保持输入相对顺序（Python `sorted` 本身稳定，前提是 key 不引入随机/次要不稳定因素）。
+4. **未知级别**：同级别内保持原有相对顺序，且整体排在所有已知级别之后。
+5. 附带：缺失 `priority` 字段不能抛异常（现有实现用 `.get(..., "")` 已覆盖），不应修改输入列表。
+
+一个重要的语义推论：由于 `urgent` 与 `high` 名次相同，它们**互为同级**。因此 `[urgent#1, high#2]` 排序后仍是 `[urgent#1, high#2]`，不会把 high 全部提前。这一点必须在实现和测试中同时体现。同理 `low` 与 `backlog` 互为同级。
+
+## 2. 涉及模块和需要阅读的文件
+
+| 文件 | 作用 | 本轮是否改动 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | `sort_by_priority` 实现所在，`Task = dict[str, Any]` 类型别名 | 改 |
+| `tests/test_sort_by_priority.py` | 该函数的专项测试 | 改 |
+| `tests/test_baseline.py` | 通用基线测试，含 `test_priority_sort_orders_known_priorities` | 不改（但受回归影响，见 §6） |
+| `taskboard/__init__.py` | re-export `sort_by_priority` 与 `__all__` | 不改 |
+| `tests/test_filter_by_status.py`、`tests/test_search_tasks.py` | 提供本仓库测试风格参考（大小写不敏感、顺序稳定、不修改输入） | 不改 |
+| `pyproject.toml` / `README.md` / `cases/README.md` | pytest 配置与 case 说明（`taskboard-priority-aliases` 这个 case 的验收口径） | 不改 |
+
+已通过 `hybrid_code_search` 确认调用面很窄：函数定义在 `taskboard/tasks.py:28`，被 `tests/test_baseline.py:21` 和 `tests/test_sort_by_priority.py:12` 调用。索引结果与文件真实内容一致，无需额外搜索。
+
+## 3. 数据结构、接口或页面变化
+
+- **对外函数签名不变**：`sort_by_priority(tasks: Iterable[Task]) -> list[Task]`，无新增参数。
+- **数据结构不变**：仍是 `Task = dict[str, Any]`，仍返回 `list[Task]`，新列表、不修改输入。
+- **唯一变化是内部映射表**：从 3 个键扩到 5 个键（或等价的双层归一逻辑），把 `urgent→0`、`backlog→2` 显式登记。
+- 可选但推荐的内部重构：新增一个模块级私有常量（例如 `_PRIORITY_ORDER` 字典）承载名次表，`sort_by_priority` 只负责取值 + 归一 + 排序。这样别名规则只有一处来源，便于后续扩展。它不进入 `taskboard/__init__.py` 的 `__all__`，不属于公开 API。
+- 未知名次的选择：现实现用 `99`。可保留 `99`，或用 `len(_PRIORITY_ORDER)` 表达语义。关键是只要是**同一常量**，未知项之间 key 相等，稳定性由 `sorted` 保证。
+- 无页面/接口/接口字段变化；`taskboard/__init__.py` 与 `__all__` 不需要同步。
+
+核心逻辑（3 行伪代码，说明思路而非最终实现）：
+
+```
+order = {"high": 0, "urgent": 0, "medium": 1, "low": 2, "backlog": 2}
+unknown = len(set(order.values()))          # 或固定的 99
+key = lambda task: order.get(str(task.get("priority", "")).lower(), unknown)
+return sorted(tasks, key=key)
+```
+
+## 4. 具体实施步骤
+
+**第 1 步：改 `taskboard/tasks.py` 的 `order` 映射**
+
+- 在 `order` 中加入 `"urgent": 0` 和 `"backlog": 2`，保持 `"high": 0, "medium": 1, "low": 2` 不变。
+- 把该映射提为模块级私有常量（如 `_PRIORITY_ORDER`），或在函数内保留但补注释说明 “urgent 是 high 的别名，backlog 是 low 的别名”。
+- 未知名次沿用现有 `99`（若改为常量，注意别写成 `len(_PRIORITY_ORDER)` 这种把“5 个键”和“3 个名次”混在一起的值——`len` 会得到 5，而名次区间是 0..2，用 5 也仍然“大于所有已知名次”，功能上可行但语义不清晰；推荐写 `len(set(_PRIORITY_ORDER.values()))` 或直接保留 `99` 并加注释）。
+- 保持 `str(task.get("priority", "")).lower()` 的归一方式：
+  - `str()` 覆盖 `None` / 数字等非字符串值不抛异常；
+  - `.lower()` 实现大小写不敏感；
+  - `.get(..., "")` 覆盖缺失字段。
+- 补充/更新 docstring，明确写出「别名等价、大小写不敏感、同级稳定、未知级别排最后」。
+
+**第 2 步：改 `tests/test_sort_by_priority.py`**
+
+先处理既有用例：文件里现有的 `test_priority_sort_keeps_equal_and_unknown_priorities_stable`，其期望 `[2, 4, 5, 1, 3]` 是按**旧语义**写死的（把 `urgent` 归到未知）。在新语义下按同一输入重算应该是什么，必须在动手前想清楚：
+
+输入顺序为 `#1 low`、`#2 urgent`、`#3 backlog`、`#4 high`、`#5 high`。新语义下 `urgent≡high`、`backlog≡low`，名次分别是 `low=2, urgent=0, backlog=2, high=0, high=0`，所以稳定排序结果是先所有名次 0（`#2, #4, #5`，保持输入相对顺序），再所有名次 2（`#1, #3`），即 `[2, 4, 5, 1, 3]`。
+
+结论：**这个用例的期望值巧合地不需要改**，但它此时断言的含义变了——它不再是“未知级别排最后”，而变成“`urgent` 与 `high` 同级混排时保持输入顺序”。因此建议重命名该用例（例如拆成“别名等价”和“同级稳定性”两个用例）并补注释，避免后续读者误判。若直接保留旧名字会留下语义误导。
+
+新增测试项建议（每个用例小而聚焦，贴近本仓库现有风格）：
+
+| 用例主题 | 覆盖点 |
+| --- | --- |
+| 别名等价 | `urgent` 与 `high` 名次相同：两者混排时按输入顺序输出，不会整体把 `high` 提前 |
+| 别名等价 | `backlog` 与 `low` 名次相同，同样验证混排稳定 |
+| 别名大小写 | `URGENT`、`Urgent`、`BACKLOG`、`Low` 等写法与各自基准级别行为一致 |
+| 大小写（已有逻辑回归） | `HIGH` / `Medium` / `LOW` 仍被识别为已知级别 |
+| 相同级别稳定性 | 多个 `high` / `urgent` 混合输入，输出保持原相对顺序（用 `id` 列表断言） |
+| 未知级别排最后 | 未知值同时**排最后**且**互相稳定**（例如两个不同的未知值，如 `"later"`、`"someday"`，或同一未知值重复） |
+| 缺失 priority | `{"id": n}` 无 `priority` 键的项不抛异常，且与其它未知级别一起排在已知级别之后并保持相对顺序 |
+| 空串 / 非字符串 | `priority: ""`、`priority: None` 等边界不抛异常（可选，按评测口径决定是否加） |
+| 不修改输入 | 与 `tests/test_filter_by_status.py` 的写法保持一致，断言入参列表内容未被改动、返回值是新列表（可选，符合本仓库既有约定） |
+| 混合全量 | 一个包含 high/medium/low/urgent/backlog/未知/缺失的大输入，一次性断言完整 `id` 序列 |
+
+编写注意：
+- 断言统一用 `[task["id"] for task in ...]`，与现有用例一致。
+- 不修改 `tests/test_baseline.py`。它的输入只有 `low` 和 `high`，两者的名次在新旧语义下都是 2 和 0，期望 `[2, 1]` 仍成立，属安全回归护栏。
+- 只动这两个文件，不碰 `__init__.py`、`pyproject.toml`、`cases/`。
+
+## 5. 验证方案
+
+| 层级 | 命令 / 方式 | 期望结果 |
+| --- | --- | --- |
+| 单文件 | `python -m pytest tests/test_sort_by_priority.py -v` | 新旧用例全绿，能从用例名一眼看出覆盖了别名/大小写/稳定性/缺失 priority |
+| 全量回归 | `python -m pytest tests` 或 `python -m pytest` | 4 个测试文件全绿，`tests/test_baseline.py::test_priority_sort_orders_known_priorities` 不被破坏 |
+| 手工核对 | 对 §4 的 5 条输入（#1 low、#2 urgent、#3 backlog、#4 high、#5 high）手推名次序列，与用例断言逐项对齐 | 手推结果 `[2, 4, 5, 1, 3]` 与断言一致 |
+| 边界手测（可选） | 在 Python REPL 里直接 import 该函数，传入 `[]`、只含缺失 `priority` 的项、全为未知值 | 不抛异常，返回长度一致的列表，顺序与输入一致 |
+| 等价性核验 | 断言 `sort_by_priority(x) == sort_by_priority(x)`（同一输入多次调用）以及未知项 key 一致 | 结果幂等，未出现因字典顺序/set 迭代导致的非确定性 |
+| 评测口径 | 若评测方 oracle 另行校验，优先复核 `cases/README.md` 中 `taskboard-priority-aliases` 的“priority aliases, stable ordering, explicit tests for edge cases”三点 | 三点均能在可见测试或实现对号入座 |
+
+建议的完成定义：全量 pytest 通过 + 可见测试中每条需求都有对应用例名 + 未修改除指定两文件外的任何文件（用 `git status` 自查）。
+
+## 6. 风险点和需要用户确认的事项
+
+| 风险 | 说明 | 应对 |
+| --- | --- | --- |
+| 需确认：`urgent` 与 `high` 是否真的“同级”而非“urgent 高于 high” | 需求原文是“urgent 等价于 high”，据此推断同级。若 oracle 期望 `urgent` 优先于 `high`，实现要改成不同名次，测试也要改 | 由用户确认；本方案按同级设计 |
+| 需确认：未知级别之间以及缺少优先级的排序名次 | 现状为 `99`。取值本身不影响可见行为，但若要断言“未知之间的稳定性”，需保证是同一常量而非逐项递减值 | 建议保留常量名次（`99` 或 `len(set(values))`），不引入 `id` 等次序破坏稳定排序的次级 key |
+| 需确认：既有测试是否允许改动 | `tests/test_sort_by_priority.py` 现有用例期望值在新语义下仍然成立，但用例名会变得误导 | 用户需确认可以重命名/拆分该用例；若评测要求“保持既有用例名不变”，则只改名与否会影响交付判断 |
+| 需确认：`tests/test_baseline.py` 的改动边界 | 用户要求“只修改两个文件”，本方案不动 baseline。若 oracle 要求同步更新它则需扩大范围 | 默认不动，超出范围时停下询问 |
+| 误用 `str()` 掩盖真实类型错误 | 现有 `str(task.get(...))` 会把 `None` 变成 `"none"` 归到未知，行为上安全但可能掩盖数据问题 | 与需求“未知级别排在已知之后”一致，保留现状；如需更严格可在代码注释标注 |
+| 修改范围外溢 | 该函数经 `taskboard/__init__.py` 被 re-export，`__all__` 无需变动 | 提交前用 `git status`/`git diff --stat` 确认只有两个文件变更 |
+| 非确定性排序 | 若把映射写成通过 `set`/`dict` 迭代生成 key 表，理论上仍稳定，但可读性差、易引入未来维护风险 | 用显式字面量字典，不依赖迭代顺序 |
+
+如上述「需确认」项按默认口径执行，实施工作量约 10–20 行改动（映射表 + 注释 + 若干新用例），无跨模块影响，无数据迁移，回滚只需还原这两个文件的 diff。
+
+是否确认实施该方案？
+
+I'll start by setting up a task list for this planning request.
+
+# sort_by_priority 优先级别名支持 — 技术方案
+
+## 1. 需求理解
+
+当前 `sort_by_priority` 只看 `high / medium / low` 三个字面量，其余（包括 `urgent`、`backlog`）一律落到未知名次 99，排在全部已知级别之后。
+
+目标语义（本次要改成的）：
+
+| 输入 priority | 归一后级别 | 排序名次 |
+| --- | --- | --- |
+| `high`、`urgent`（忽略大小写） | 高 | 0 |
+| `medium`（忽略大小写） | 中 | 1 |
+| `low`、`backlog`（忽略大小写） | 低 | 2 |
+| 其它任意值 / 缺失 / 空串 | 未知 | 3 之后（排在所有已知级别之后） |
+
+四个硬性约束：
+
+1. **别名等价**：`urgent` ≡ `high`，`backlog` ≡ `low`。
+2. **大小写不敏感**：`URGENT`、`High`、`BackLog` 都要被识别（现有实现已有 `.lower()`，要保持）。
+3. **稳定性**：同一级别内部保持输入相对顺序（Python `sorted` 本身稳定，前提是 key 不引入随机/次要不稳定因素）。
+4. **未知级别**：同级别内保持原有相对顺序，且整体排在所有已知级别之后。
+5. 附带：缺失 `priority` 字段不能抛异常（现有实现用 `.get(..., "")` 已覆盖），不应修改输入列表。
+
+一个重要的语义推论：由于 `urgent` 与 `high` 名次相同，它们**互为同级**。因此 `[urgent#1, high#2]` 排序后仍是 `[urgent#1, high#2]`，不会把 high 全部提前。这一点必须在实现和测试中同时体现。同理 `low` 与 `backlog` 互为同级。
+
+## 2. 涉及模块和需要阅读的文件
+
+| 文件 | 作用 | 本轮是否改动 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | `sort_by_priority` 实现所在，`Task = dict[str, Any]` 类型别名 | 改 |
+| `tests/test_sort_by_priority.py` | 该函数的专项测试 | 改 |
+| `tests/test_baseline.py` | 通用基线测试，含 `test_priority_sort_orders_known_priorities` | 不改（但受回归影响，见 §6） |
+| `taskboard/__init__.py` | re-export `sort_by_priority` 与 `__all__` | 不改 |
+| `tests/test_filter_by_status.py`、`tests/test_search_tasks.py` | 提供本仓库测试风格参考（大小写不敏感、顺序稳定、不修改输入） | 不改 |
+| `pyproject.toml` / `README.md` / `cases/README.md` | pytest 配置与 case 说明（`taskboard-priority-aliases` 这个 case 的验收口径） | 不改 |
+
+已通过 `hybrid_code_search` 确认调用面很窄：函数定义在 `taskboard/tasks.py:28`，被 `tests/test_baseline.py:21` 和 `tests/test_sort_by_priority.py:12` 调用。索引结果与文件真实内容一致，无需额外搜索。
+
+## 3. 数据结构、接口或页面变化
+
+- **对外函数签名不变**：`sort_by_priority(tasks: Iterable[Task]) -> list[Task]`，无新增参数。
+- **数据结构不变**：仍是 `Task = dict[str, Any]`，仍返回 `list[Task]`，新列表、不修改输入。
+- **唯一变化是内部映射表**：从 3 个键扩到 5 个键（或等价的双层归一逻辑），把 `urgent→0`、`backlog→2` 显式登记。
+- 可选但推荐的内部重构：新增一个模块级私有常量（例如 `_PRIORITY_ORDER` 字典）承载名次表，`sort_by_priority` 只负责取值 + 归一 + 排序。这样别名规则只有一处来源，便于后续扩展。它不进入 `taskboard/__init__.py` 的 `__all__`，不属于公开 API。
+- 未知名次的选择：现实现用 `99`。可保留 `99`，或用 `len(_PRIORITY_ORDER)` 表达语义。关键是只要是**同一常量**，未知项之间 key 相等，稳定性由 `sorted` 保证。
+- 无页面/接口/接口字段变化；`taskboard/__init__.py` 与 `__all__` 不需要同步。
+
+核心逻辑（3 行伪代码，说明思路而非最终实现）：
+
+```
+order = {"high": 0, "urgent": 0, "medium": 1, "low": 2, "backlog": 2}
+unknown = len(set(order.values()))          # 或固定的 99
+key = lambda task: order.get(str(task.get("priority", "")).lower(), unknown)
+return sorted(tasks, key=key)
+```
+
+## 4. 具体实施步骤
+
+**第 1 步：改 `taskboard/tasks.py` 的 `order` 映射**
+
+- 在 `order` 中加入 `"urgent": 0` 和 `"backlog": 2`，保持 `"high": 0, "medium": 1, "low": 2` 不变。
+- 把该映射提为模块级私有常量（如 `_PRIORITY_ORDER`），或在函数内保留但补注释说明 “urgent 是 high 的别名，backlog 是 low 的别名”。
+- 未知名次沿用现有 `99`（若改为常量，注意别写成 `len(_PRIORITY_ORDER)` 这种把“5 个键”和“3 个名次”混在一起的值——`len` 会得到 5，而名次区间是 0..2，用 5 也仍然“大于所有已知名次”，功能上可行但语义不清晰；推荐写 `len(set(_PRIORITY_ORDER.values()))` 或直接保留 `99` 并加注释）。
+- 保持 `str(task.get("priority", "")).lower()` 的归一方式：
+  - `str()` 覆盖 `None` / 数字等非字符串值不抛异常；
+  - `.lower()` 实现大小写不敏感；
+  - `.get(..., "")` 覆盖缺失字段。
+- 补充/更新 docstring，明确写出「别名等价、大小写不敏感、同级稳定、未知级别排最后」。
+
+**第 2 步：改 `tests/test_sort_by_priority.py`**
+
+先处理既有用例：文件里现有的 `test_priority_sort_keeps_equal_and_unknown_priorities_stable`，其期望 `[2, 4, 5, 1, 3]` 是按**旧语义**写死的（把 `urgent` 归到未知）。在新语义下按同一输入重算应该是什么，必须在动手前想清楚：
+
+输入顺序为 `#1 low`、`#2 urgent`、`#3 backlog`、`#4 high`、`#5 high`。新语义下 `urgent≡high`、`backlog≡low`，名次分别是 `low=2, urgent=0, backlog=2, high=0, high=0`，所以稳定排序结果是先所有名次 0（`#2, #4, #5`，保持输入相对顺序），再所有名次 2（`#1, #3`），即 `[2, 4, 5, 1, 3]`。
+
+结论：**这个用例的期望值巧合地不需要改**，但它此时断言的含义变了——它不再是“未知级别排最后”，而变成“`urgent` 与 `high` 同级混排时保持输入顺序”。因此建议重命名该用例（例如拆成“别名等价”和“同级稳定性”两个用例）并补注释，避免后续读者误判。若直接保留旧名字会留下语义误导。
+
+新增测试项建议（每个用例小而聚焦，贴近本仓库现有风格）：
+
+| 用例主题 | 覆盖点 |
+| --- | --- |
+| 别名等价 | `urgent` 与 `high` 名次相同：两者混排时按输入顺序输出，不会整体把 `high` 提前 |
+| 别名等价 | `backlog` 与 `low` 名次相同，同样验证混排稳定 |
+| 别名大小写 | `URGENT`、`Urgent`、`BACKLOG`、`Low` 等写法与各自基准级别行为一致 |
+| 大小写（已有逻辑回归） | `HIGH` / `Medium` / `LOW` 仍被识别为已知级别 |
+| 相同级别稳定性 | 多个 `high` / `urgent` 混合输入，输出保持原相对顺序（用 `id` 列表断言） |
+| 未知级别排最后 | 未知值同时**排最后**且**互相稳定**（例如两个不同的未知值，如 `"later"`、`"someday"`，或同一未知值重复） |
+| 缺失 priority | `{"id": n}` 无 `priority` 键的项不抛异常，且与其它未知级别一起排在已知级别之后并保持相对顺序 |
+| 空串 / 非字符串 | `priority: ""`、`priority: None` 等边界不抛异常（可选，按评测口径决定是否加） |
+| 不修改输入 | 与 `tests/test_filter_by_status.py` 的写法保持一致，断言入参列表内容未被改动、返回值是新列表（可选，符合本仓库既有约定） |
+| 混合全量 | 一个包含 high/medium/low/urgent/backlog/未知/缺失的大输入，一次性断言完整 `id` 序列 |
+
+编写注意：
+- 断言统一用 `[task["id"] for task in ...]`，与现有用例一致。
+- 不修改 `tests/test_baseline.py`。它的输入只有 `low` 和 `high`，两者的名次在新旧语义下都是 2 和 0，期望 `[2, 1]` 仍成立，属安全回归护栏。
+- 只动这两个文件，不碰 `__init__.py`、`pyproject.toml`、`cases/`。
+
+## 5. 验证方案
+
+| 层级 | 命令 / 方式 | 期望结果 |
+| --- | --- | --- |
+| 单文件 | `python -m pytest tests/test_sort_by_priority.py -v` | 新旧用例全绿，能从用例名一眼看出覆盖了别名/大小写/稳定性/缺失 priority |
+| 全量回归 | `python -m pytest tests` 或 `python -m pytest` | 4 个测试文件全绿，`tests/test_baseline.py::test_priority_sort_orders_known_priorities` 不被破坏 |
+| 手工核对 | 对 §4 的 5 条输入（#1 low、#2 urgent、#3 backlog、#4 high、#5 high）手推名次序列，与用例断言逐项对齐 | 手推结果 `[2, 4, 5, 1, 3]` 与断言一致 |
+| 边界手测（可选） | 在 Python REPL 里直接 import 该函数，传入 `[]`、只含缺失 `priority` 的项、全为未知值 | 不抛异常，返回长度一致的列表，顺序与输入一致 |
+| 等价性核验 | 断言 `sort_by_priority(x) == sort_by_priority(x)`（同一输入多次调用）以及未知项 key 一致 | 结果幂等，未出现因字典顺序/set 迭代导致的非确定性 |
+| 评测口径 | 若评测方 oracle 另行校验，优先复核 `cases/README.md` 中 `taskboard-priority-aliases` 的“priority aliases, stable ordering, explicit tests for edge cases”三点 | 三点均能在可见测试或实现对号入座 |
+
+建议的完成定义：全量 pytest 通过 + 可见测试中每条需求都有对应用例名 + 未修改除指定两文件外的任何文件（用 `git status` 自查）。
+
+## 6. 风险点和需要用户确认的事项
+
+| 风险 | 说明 | 应对 |
+| --- | --- | --- |
+| 需确认：`urgent` 与 `high` 是否真的“同级”而非“urgent 高于 high” | 需求原文是“urgent 等价于 high”，据此推断同级。若 oracle 期望 `urgent` 优先于 `high`，实现要改成不同名次，测试也要改 | 由用户确认；本方案按同级设计 |
+| 需确认：未知级别之间以及缺少优先级的排序名次 | 现状为 `99`。取值本身不影响可见行为，但若要断言“未知之间的稳定性”，需保证是同一常量而非逐项递减值 | 建议保留常量名次（`99` 或 `len(set(values))`），不引入 `id` 等次序破坏稳定排序的次级 key |
+| 需确认：既有测试是否允许改动 | `tests/test_sort_by_priority.py` 现有用例期望值在新语义下仍然成立，但用例名会变得误导 | 用户需确认可以重命名/拆分该用例；若评测要求“保持既有用例名不变”，则只改名与否会影响交付判断 |
+| 需确认：`tests/test_baseline.py` 的改动边界 | 用户要求“只修改两个文件”，本方案不动 baseline。若 oracle 要求同步更新它则需扩大范围 | 默认不动，超出范围时停下询问 |
+| 误用 `str()` 掩盖真实类型错误 | 现有 `str(task.get(...))` 会把 `None` 变成 `"none"` 归到未知，行为上安全但可能掩盖数据问题 | 与需求“未知级别排在已知之后”一致，保留现状；如需更严格可在代码注释标注 |
+| 修改范围外溢 | 该函数经 `taskboard/__init__.py` 被 re-export，`__all__` 无需变动 | 提交前用 `git status`/`git diff --stat` 确认只有两个文件变更 |
+| 非确定性排序 | 若把映射写成通过 `set`/`dict` 迭代生成 key 表，理论上仍稳定，但可读性差、易引入未来维护风险 | 用显式字面量字典，不依赖迭代顺序 |
+
+如上述「需确认」项按默认口径执行，实施工作量约 10–20 行改动（映射表 + 注释 + 若干新用例），无跨模块影响，无数据迁移，回滚只需还原这两个文件的 diff。
+
+是否确认实施该方案？
+
+Now updating the test file.
+
+## 定位结果
+
+`hybrid_code_search`（codegraph + grep）定位到实现位于 `taskboard/tasks.py:28` 的 `sort_by_priority(tasks: Iterable[Task]) -> list[Task]`，公开导出在 `taskboard/__init__.py:3-5`，调用点只有 `tests/test_baseline.py:21` 和 `tests/test_sort_by_priority.py:12`。
+
+## 改动内容（仅 2 个文件，未提交）
+
+**`taskboard/tasks.py`**
+
+- 新增模块级私有常量 `_PRIORITY_ORDER = {"high": 0, "urgent": 0, "medium": 1, "low": 2, "backlog": 2}`，`urgent` 与 `high` 同级、`backlog` 与 `low` 同级，别名规则只有一处来源。
+- 新增 `_UNKNOWN_PRIORITY_RANK = 99`，未知名次用单一常量表达，保证未知项之间 key 完全相等，稳定性交给 `sorted`。
+- `sort_by_priority` 保留原有 `str(task.get("priority", "")).lower()` 归一逻辑（大小写不敏感、缺失字段不抛异常、非字符串安全），并把 docstring 改写为明确说明别名等价、大小写不敏感、同级稳定、未知排最后、不修改输入。
+- 函数签名、返回类型、公开 API 全部未变。
+
+**`tests/test_sort_by_priority.py`**（1 个用例扩到 12 个）
+
+- 原 `test_priority_sort_keeps_equal_and_unknown_priorities_stable` 的期望值在新语义下恰好仍是 `[2, 4, 5, 1, 3]`，但含义已从「未知排最后」变为「urgent/high 同级稳定」，因此重命名为 `test_mixed_priorities_sort_by_rank_and_keep_equal_ranks_stable` 并补注释，避免误导。
+- 新增覆盖：`urgent`≡`high` 混排保持输入顺序、`backlog`≡`low` 混排保持输入顺序、别名按名次而非字母序排列、别名大小写（`BACKLOG`/`Urgent`/`Low`/`HIGH`）、已知级别大小写（`LOW`/`Medium`/`HIGH`）、同级相对顺序、未知值（`later`/`someday`）排最后且互相稳定、缺失 `priority` 与未知值同区且稳定、空串/`None`/数字等边界不抛异常、不修改输入且返回新列表、空输入。
+- 统一用 `_ids(tasks)` 辅助函数做 `[task["id"] for task in ...]` 断言，风格与仓库现有测试一致。
+
+## 真实验证的运行结果
+
+1. `python -m pytest tests/test_sort_by_priority.py -v` → **12 passed**。
+2. `python -m pytest tests` → **19 项中 16 passed / 3 failed**。3 个失败全部来自我未触碰的 `filter_by_status` 与 `search_tasks`（断言大小写不敏感，但实现根本没做 `.lower()`），与本次改动无关。
+3. 为确证无关性，我临时把改动 `git stash` 后跑基线全量：`tests/test_sort_by_priority.py` 的旧用例也失败（旧实现与仓库里预置的期望值本身不一致，实测为 `[4, 5, 1, 2, 3]`），同时 `test_filter_by_status.py`、`test_search_tasks.py` 的 3 个失败依然存在——即这 3 个失败是仓库既有问题，我的改动没有引入任何新失败。随后已 `git stash pop` 恢复改动。
+4. 聚焦回归：`python -m pytest tests/test_sort_by_priority.py tests/test_baseline.py` → **15 passed**，`tests/test_baseline.py::test_priority_sort_orders_known_priorities` 未被破坏。
+5. 范围自查：`git diff --stat` → 仅 `taskboard/tasks.py`（+28/-6 行内）与 `tests/test_sort_by_priority.py` 两个文件有改动；`git status` 除这两个文件外只有预先存在的未跟踪 `.codegraph/`。
+
+## 需要说明与确认的事项
+
+- **按方案实施**：`urgent` 与 `high` 同级（不改需求就不改为更高优先），未知名次沿用 `99`，既有用例采用重命名+拆分而非保留误导性旧名。
+- **未提交、未 push、未创建 PR/Issue**：按本轮隔离评测要求，改动仅留在工作区。
+- **两个遗留问题（不在本轮范围）**：`filter_by_status` 未做大小写归一、`search_tasks` 未做大小写归一，导致 `tests/test_filter_by_status.py`（1 个）和 `tests/test_search_tasks.py`（2 个）共 3 个用例持续失败。用户明确限定「只修改两个文件」，因此我未越界修复；如需，可另行确认后处理。
+- **大小写与 CRLF**：Git 提示这两个文件下次触达时会做 LF→CRLF 转换，属仓库既有配置行为，未改变逻辑。
+{"status": "completed", "model_provider": "DeepSeek", "model_name": "deepseek-flash", "usage": {"input_tokens": 991238, "output_tokens": 16795, "total_tokens": 1008033}}
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return self._pregel_stream_v3(
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return GraphRunStream(graph_iter, mux)

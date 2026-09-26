@@ -1,0 +1,22 @@
+{
+  "case_id": "codegraph-retrieval-smoke",
+  "prompt": "只读检索任务：请调用 hybrid_code_search，定位 run_agent_task、hybrid_code_search、以及 CHECKPOINT_DB_PATH 的配置位置。回答这三个符号各自所在文件和一句用途说明，不要展开无关模块。不要修改文件或运行迁移。",
+  "gold_files": [
+    "agent/core/runtime.py",
+    "agent/retrieval/hybrid_search.py",
+    "agent/evals/runner.py"
+  ],
+  "requires_patch": false,
+  "expected_status": "completed",
+  "timeout_seconds": 360,
+  "metadata": {
+    "purpose": "actual hybrid CodeGraph and grep retrieval trace smoke",
+    "required_output_terms": [
+      "agent/evals/runner.py",
+      "agent/retrieval/hybrid_search.py",
+      "agent/core/runtime.py"
+    ],
+    "model_call_limit": 16,
+    "tool_call_limit": 16
+  }
+}

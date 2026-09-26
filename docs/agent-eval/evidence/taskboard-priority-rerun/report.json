@@ -1,0 +1,104 @@
+{
+  "cases": [
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 71335,
+      "artifacts": {
+        "agent_output": "cases/taskboard-priority-aliases/artifacts/agent-output.txt",
+        "patch": "cases/taskboard-priority-aliases/artifacts/patch.diff",
+        "tests": "cases/taskboard-priority-aliases/artifacts/tests.log",
+        "trace": "cases/taskboard-priority-aliases/traces/agent-events.jsonl"
+      },
+      "case_id": "taskboard-priority-aliases",
+      "changed_files": [
+        "taskboard/tasks.py",
+        "tests/test_sort_by_priority.py"
+      ],
+      "errors": [],
+      "input_tokens": 991238,
+      "metadata": {
+        "model_provider": "DeepSeek",
+        "model_name": "deepseek-flash",
+        "model_usage": {
+          "input_tokens": 991238,
+          "output_tokens": 16795,
+          "total_tokens": 1008033
+        },
+        "retrieval_call_count": 2,
+        "tool_usage": {
+          "call_count": 41,
+          "calls_by_tool": {
+            "edit_file": 5,
+            "execute": 9,
+            "hybrid_code_search": 2,
+            "ls": 4,
+            "read_file": 13,
+            "write_file": 1,
+            "write_todos": 7
+          },
+          "failure_count": 0,
+          "result_count": 41,
+          "success_count": 41
+        },
+        "test_behavior": {
+          "required_test_files": [
+            "tests/test_sort_by_priority.py"
+          ],
+          "required_test_files_modified": true
+        },
+        "target_repo_sha": "d19ddda0ac269adf1e68d7d2840968527b313bc4",
+        "expected_status": "completed",
+        "model_call_limit": "24",
+        "tool_call_limit": "40",
+        "codegraph_index": {
+          "available": true,
+          "exit_code": 0,
+          "latency_ms": 927,
+          "output_tail": "T  Initializing CodeGraph\n|\n*  Initialized in [LOCAL_PATH]\n|\nScanning files...\nParsing code...\nResolving refs...\nLinking dynamic dispatch...\n|\n*  Indexed 6 files\n|\n•  27 nodes, 50 edges in 373ms\n|\n—  Done\n\n",
+          "succeeded": true
+        }
+      },
+      "oracle_tests_passed": true,
+      "output_tokens": 16795,
+      "patch": "diff --git a/taskboard/tasks.py b/taskboard/tasks.py\nindex 24f522b..4608870 100644\n--- a/taskboard/tasks.py\n+++ b/taskboard/tasks.py\n@@ -6,6 +6,14 @@ from typing import Any\n \n Task = dict[str, Any]\n \n+# Ranking used by sort_by_priority. Aliases share the same rank, so \"urgent\"\n+# sorts together with \"high\" and \"backlog\" together with \"low\".\n+_PRIORITY_ORDER = {\"high\": 0, \"urgent\": 0, \"medium\": 1, \"low\": 2, \"backlog\": 2}\n+\n+# Single rank for every value that is not a known priority (including a missing\n+# priority key). Sharing one constant keeps unknown tasks in their input order.\n+_UNKNOWN_PRIORITY_RANK = 99\n+\n \n def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]:\n     \"\"\"Return tasks matching status; no filter returns every task.\"\"\"\n@@ -26,7 +34,19 @@ def search_tasks(tasks: Iterable[Task], query: str) -> list[Task]:\n \n \n def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:\n-    \"\"\"Return tasks ordered by priority while preserving equal-priority order.\"\"\"\n-\n-    order = {\"high\": 0, \"medium\": 1, \"low\": 2}\n-    return sorted(tasks, key=lambda task: order.get(str(task.get(\"priority\", \"\")).lower(), 99))\n+    \"\"\"Order tasks by priority, keeping equal (and unknown) priorities stable.\n+\n+    Priority matching ignores case, so \"High\" and \"HIGH\" are known priorities.\n+    \"urgent\" is an alias of \"high\" and \"backlog\" is an alias of \"low\", which\n+    means an alias and its base priority are ranked equally and therefore stay\n+    in their original relative order. A task with an unknown or missing\n+    priority is ranked after every known priority and keeps its relative order\n+    among the other unknown tasks. The input tasks are never mutated.\n+    \"\"\"\n+\n+    return sorted(\n+        tasks,\n+        key=lambda task: _PRIORITY_ORDER.get(\n+            str(task.get(\"priority\", \"\")).lower(), _UNKNOWN_PRIORITY_RANK\n+        ),\n+    )\ndiff --git a/tests/test_sort_by_priority.py b/tests/test_sort_by_priority.py\nindex 632b4d0..2dc4daf 100644\n--- a/tests/test_sort_by_priority.py\n+++ b/tests/test_sort_by_priority.py\n@@ -1,7 +1,11 @@\n from taskboard.tasks import sort_by_priority\n \n \n-def test_priority_sort_keeps_equal_and_unknown_priorities_stable():\n+def _ids(tasks):\n+    return [task[\"id\"] for task in tasks]\n+\n+\n+def test_mixed_priorities_sort_by_rank_and_keep_equal_ranks_stable():\n     tasks = [\n         {\"id\": 1, \"priority\": \"low\"},\n         {\"id\": 2, \"priority\": \"urgent\"},\n@@ -9,4 +13,128 @@ def test_priority_sort_keeps_equal_and_unknown_priorities_stable():\n         {\"id\": 4, \"priority\": \"high\"},\n         {\"id\": 5, \"priority\": \"high\"},\n     ]\n-    assert [task[\"id\"] for task in sort_by_priority(tasks)] == [2, 4, 5, 1, 3]\n+\n+    # urgent/high share rank 0 (#2, #4, #5 in input order), low/backlog share\n+    # rank 2 (#1, #3 in input order).\n+    assert _ids(sort_by_priority(tasks)) == [2, 4, 5, 1, 3]\n+\n+\n+def test_urgent_is_an_alias_of_high_and_keeps_input_order():\n+    tasks = [\n+        {\"id\": 1, \"priority\": \"urgent\"},\n+        {\"id\": 2, \"priority\": \"high\"},\n+        {\"id\": 3, \"priority\": \"urgent\"},\n+    ]\n+\n+    # \"urgent\" and \"high\" share one rank, so the two groups are not separated:\n+    # input order survives instead of every \"high\" moving before \"urgent\".\n+    assert _ids(sort_by_priority(tasks)) == [1, 2, 3]\n+\n+\n+def test_backlog_is_an_alias_of_low_and_keeps_input_order():\n+    tasks = [\n+        {\"id\": 1, \"priority\": \"backlog\"},\n+        {\"id\": 2, \"priority\": \"low\"},\n+        {\"id\": 3, \"priority\": \"backlog\"},\n+    ]\n+\n+    assert _ids(sort_by_priority(tasks)) == [1, 2, 3]\n+\n+\n+def test_alias_and_base_priority_are_ordered_by_rank_not_alphabetically():\n+    tasks = [\n+        {\"id\": 1, \"priority\": \"backlog\"},\n+        {\"id\": 2, \"priority\": \"urgent\"},\n+        {\"id\": 3, \"priority\": \"medium\"},\n+    ]\n+\n+    assert _ids(sort_by_priority(tasks)) == [2, 3, 1]\n+\n+\n+def test_priority_matching_ignores_case_for_aliases():\n+    tasks = [\n+        {\"id\": 1, \"priority\": \"BACKLOG\"},\n+        {\"id\": 2, \"priority\": \"Urgent\"},\n+        {\"id\": 3, \"priority\": \"Low\"},\n+        {\"id\": 4, \"priority\": \"HIGH\"},\n+    ]\n+\n+    assert _ids(sort_by_priority(tasks)) == [2, 4, 1, 3]\n+\n+\n+def test_priority_matching_ignores_case_for_known_priorities():\n+    tasks = [\n+        {\"id\": 1, \"priority\": \"LOW\"},\n+        {\"id\": 2, \"priority\": \"Medium\"},\n+        {\"id\": 3, \"priority\": \"HIGH\"},\n+    ]\n+\n+    assert _ids(sort_by_priority(tasks)) == [3, 2, 1]\n+\n+\n+def test_equal_ranks_keep_their_relative_order():\n+    tasks = [\n+        {\"id\": 1, \"priority\": \"high\"},\n+        {\"id\": 2, \"priority\": \"urgent\"},\n+        {\"id\": 3, \"priority\": \"high\"},\n+        {\"id\": 4, \"priority\": \"urgent\"},\n+    ]\n+\n+    assert _ids(sort_by_priority(tasks)) == [1, 2, 3, 4]\n+\n+\n+def test_unknown_priorities_rank_last_and_keep_their_relative_order():\n+    tasks = [\n+        {\"id\": 1, \"priority\": \"later\"},\n+        {\"id\": 2, \"priority\": \"HIGH\"},\n+        {\"id\": 3, \"priority\": \"someday\"},\n+        {\"id\": 4, \"priority\": \"backlog\"},\n+        {\"id\": 5, \"priority\": \"later\"},\n+    ]\n+\n+    # Both unknown values rank after high/backlog and stay in input order.\n+    assert _ids(sort_by_priority(tasks)) == [2, 4, 1, 3, 5]\n+\n+\n+def test_tasks_without_a_priority_rank_with_unknown_values_and_stay_stable():\n+    tasks = [\n+        {\"id\": 1},\n+        {\"id\": 2, \"priority\": \"urgent\"},\n+        {\"id\": 3},\n+        {\"id\": 4, \"priority\": \"backlog\"},\n+        {\"id\": 5, \"priority\": \"unknown-value\"},\n+    ]\n+\n+    # A missing priority behaves like any other unknown priority and does not\n+    # raise, including for key lookups on later tasks.\n+    assert _ids(sort_by_priority(tasks)) == [2, 4, 1, 3, 5]\n+\n+\n+def test_empty_and_non_string_priorities_are_unknown_without_errors():\n+    tasks = [\n+        {\"id\": 1, \"priority\": \"\"},\n+        {\"id\": 2, \"priority\": \"low\"},\n+        {\"id\": 3, \"priority\": None},\n+        {\"id\": 4},\n+    ]\n+\n+    assert _ids(sort_by_priority(tasks)) == [2, 1, 3, 4]\n+\n+\n+def test_sort_by_priority_does_not_mutate_the_input():\n+    tasks = [\n+        {\"id\": 1, \"priority\": \"backlog\"},\n+        {\"id\": 2, \"priority\": \"urgent\"},\n+        {\"id\": 3},\n+    ]\n+    original = [dict(task) for task in tasks]\n+\n+    result = sort_by_priority(tasks)\n+\n+    assert _ids(result) == [2, 1, 3]\n+    assert tasks == original\n+    assert result is not tasks\n+\n+\n+def test_sort_by_priority_handles_an_empty_input():\n+    assert sort_by_priority([]) == []\n",
+      "patch_apply": true,
+      "regression_test_latency_ms": 783,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": 1.0,
+      "status": "passed",
+      "target_test_latency_ms": 803,
+      "target_tests_passed": true,
+      "tool_recovery_rate": null,
+      "total_tokens": 1008033
+    }
+  ],
+  "config": {
+    "agent_source_sha": "710862e51e382762de1b3cccf63fdf965d369f4e",
+    "agent_source_dirty_patch_sha256": "3616ef5b16e63f7131bbe6eb29602e056f30c6fd6cd1821d4a81ea049aa487bf",
+    "runner_version": "2"
+  },
+  "created_at": "2026-09-26T10:07:22.844319+00:00",
+  "mode": "real",
+  "report_id": "06a5ab49fdc98d4f",
+  "repository": "test-coding-eval",
+  "summary": {
+    "case_count": 1,
+    "failed_count": 0,
+    "oracle_test_case_count": 1,
+    "oracle_test_pass_rate": 1.0,
+    "oracle_test_passed_case_count": 1,
+    "passed_count": 1,
+    "patch_apply_rate": 1.0,
+    "regression_test_case_count": 1,
+    "regression_test_pass_rate": 1.0,
+    "regression_test_passed_case_count": 1,
+    "retrieval_hit_at_k": 1.0,
+    "target_test_case_count": 1,
+    "target_test_pass_rate": 1.0,
+    "target_test_passed_case_count": 1,
+    "token_usage_case_count": 1,
+    "tool_recovery_rate": null,
+    "total_latency_ms": 71335,
+    "total_tokens": 1008033
+  }
+}

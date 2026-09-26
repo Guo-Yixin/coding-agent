@@ -1,0 +1,47 @@
+{
+  "case_id": "plan-approval-failed-count",
+  "prompt": "请实施一个小功能：开始修改前，先调用 hybrid_code_search 检索 EvalReport.to_dict 和 summary 的实现位置；然后给 summary 增加 failed_count，统计 status 等于 failed 的案例数量，已有 summary 字段和统计口径必须保持不变。请同时新增 tests/unit/test_eval_report_summary.py，为有失败案例、没有失败案例、空案例列表写单元测试。只允许修改 agent/evals/schemas.py，并新增 tests/unit/test_eval_report_summary.py。",
+  "base_ref": "710862e51e382762de1b3cccf63fdf965d369f4e",
+  "gold_files": [
+    "agent/evals/schemas.py"
+  ],
+  "target_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/unit/test_eval_report_summary.py",
+      "-q"
+    ]
+  ],
+  "regression_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/unit/test_eval_runner.py",
+      "tests/unit/test_eval_metrics.py",
+      "-q"
+    ]
+  ],
+  "oracle_tests": [
+    [
+      "python",
+      "{oracle_scripts}/test_eval_report_failed_count.py",
+      "{target_repo}"
+    ]
+  ],
+  "allowed_files": [
+    "agent/evals/schemas.py",
+    "tests/unit/test_eval_report_summary.py"
+  ],
+  "requires_patch": true,
+  "expected_status": "completed",
+  "timeout_seconds": 600,
+  "metadata": {
+    "purpose": "small deterministic EvalReport summary feature with public tests and a separate hidden oracle",
+    "auto_approve_plan": true,
+    "model_call_limit": 24,
+    "tool_call_limit": 24
+  }
+}

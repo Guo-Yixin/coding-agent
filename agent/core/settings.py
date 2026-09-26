@@ -30,6 +30,8 @@ POSTGRES_DSN = get_env("POSTGRES_DSN", "").strip()
 PERSISTENCE_BACKEND = get_env(
     "PERSISTENCE_BACKEND", "postgres" if POSTGRES_DSN else "sqlite"
 ).strip().lower()
+if os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() == "1" and PERSISTENCE_BACKEND != "sqlite":
+    raise RuntimeError("Agent Eval requires PERSISTENCE_BACKEND=sqlite; PostgreSQL is blocked")
 POSTGRES_POOL_MIN_SIZE = int(get_env("POSTGRES_POOL_MIN_SIZE", "1"))
 POSTGRES_POOL_MAX_SIZE = int(get_env("POSTGRES_POOL_MAX_SIZE", "8"))
 DEFAULT_TENANT_ID = get_env("CODING_DEFAULT_TENANT_ID", "default")

@@ -15,6 +15,7 @@ raw protocol events 转换成本地部署版前端能稳定消费的事件。
 
 import logging
 import json
+import os
 import re
 from collections.abc import Callable, Iterable
 from typing import Any
@@ -415,7 +416,15 @@ def _message_dict(message: Any) -> dict[str, Any]:
     """把最终输出中的 LangChain 消息对象转换为普通字典。"""
 
     if isinstance(message, BaseMessage):
-        return {"type": message.type, "content": message.content}
+        result = {"type": message.type, "content": message.content}
+        if os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() == "1":
+            usage = getattr(message, "usage_metadata", None)
+            if isinstance(usage, dict):
+                result["usage_metadata"] = usage
+            response_metadata = getattr(message, "response_metadata", None)
+            if isinstance(response_metadata, dict) and isinstance(response_metadata.get("token_usage"), dict):
+                result["response_metadata"] = {"token_usage": response_metadata["token_usage"]}
+        return result
     return {"type": type(message).__name__, "content": str(message)}
 
 
@@ -668,6 +677,16 @@ def _consume_raw_event_stream(
         if tool_call is not None:
             # 老版本/其它事件流形态可能把工具调用放在 method=tool_calls。
             tool_call_index += 1
+            if os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() == "1":
+                from agent.evals.telemetry import record_eval_event
+
+                record_eval_event(
+                    "tool_call",
+                    {
+                        "tool_name": str(_safe_field(tool_call, "tool_name", "") or _safe_field(tool_call, "name", "") or "unknown"),
+                        "tool_call_id": str(_safe_field(tool_call, "id", "") or _safe_field(tool_call, "tool_call_id", "") or tool_call_index),
+                    },
+                )
             if _record_write_todos(thread_id, run_id, tool_call, tool_call_index):
                 saw_write_todos = True
                 continue
@@ -681,6 +700,19 @@ def _consume_raw_event_stream(
 
         tool_event = _tool_event_from_raw(event)
         if tool_event is not None:
+            if os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() == "1":
+                from agent.evals.telemetry import record_eval_event
+
+                lifecycle = str(tool_event.get("event") or "unknown")
+                record_eval_event(
+                    "tool_call" if lifecycle == "tool-started" else "tool_result",
+                    {
+                        "tool_name": str(tool_event.get("tool_name") or "unknown"),
+                        "tool_call_id": str(tool_event.get("tool_call_id") or ""),
+                        "lifecycle": lifecycle,
+                        "failed": any(marker in lifecycle.lower() for marker in ("error", "fail")),
+                    },
+                )
             # method=tools 是另一种工具生命周期事件。这里主要用于补充 write_todos 状态。
             tool_name = str(tool_event.get("tool_name") or "")
             if tool_name == "write_todos":

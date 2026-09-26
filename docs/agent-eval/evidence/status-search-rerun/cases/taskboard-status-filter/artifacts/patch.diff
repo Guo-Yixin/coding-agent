@@ -1,0 +1,139 @@
+diff --git a/taskboard/tasks.py b/taskboard/tasks.py
+index 24f522b..f6fc44c 100644
+--- a/taskboard/tasks.py
++++ b/taskboard/tasks.py
+@@ -8,12 +8,18 @@ Task = dict[str, Any]
+ 
+ 
+ def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]:
+-    """Return tasks matching status; no filter returns every task."""
++    """Return tasks matching status, comparing case-insensitively.
++
++    ``status=None`` returns every task. Input order is preserved, the input
++    sequence and its task mappings are never modified, and a new list is
++    returned.
++    """
+ 
+     rows = list(tasks)
+     if status is None:
+         return rows
+-    return [task for task in rows if task.get("status") == status]
++    target = str(status).casefold()
++    return [task for task in rows if str(task.get("status", "")).casefold() == target]
+ 
+ 
+ def search_tasks(tasks: Iterable[Task], query: str) -> list[Task]:
+diff --git a/tests/test_filter_by_status.py b/tests/test_filter_by_status.py
+index 1197689..9b96798 100644
+--- a/tests/test_filter_by_status.py
++++ b/tests/test_filter_by_status.py
+@@ -1,6 +1,21 @@
++import copy
++
+ from taskboard.tasks import filter_by_status
+ 
+ 
++MIXED_CASE_TASKS = [
++    {"id": 1, "status": "open"},
++    {"id": 2, "status": "done"},
++    {"id": 3, "status": "Open"},
++    {"id": 4, "status": "OPEN"},
++    {"id": 5, "status": "DONE"},
++]
++
++
++def ids(tasks):
++    return [task["id"] for task in tasks]
++
++
+ def test_status_filter_is_case_insensitive_and_does_not_mutate_tasks():
+     tasks = [
+         {"id": 1, "status": "open"},
+@@ -15,3 +30,87 @@ def test_status_filter_is_case_insensitive_and_does_not_mutate_tasks():
+ 
+ def test_status_filter_returns_empty_list_when_no_task_matches():
+     assert filter_by_status([{"status": "open"}], "blocked") == []
++
++
++def test_status_filter_matches_any_case_combination():
++    assert ids(filter_by_status(MIXED_CASE_TASKS, "Open")) == [1, 3, 4]
++    assert ids(filter_by_status(MIXED_CASE_TASKS, "OPEN")) == [1, 3, 4]
++    assert ids(filter_by_status(MIXED_CASE_TASKS, "open")) == [1, 3, 4]
++    assert ids(filter_by_status(MIXED_CASE_TASKS, "oPeN")) == [1, 3, 4]
++    assert ids(filter_by_status(MIXED_CASE_TASKS, "done")) == [2, 5]
++
++
++def test_status_filter_returns_empty_list_and_keeps_input_intact_without_match():
++    tasks = [
++        {"id": 1, "status": "open"},
++        {"id": 2, "status": "OPEN"},
++    ]
++    snapshot = copy.deepcopy(tasks)
++
++    assert filter_by_status(tasks, "blocked") == []
++    assert filter_by_status(tasks, "BLOCKED") == []
++    assert tasks == snapshot
++    assert len(tasks) == 2
++    assert [task["id"] for task in tasks] == [1, 2]
++
++
++def test_status_filter_does_not_modify_input_list_or_task_objects():
++    tasks = [
++        {"id": 1, "status": "open", "title": "Write docs"},
++        {"id": 2, "status": "DONE", "title": "Fix API"},
++        {"id": 3, "status": "Open", "title": "Ship release"},
++    ]
++    snapshot = copy.deepcopy(tasks)
++
++    result = filter_by_status(tasks, "OPEN")
++
++    assert ids(result) == [1, 3]
++    assert result is not tasks
++    assert len(tasks) == len(snapshot)
++    assert tasks == snapshot
++    # The original case of each status field must be preserved.
++    assert [task["status"] for task in tasks] == ["open", "DONE", "Open"]
++    assert tasks[1]["status"] == "DONE"
++    # Returned items still reference the original task mappings.
++    assert all(
++        result_task is original_task
++        for result_task, original_task in zip(result, (tasks[0], tasks[2]))
++    )
++
++
++def test_status_filter_accepts_non_list_iterables_without_mutation():
++    tasks = (
++        {"id": 1, "status": "Open"},
++        {"id": 2, "status": "done"},
++        {"id": 3, "status": "OPEN"},
++    )
++    snapshot = copy.deepcopy(tasks)
++
++    assert ids(filter_by_status(iter(tasks), "open")) == [1, 3]
++    assert ids(filter_by_status(tasks, "open")) == [1, 3]
++    assert tasks == snapshot
++
++
++def test_status_filter_returns_all_tasks_when_status_is_none():
++    tasks = [
++        {"id": 1, "status": "open"},
++        {"id": 2, "status": "DONE"},
++    ]
++    snapshot = copy.deepcopy(tasks)
++
++    assert filter_by_status(tasks) == snapshot
++    assert filter_by_status(tasks, None) == snapshot
++    assert tasks == snapshot
++
++
++def test_status_filter_handles_missing_or_non_string_status_safely():
++    tasks = [
++        {"id": 1},
++        {"id": 2, "status": None},
++        {"id": 3, "status": "open"},
++    ]
++    snapshot = copy.deepcopy(tasks)
++
++    assert filter_by_status(tasks, "open") == [{"id": 3, "status": "open"}]
++    assert filter_by_status(tasks, "blocked") == []
++    assert tasks == snapshot

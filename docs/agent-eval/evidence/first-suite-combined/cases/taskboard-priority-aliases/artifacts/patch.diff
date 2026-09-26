@@ -1,0 +1,190 @@
+diff --git a/taskboard/tasks.py b/taskboard/tasks.py
+index 24f522b..4608870 100644
+--- a/taskboard/tasks.py
++++ b/taskboard/tasks.py
+@@ -6,6 +6,14 @@ from typing import Any
+ 
+ Task = dict[str, Any]
+ 
++# Ranking used by sort_by_priority. Aliases share the same rank, so "urgent"
++# sorts together with "high" and "backlog" together with "low".
++_PRIORITY_ORDER = {"high": 0, "urgent": 0, "medium": 1, "low": 2, "backlog": 2}
++
++# Single rank for every value that is not a known priority (including a missing
++# priority key). Sharing one constant keeps unknown tasks in their input order.
++_UNKNOWN_PRIORITY_RANK = 99
++
+ 
+ def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]:
+     """Return tasks matching status; no filter returns every task."""
+@@ -26,7 +34,19 @@ def search_tasks(tasks: Iterable[Task], query: str) -> list[Task]:
+ 
+ 
+ def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:
+-    """Return tasks ordered by priority while preserving equal-priority order."""
+-
+-    order = {"high": 0, "medium": 1, "low": 2}
+-    return sorted(tasks, key=lambda task: order.get(str(task.get("priority", "")).lower(), 99))
++    """Order tasks by priority, keeping equal (and unknown) priorities stable.
++
++    Priority matching ignores case, so "High" and "HIGH" are known priorities.
++    "urgent" is an alias of "high" and "backlog" is an alias of "low", which
++    means an alias and its base priority are ranked equally and therefore stay
++    in their original relative order. A task with an unknown or missing
++    priority is ranked after every known priority and keeps its relative order
++    among the other unknown tasks. The input tasks are never mutated.
++    """
++
++    return sorted(
++        tasks,
++        key=lambda task: _PRIORITY_ORDER.get(
++            str(task.get("priority", "")).lower(), _UNKNOWN_PRIORITY_RANK
++        ),
++    )
+diff --git a/tests/test_sort_by_priority.py b/tests/test_sort_by_priority.py
+index 632b4d0..2dc4daf 100644
+--- a/tests/test_sort_by_priority.py
++++ b/tests/test_sort_by_priority.py
+@@ -1,7 +1,11 @@
+ from taskboard.tasks import sort_by_priority
+ 
+ 
+-def test_priority_sort_keeps_equal_and_unknown_priorities_stable():
++def _ids(tasks):
++    return [task["id"] for task in tasks]
++
++
++def test_mixed_priorities_sort_by_rank_and_keep_equal_ranks_stable():
+     tasks = [
+         {"id": 1, "priority": "low"},
+         {"id": 2, "priority": "urgent"},
+@@ -9,4 +13,128 @@ def test_priority_sort_keeps_equal_and_unknown_priorities_stable():
+         {"id": 4, "priority": "high"},
+         {"id": 5, "priority": "high"},
+     ]
+-    assert [task["id"] for task in sort_by_priority(tasks)] == [2, 4, 5, 1, 3]
++
++    # urgent/high share rank 0 (#2, #4, #5 in input order), low/backlog share
++    # rank 2 (#1, #3 in input order).
++    assert _ids(sort_by_priority(tasks)) == [2, 4, 5, 1, 3]
++
++
++def test_urgent_is_an_alias_of_high_and_keeps_input_order():
++    tasks = [
++        {"id": 1, "priority": "urgent"},
++        {"id": 2, "priority": "high"},
++        {"id": 3, "priority": "urgent"},
++    ]
++
++    # "urgent" and "high" share one rank, so the two groups are not separated:
++    # input order survives instead of every "high" moving before "urgent".
++    assert _ids(sort_by_priority(tasks)) == [1, 2, 3]
++
++
++def test_backlog_is_an_alias_of_low_and_keeps_input_order():
++    tasks = [
++        {"id": 1, "priority": "backlog"},
++        {"id": 2, "priority": "low"},
++        {"id": 3, "priority": "backlog"},
++    ]
++
++    assert _ids(sort_by_priority(tasks)) == [1, 2, 3]
++
++
++def test_alias_and_base_priority_are_ordered_by_rank_not_alphabetically():
++    tasks = [
++        {"id": 1, "priority": "backlog"},
++        {"id": 2, "priority": "urgent"},
++        {"id": 3, "priority": "medium"},
++    ]
++
++    assert _ids(sort_by_priority(tasks)) == [2, 3, 1]
++
++
++def test_priority_matching_ignores_case_for_aliases():
++    tasks = [
++        {"id": 1, "priority": "BACKLOG"},
++        {"id": 2, "priority": "Urgent"},
++        {"id": 3, "priority": "Low"},
++        {"id": 4, "priority": "HIGH"},
++    ]
++
++    assert _ids(sort_by_priority(tasks)) == [2, 4, 1, 3]
++
++
++def test_priority_matching_ignores_case_for_known_priorities():
++    tasks = [
++        {"id": 1, "priority": "LOW"},
++        {"id": 2, "priority": "Medium"},
++        {"id": 3, "priority": "HIGH"},
++    ]
++
++    assert _ids(sort_by_priority(tasks)) == [3, 2, 1]
++
++
++def test_equal_ranks_keep_their_relative_order():
++    tasks = [
++        {"id": 1, "priority": "high"},
++        {"id": 2, "priority": "urgent"},
++        {"id": 3, "priority": "high"},
++        {"id": 4, "priority": "urgent"},
++    ]
++
++    assert _ids(sort_by_priority(tasks)) == [1, 2, 3, 4]
++
++
++def test_unknown_priorities_rank_last_and_keep_their_relative_order():
++    tasks = [
++        {"id": 1, "priority": "later"},
++        {"id": 2, "priority": "HIGH"},
++        {"id": 3, "priority": "someday"},
++        {"id": 4, "priority": "backlog"},
++        {"id": 5, "priority": "later"},
++    ]
++
++    # Both unknown values rank after high/backlog and stay in input order.
++    assert _ids(sort_by_priority(tasks)) == [2, 4, 1, 3, 5]
++
++
++def test_tasks_without_a_priority_rank_with_unknown_values_and_stay_stable():
++    tasks = [
++        {"id": 1},
++        {"id": 2, "priority": "urgent"},
++        {"id": 3},
++        {"id": 4, "priority": "backlog"},
++        {"id": 5, "priority": "unknown-value"},
++    ]
++
++    # A missing priority behaves like any other unknown priority and does not
++    # raise, including for key lookups on later tasks.
++    assert _ids(sort_by_priority(tasks)) == [2, 4, 1, 3, 5]
++
++
++def test_empty_and_non_string_priorities_are_unknown_without_errors():
++    tasks = [
++        {"id": 1, "priority": ""},
++        {"id": 2, "priority": "low"},
++        {"id": 3, "priority": None},
++        {"id": 4},
++    ]
++
++    assert _ids(sort_by_priority(tasks)) == [2, 1, 3, 4]
++
++
++def test_sort_by_priority_does_not_mutate_the_input():
++    tasks = [
++        {"id": 1, "priority": "backlog"},
++        {"id": 2, "priority": "urgent"},
++        {"id": 3},
++    ]
++    original = [dict(task) for task in tasks]
++
++    result = sort_by_priority(tasks)
++
++    assert _ids(result) == [2, 1, 3]
++    assert tasks == original
++    assert result is not tasks
++
++
++def test_sort_by_priority_handles_an_empty_input():
++    assert sort_by_priority([]) == []

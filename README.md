@@ -6,7 +6,7 @@
 
 基于 DeepAgents 与 LangGraph 构建，提供本地 Web 工作台、实时运行轨迹、人工审批、可恢复会话，以及 GitHub / Gitee 仓库协作。
 
-[快速开始](#快速开始) · [功能演示](#功能演示) · [系统架构](#系统架构) · [配置说明](#配置说明) · [项目文档](#项目文档)
+[快速开始](#快速开始) · [功能演示](#功能演示) · [Agent Eval](#agent-eval) · [系统架构](#系统架构) · [配置说明](#配置说明) · [项目文档](#项目文档)
 
 [![Python](https://img.shields.io/badge/Python-3.14%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Vue](https://img.shields.io/badge/Vue-3-42B883?logo=vuedotjs&logoColor=white)](https://vuejs.org/)
@@ -86,7 +86,7 @@ CODING 是一个面向真实 Git 仓库的 AI Coding Agent。你可以在浏览�
 | 安全执行 | 工作区边界、命令守卫、输入清理和只读任务写操作拦截 |
 | 代码审查 | Reviewer 子 Agent、评审规则与 finding 工具，辅助检查变更并记录审查发现 |
 | 持久化后端 | 本地默认 SQLite；可配置 PostgreSQL 保存 checkpoint、LangGraph Store 和业务数据 |
-| Agent Eval | 提供评测案例与 fake、real、sandbox 执行入口，生成可复查的运行报告 |
+| Agent Eval | 固定 Agent 与目标仓库版本，隔离运行真实编码任务，执行目标/回归/独立验收，并记录检索、工具、Token、耗时、补丁和报告 |
 
 ## 系统架构
 
@@ -279,6 +279,52 @@ python scripts/verify_streaming_runtime.py
 ```
 
 `fake` Eval 使用确定性模拟运行，不依赖真实模型；`real` 模式需要可用的模型配置；`sandbox` 模式还需要额外安装并启动 OpenSandbox。
+
+## Agent Eval
+
+CODING includes a reproducible evaluation harness for running the production Agent on version-pinned task repositories. The Agent works in a fresh per-case copy; the source project, task baseline, patch, tests, and report are recorded separately.
+
+The first benchmark suite lives in the independent [`test-coding-eval`](https://github.com/Guo-Yixin/test-coding-eval) repository. Cases check focused code changes, target tests, regression tests, evaluator-side oracle checks, required test edits, real retrieval events, tool traces, provider-reported Token usage, and latency. Fake-mode output is not accepted as real-Agent evidence.
+
+Each run writes machine-readable `report.json`, review-friendly `report.md`, and a self-contained `report.html` to the external Eval output directory. Open `report.html` in a browser to inspect case status, scorecards, failures, and artifact links.
+
+### First real-run evidence
+
+After fixing retrieval workspace binding and Windows output encoding, all three cases passed in two real DeepSeek runs. See the consolidated [HTML report](docs/agent-eval/evidence/first-suite-combined/report.html), [Markdown summary](docs/agent-eval/evidence/first-suite-combined/report.md), and [machine-readable JSON](docs/agent-eval/evidence/first-suite-combined/report.json). The initial three-case run happened before those fixes and is not counted. The successful runs used benchmark baseline `d19ddda` and Agent base SHA `710862e`; the Eval source was uncommitted and changed between runs, so these are first-version functional evidence rather than a same-build comparison.
+
+| Case | Result | Agent time | Provider-reported tokens | Report |
+| --- | --- | ---: | ---: | --- |
+| `taskboard-priority-aliases` | Target, regression, oracle, retrieval, and patch checks passed | 71.3 s | 1,008,033 | [HTML report](docs/agent-eval/evidence/taskboard-priority-rerun/report.html) |
+| `taskboard-status-filter` | Target, regression, oracle, retrieval, and patch checks passed | 55.7 s | 604,297 | [HTML report](docs/agent-eval/evidence/status-search-rerun/report.html) |
+| `taskboard-title-search` | Target, regression, oracle, retrieval, and patch checks passed | 69.2 s | 785,482 | [Same two-case HTML report](docs/agent-eval/evidence/status-search-rerun/report.html) |
+
+Across the three cases, the Agent used 2,397,812 provider-reported tokens and 196.3 seconds of Agent time. This small suite is evidence that the real evaluation path works; it is not broad coverage of every coding-agent feature. Rerun after the Eval changes are committed to produce commit-pinned, same-build evidence.
+
+To create a sanitized shareable bundle from a completed run:
+
+```powershell
+python scripts/export_eval_report.py `
+  'A:\gyx_cv\coding-agent-eval-runs\runs\<run_id>' `
+  'docs\agent-eval\evidence\<evidence-name>'
+```
+
+The exporter includes the report and allowlisted text artifacts. It omits workspaces, SQLite files, secrets, and local machine paths; review the exported bundle before publishing it.
+
+### Run the real benchmark
+
+```powershell
+python scripts/run_eval.py `
+  --dataset 'A:\gyx_cv\test-coding-eval\cases' `
+  --repo 'A:\gyx_cv\test-coding-eval' `
+  --mode real `
+  --env-file 'A:\gyx_cv\coding_agent\.env'
+```
+
+The command requires the benchmark repository and its pinned baseline commit to be available locally. Model credentials are loaded from the specified environment file for the Agent child process and are not included in reports. Each run uses a unique directory under `A:\gyx_cv\coding-agent-eval-runs\runs\` by default.
+
+### What the first suite proves
+
+The first suite is a small, repeatable coding benchmark, not exhaustive validation of every feature or repository. It is designed to demonstrate an operational real-Agent evaluation path and provide inspectable evidence. Frontend browser flows, PostgreSQL service instances, broad recovery scenarios, and full project coverage are later evaluation suites. See [Agent Eval design and scope](docs/AGENT_EVAL.md) and the [implementation plan](docs/CODING_AGENT_EVAL_IMPLEMENTATION_PLAN.md).
 
 ## 持久化与部署
 
