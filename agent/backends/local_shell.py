@@ -840,6 +840,11 @@ class LocalShellBackend(BaseSandbox):
         两层校验的分工是：本函数做场景级拒绝，`normalize_safe_command()` 做命令白名单和语法收敛。
         """
         lowered = command.lower()
+        if os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() == "1":
+            if re.search(r"\bgit\s+push\b|\bgh\s+(pr|issue)\s+(create|comment|close|reopen)\b", lowered):
+                return "remote repository writes are disabled during Agent Eval"
+            if re.search(r"\b(curl|wget|invoke-webrequest|invoke-restmethod)\b", lowered):
+                return "direct network commands are disabled during Agent Eval"
         if _NESTED_PROJECTS_PATH_RE.search(command.replace("\\", "/")):
             return "nested projects path is denied; use /projects/<repo> for file tools or <repo> in execute commands"
         if "../" in command or "..\\" in command:
@@ -976,6 +981,12 @@ class LocalShellBackend(BaseSandbox):
         - 如果配置了 GitHub/Gitee token，通过 `GIT_ASKPASS` 注入，不拼进命令字符串。
         """
         env = os.environ.copy()
+        if env.get("CODING_AGENT_EVAL_MODE", "").strip() == "1":
+            secret_markers = ("API_KEY", "_TOKEN", "_SECRET", "_PASSWORD", "_DSN", "DATABASE_URL")
+            for key in list(env):
+                upper_key = key.upper()
+                if key.startswith("EVAL_") or upper_key in {"AI_WORKSPACE_ROOT", "PYTHONPATH"} or any(marker in upper_key for marker in secret_markers):
+                    env.pop(key, None)
         scripts = self._venv_bin_dir()
         if scripts.exists():
             env["PATH"] = f"{scripts}{os.pathsep}{env.get('PATH', '')}"
@@ -984,7 +995,7 @@ class LocalShellBackend(BaseSandbox):
         env["GIT_TERMINAL_PROMPT"] = "0"
         env["GCM_INTERACTIVE"] = "Never"
         token = ""
-        if self.provider in {"github", "gitee"}:
+        if self.provider in {"github", "gitee"} and os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() != "1":
             try:
                 token = get_provider_token(self.provider)
             except RuntimeError:

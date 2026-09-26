@@ -12,6 +12,7 @@ from __future__ import annotations
 """
 
 import logging
+import os
 from typing import Any
 
 from deepagents import create_deep_agent
@@ -80,6 +81,11 @@ DEFAULT_RECURSION_LIMIT = 9999
 # 模型调用层的保护阈值。它由 ModelCallLimitMiddleware 执行，
 # 用来防止 Agent 在工具失败、上下文异常或模型反复决策时无限循环。
 MODEL_CALL_RECURSION_LIMIT = 5000
+if os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() == "1":
+    try:
+        MODEL_CALL_RECURSION_LIMIT = max(1, min(int(os.environ.get("EVAL_MODEL_CALL_LIMIT", "24")), 40))
+    except ValueError:
+        MODEL_CALL_RECURSION_LIMIT = 24
 
 # 本地部署版只保留本地 workspace，不接入 之前项目 的远程 sandbox。
 # 这里仍然按照 之前项目 的方式按 thread 缓存 backend，方便同一轮/同一会话复用
@@ -344,34 +350,47 @@ def get_agent(config: RunnableConfig):
     # middleware 做上下文注入、消息兼容清洗、参数清洗、上下文压缩和异常恢复；
     # skills 提供任务方法论；
     # checkpointer 保存 LangGraph thread state。
+    tools = [
+        web_search,
+        request_human_intervention,
+        fetch_url,
+        hybrid_code_search,
+        open_gitee_pull_request,
+        publish_gitee_pr_comment,
+        get_gitee_pull_request_context,
+        get_github_pull_request_context,
+        create_gitee_issue,
+        publish_gitee_issue_comment,
+        get_gitee_issue_context,
+        open_github_pull_request,
+        publish_github_pr_comment,
+        create_github_issue,
+        publish_github_issue_comment,
+        get_github_actions_status,
+        get_github_issue_context,
+        rerun_github_actions,
+        cancel_github_actions,
+        load_default_review_rules,
+        get_review_diff_summary,
+        validate_review_finding_location,
+        add_review_finding,
+        list_review_findings,
+    ]
+    eval_mode = os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() == "1"
+    if eval_mode:
+        # Keep local repository work and read-only inspection; block operations
+        # that could create or publish data outside the disposable checkout.
+        eval_safe_tools = {
+            "web_search", "request_human_intervention", "fetch_url", "hybrid_code_search",
+            "get_gitee_pull_request_context", "get_github_pull_request_context",
+            "get_gitee_issue_context", "get_github_actions_status", "get_github_issue_context",
+            "load_default_review_rules", "get_review_diff_summary",
+            "validate_review_finding_location", "list_review_findings",
+        }
+        tools = [tool for tool in tools if getattr(tool, "name", getattr(tool, "__name__", "")) in eval_safe_tools]
     return create_deep_agent(  # 创建一个Agent
         model=main_model,
-        tools=[
-            web_search,
-            request_human_intervention,
-            fetch_url,
-            hybrid_code_search,
-            open_gitee_pull_request,
-            publish_gitee_pr_comment,
-            get_gitee_pull_request_context,
-            get_github_pull_request_context,
-            create_gitee_issue,
-            publish_gitee_issue_comment,
-            get_gitee_issue_context,
-            open_github_pull_request,
-            publish_github_pr_comment,
-            create_github_issue,
-            publish_github_issue_comment,
-            get_github_actions_status,
-            get_github_issue_context,
-            rerun_github_actions,
-            cancel_github_actions,
-            load_default_review_rules,
-            get_review_diff_summary,
-            validate_review_finding_location,
-            add_review_finding,
-            list_review_findings,
-        ],
+        tools=tools,
         system_prompt=get_system_prompt(task_kind),
         subagents=[_general_purpose_subagent(subagent_model), _code_reviewer_subagent(subagent_model)],
         # DeepAgents 0.7+ 要求传入已初始化的 BackendProtocol 实例，不能再传

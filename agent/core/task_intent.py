@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import logging
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field, field_validator
 
+from agent.env_utils import get_env
 from agent.core.model import make_intent_model
 
 TaskKind = Literal["coding", "analysis", "planning", "qa", "sync", "inspect", "review"]
@@ -153,8 +154,31 @@ JSON 字段必须包含：
 - confidence：0 到 1 之间的小数。
 - reason：中文短理由，不超过 40 个字。
 """
+    invoke_config: dict[str, Any] = {}
+    if get_env("CODING_AGENT_EVAL_MODE", "").strip() == "1":
+        from langchain_core.callbacks import BaseCallbackHandler
+        from agent.evals.telemetry import record_eval_event
+
+        class EvalUsageCallback(BaseCallbackHandler):
+            def on_llm_end(self, response: Any, **kwargs: Any) -> None:
+                usage = getattr(response, "llm_output", None)
+                usage = usage.get("token_usage") if isinstance(usage, dict) else None
+                if not isinstance(usage, dict):
+                    generations = getattr(response, "generations", [])
+                    try:
+                        message = generations[0][0].message
+                        usage = getattr(message, "usage_metadata", None)
+                        if not isinstance(usage, dict):
+                            metadata = getattr(message, "response_metadata", None)
+                            usage = metadata.get("token_usage") if isinstance(metadata, dict) else None
+                    except (IndexError, AttributeError, TypeError):
+                        usage = None
+                record_eval_event("intent_model_usage", usage if isinstance(usage, dict) else {"unavailable": True})
+
+        invoke_config = {"callbacks": [EvalUsageCallback()]}
     result = _make_structured_intent_model().invoke(
-        [SystemMessage(content=system_prompt), HumanMessage(content=f"用户输入：{prompt}")]
+        [SystemMessage(content=system_prompt), HumanMessage(content=f"用户输入：{prompt}")],
+        config=invoke_config,
     )
     if isinstance(result, dict):
         # 某些 provider/版本在结构化输出时可能返回 dict，这里做一次兼容解析。

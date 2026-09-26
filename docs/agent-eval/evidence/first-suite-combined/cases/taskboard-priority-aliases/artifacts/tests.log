@@ -1,0 +1,21 @@
+COMMAND: [LOCAL_PATH] -m pytest tests/test_sort_by_priority.py -q
+EXIT: 0
+STDOUT:
+............                                                             [100%]
+12 passed in 0.02s
+
+STDERR:
+
+COMMAND: [LOCAL_PATH] -m pytest tests/test_baseline.py -q
+EXIT: 0
+STDOUT:
+...                                                                      [100%]
+3 passed in 0.01s
+
+STDERR:
+
+COMMAND: [LOCAL_PATH] [LOCAL_PATH] [LOCAL_PATH]
+EXIT: 0
+STDOUT:
+
+STDERR:

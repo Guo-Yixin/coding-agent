@@ -1,0 +1,82 @@
+diff --git a/taskboard/tasks.py b/taskboard/tasks.py
+index 24f522b..41d1173 100644
+--- a/taskboard/tasks.py
++++ b/taskboard/tasks.py
+@@ -22,7 +22,8 @@ def search_tasks(tasks: Iterable[Task], query: str) -> list[Task]:
+     rows = list(tasks)
+     if not query:
+         return rows
+-    return [task for task in rows if query in str(task.get("title", ""))]
++    needle = query.lower()
++    return [task for task in rows if needle in str(task.get("title") or "").lower()]
+ 
+ 
+ def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:
+diff --git a/tests/test_search_tasks.py b/tests/test_search_tasks.py
+index 4110daf..eb26089 100644
+--- a/tests/test_search_tasks.py
++++ b/tests/test_search_tasks.py
+@@ -8,7 +8,63 @@ def test_search_is_case_insensitive_and_preserves_order():
+         {"id": 3, "title": "Clean UI"},
+     ]
+     assert [task["id"] for task in search_tasks(tasks, "api")] == [1, 2]
++    assert [task["id"] for task in search_tasks(tasks, "API")] == [1, 2]
++
++
++def test_search_matches_lowercase_title_with_uppercase_query():
++    tasks = [
++        {"id": 1, "title": "fix api timeout"},
++        {"id": 2, "title": "clean ui"},
++    ]
++    assert [task["id"] for task in search_tasks(tasks, "API")] == [1]
+ 
+ 
+ def test_search_ignores_tasks_without_a_title():
+     assert search_tasks([{"id": 1}, {"id": 2, "title": "API"}], "api") == [{"id": 2, "title": "API"}]
++
++
++def test_none_title_is_neither_matched_nor_error():
++    tasks = [
++        {"id": 1, "title": None},
++        {"id": 2, "title": "None shall pass"},
++    ]
++    assert [task["id"] for task in search_tasks(tasks, "none")] == [2]
++    assert search_tasks(tasks, "na") == []
++
++
++def test_non_string_title_is_stringified_before_matching():
++    tasks = [
++        {"id": 1, "title": 123},
++        {"id": 2, "title": "task 999"},
++    ]
++    assert [task["id"] for task in search_tasks(tasks, "12")] == [1]
++
++
++def test_empty_query_returns_every_task_without_mutating_input():
++    tasks = [
++        {"id": 1, "title": "Fix API timeout"},
++        {"id": 2},
++        {"id": 3, "title": None},
++    ]
++    original = [dict(task) for task in tasks]
++
++    assert search_tasks(tasks, "") == tasks
++    assert [task["id"] for task in search_tasks(iter(tasks), "")] == [1, 2, 3]
++    assert tasks == original
++
++
++def test_search_preserves_relative_order_of_scattered_matches():
++    tasks = [
++        {"id": 1, "title": "Fix API timeout"},
++        {"id": 2, "title": "Clean UI"},
++        {"id": 3},
++        {"id": 4, "title": "Review api contract"},
++        {"id": 5, "title": "Write docs"},
++        {"id": 6, "title": "API docs polish"},
++    ]
++    assert [task["id"] for task in search_tasks(tasks, "ApI")] == [1, 4, 6]
++
++
++def test_search_returns_empty_list_when_nothing_matches():
++    tasks = [{"id": 1, "title": "Fix API timeout"}]
++    assert search_tasks(tasks, "blocked") == []

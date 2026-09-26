@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 LOCAL_ENV = PROJECT_ROOT / ".env"
 
 
-def _load_non_empty_env(path: Path, *, override: bool) -> None:
+def _load_non_empty_env(path: Path, *, override: bool, allowed_keys: set[str] | None = None) -> None:
     r"""加载 .env 中的非空变量。
 
     python-dotenv 默认会把 `DEEPSEEK_API_KEY=` 这种空值也写入环境变量。
@@ -24,6 +24,8 @@ def _load_non_empty_env(path: Path, *, override: bool) -> None:
     if not path.exists():
         return
     for key, value in dotenv_values(path).items():
+        if allowed_keys is not None and key not in allowed_keys:
+            continue
         if value is None or value.strip() == "":
             continue
         if override or key not in os.environ or os.environ.get(key, "").strip() == "":
@@ -36,7 +38,14 @@ def load_environment() -> None:
     加载顺序有意设计为：
     本项目 `.env` 中的空值不会覆盖 open-swe 的真实值；
     """
-    _load_non_empty_env(LOCAL_ENV, override=True)
+    # Eval child processes receive explicit per-case paths through their environment.
+    # Keep those values authoritative while still loading model credentials and
+    # provider defaults that are intentionally sourced from the project's .env.
+    eval_mode = os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() == "1"
+    env_file = os.environ.get("EVAL_ENV_FILE", "").strip() if eval_mode else ""
+    configured_env = Path(env_file).expanduser().resolve() if env_file else LOCAL_ENV
+    model_only_keys = {"DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "MAIN_MODEL", "INTENT_MODEL"}
+    _load_non_empty_env(configured_env, override=not eval_mode, allowed_keys=model_only_keys if eval_mode else None)
 
     # 本地部署版默认关闭 LangSmith/LangChain tracing。
     # 这样开发者启动项目时不需要额外配置 LangSmith，也不会把运行数据发到外部观测平台。

@@ -1,0 +1,45 @@
+{
+  "case_id": "real-mode-fail-closed",
+  "prompt": "请现在开始实施：修复 Agent Eval 的真实模式，如果没有启动真实 Agent或只是走命令适配器，不能返回 passed。fake 模式仍按原用途使用。只修改 agent/evals/runner.py，并为失败关闭行为增加清晰错误结果或异常。",
+  "gold_files": [
+    "agent/evals/runner.py"
+  ],
+  "target_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/unit/test_eval_runner.py",
+      "-q"
+    ]
+  ],
+  "regression_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/unit/test_eval_metrics.py",
+      "tests/unit/test_eval_runner.py",
+      "-q"
+    ]
+  ],
+  "oracle_tests": [
+    [
+      "python",
+      "{oracle_scripts}/test_real_mode_fail_closed.py",
+      "{target_repo}"
+    ]
+  ],
+  "allowed_files": [
+    "agent/evals/runner.py"
+  ],
+  "requires_patch": true,
+  "expected_status": "completed",
+  "timeout_seconds": 600,
+  "metadata": {
+    "purpose": "real runner must never report success without a real Agent",
+    "auto_approve_plan": true,
+    "model_call_limit": 24,
+    "tool_call_limit": 24
+  }
+}

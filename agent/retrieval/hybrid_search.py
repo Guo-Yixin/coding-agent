@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -69,7 +70,12 @@ def _run_codegraph(query: str, repo_root: Path, *, limit: int, timeout: float, t
         return []
     command = [binary, "query", "--json", "--limit", str(limit), "-p", str(repo_root), query]
     try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False, shell=False)
+        child_env = None
+        if os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() == "1":
+            allowed = {"PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "USERPROFILE", "HOME", "APPDATA", "LOCALAPPDATA", "CODEGRAPH_BIN"}
+            child_env = {key: value for key, value in os.environ.items() if key.upper() in allowed}
+            child_env["GIT_TERMINAL_PROMPT"] = "0"
+        completed = subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False, shell=False, env=child_env)
     except (OSError, subprocess.TimeoutExpired) as exc:
         trace.fallback_reason = f"codegraph execution failed: {type(exc).__name__}"
         trace.errors.append(str(exc))
@@ -211,4 +217,43 @@ def hybrid_search(
 
 def hybrid_code_search(query: str, repo_path: str, limit: int = 20) -> dict[str, Any]:
     """Agent tool wrapper with a JSON-serializable result."""
-    return hybrid_search(query, repo_path, limit=limit).to_dict()
+    started = time.perf_counter()
+    if os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() == "1":
+        case_repo_value = os.environ.get("EVAL_CASE_REPO", "").strip()
+        workspace_value = os.environ.get("AI_WORKSPACE_ROOT", "").strip()
+        if not case_repo_value or not workspace_value:
+            raise RuntimeError("Eval retrieval requires EVAL_CASE_REPO and AI_WORKSPACE_ROOT")
+        case_repo = Path(case_repo_value).expanduser().resolve()
+        workspace_root = Path(workspace_value).expanduser().resolve()
+        if workspace_root not in case_repo.parents:
+            raise RuntimeError("Eval retrieval target is outside AI_WORKSPACE_ROOT")
+        requested_repo = Path(repo_path).expanduser().resolve()
+        repo_path = str(case_repo)
+    else:
+        requested_repo = Path(repo_path).expanduser().resolve()
+    result = hybrid_search(query, repo_path, limit=limit)
+    payload = result.to_dict()
+    if os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() == "1":
+        from agent.evals.telemetry import record_eval_event
+
+        record_eval_event(
+            "workspace_binding",
+            {
+                "tool": "hybrid_code_search",
+                "requested_repo": str(requested_repo),
+                "bound_repo": str(Path(repo_path).resolve()),
+                "overridden": str(requested_repo) != str(Path(repo_path).resolve()),
+            },
+        )
+        record_eval_event(
+            "retrieval",
+            {
+                "tool": "hybrid_code_search",
+                "query": query,
+                "repo_path": str(Path(repo_path).resolve()),
+                "latency_ms": int((time.perf_counter() - started) * 1000),
+                "trace": payload["trace"],
+                "hits": payload["hits"],
+            },
+        )
+    return payload
