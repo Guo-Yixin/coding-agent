@@ -15,9 +15,9 @@ OpenSandbox SDK 是异步 API，而当前 Coding Agent 的 legacy tool/runtime �
 from __future__ import annotations
 
 import asyncio
-import inspect
 import os
 import re
+import threading
 import time
 from dataclasses import dataclass
 from datetime import timedelta
@@ -234,6 +234,8 @@ class OpenSandboxExecutor:
         self.config = config or OpenSandboxConfig.from_env()
         self._sandbox: Any | None = None
         self._sync_loop: asyncio.AbstractEventLoop | None = None
+        self._sync_thread: threading.Thread | None = None
+        self._sync_loop_ready: threading.Event | None = None
 
     @property
     def sandbox_id(self) -> str | None:
@@ -273,29 +275,37 @@ class OpenSandboxExecutor:
         return str(self._run_sync(self.start_async()))
 
     def _run_sync(self, awaitable: Any) -> Any:
-        """在同步调用链中复用当前 executor 的事件循环。
+        """Bridge synchronous Agent tools to a persistent SDK event-loop thread.
 
-        OpenSandbox SDK 内部持有异步 HTTP 客户端。若每次同步方法都调用
-        ``asyncio.run``，前一个事件循环会在 ``start`` 返回时关闭，后续
-        ``upload_files``/``execute``/``close`` 复用该客户端时就会触发
-        ``Event loop is closed``。因此同一个 executor 的同步生命周期必须
-        共享一个 loop；异步调用方则应直接使用 ``*_async`` 方法。
+        LangGraph may call a synchronous tool while its own loop is running.
+        Driving an SDK loop on that thread would nest loops, while creating a new
+        loop for each operation would detach the HTTP client from its owner loop.
+        A dedicated loop thread supports both call contexts and preserves the
+        SDK client's loop affinity for the full sandbox lifecycle.
         """
 
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            pass
-        else:
-            if inspect.iscoroutine(awaitable):
-                awaitable.close()
-            raise RuntimeError(
-                "OpenSandbox 同步 API 不能在运行中的事件循环内调用，请使用 async 方法"
-            )
-
         if self._sync_loop is None or self._sync_loop.is_closed():
-            self._sync_loop = asyncio.new_event_loop()
-        return self._sync_loop.run_until_complete(awaitable)
+            loop = asyncio.new_event_loop()
+            ready = threading.Event()
+
+            def run_loop() -> None:
+                asyncio.set_event_loop(loop)
+                ready.set()
+                loop.run_forever()
+
+            thread = threading.Thread(target=run_loop, name="opensandbox-sdk-loop", daemon=True)
+            self._sync_loop = loop
+            self._sync_thread = thread
+            self._sync_loop_ready = ready
+            thread.start()
+            ready.wait()
+
+        loop = self._sync_loop
+        if loop is None or loop.is_closed():
+            if asyncio.iscoroutine(awaitable):
+                awaitable.close()
+            raise RuntimeError("OpenSandbox event loop is unavailable")
+        return asyncio.run_coroutine_threadsafe(awaitable, loop).result()
 
     @staticmethod
     def _output_text(messages: Iterable[Any]) -> str:
@@ -384,13 +394,19 @@ class OpenSandboxExecutor:
             await sandbox.destroy()
 
     def close(self) -> None:
+        loop = self._sync_loop
+        thread = self._sync_thread
         try:
             self._run_sync(self.close_async())
         finally:
-            loop = self._sync_loop
             self._sync_loop = None
+            self._sync_thread = None
+            self._sync_loop_ready = None
             if loop is not None and not loop.is_closed():
-                loop.run_until_complete(loop.shutdown_asyncgens())
+                loop.call_soon_threadsafe(loop.stop)
+            if thread is not None:
+                thread.join(timeout=5)
+            if loop is not None and not loop.is_closed():
                 loop.close()
 
     async def __aenter__(self) -> "OpenSandboxExecutor":

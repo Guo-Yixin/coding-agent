@@ -249,6 +249,17 @@ def test_plan_rejection_requires_pending_rejected_state_and_clean_workspace() ->
     assert _plan_rejection_evidence_ok({**evidence, "workspace_clean_after_rejection": False}, []) is False
 
 
+def test_git_diff_normalizes_windows_patch_line_endings(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(EvalRunner, "_include_untracked_for_diff", lambda _workspace: None)
+    monkeypatch.setattr(
+        eval_runner_module.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "diff --git a/x b/x\r\n+line\r\n", ""),
+    )
+
+    assert EvalRunner._git_diff(tmp_path) == "diff --git a/x b/x\n+line\n"
+
+
 def test_real_report_preserves_target_test_failure_diagnostics(tmp_path: Path, monkeypatch) -> None:
     repository, _ = _target_repo(tmp_path)
     source = _agent_source(tmp_path)
