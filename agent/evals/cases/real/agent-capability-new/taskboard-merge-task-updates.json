@@ -56,8 +56,8 @@
     "agent_tools": [
       "hybrid_code_search"
     ],
-    "model_call_limit": 24,
-    "tool_call_limit": 48,
+    "model_call_limit": 32,
+    "tool_call_limit": 80,
     "auto_approve_plan": true,
     "require_plan_approval": true,
     "plan_rubric_any_terms": [
