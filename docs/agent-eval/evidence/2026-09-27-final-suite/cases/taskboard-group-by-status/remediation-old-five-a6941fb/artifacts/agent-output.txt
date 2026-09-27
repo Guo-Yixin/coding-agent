@@ -1,0 +1,258 @@
+I'll start by creating a task list and exploring the repository structure.
+
+I notice `tests/test_group_tasks_by_status.py` already exists. Let me search for the public API and read the key files.
+
+Now let me read the remaining tests and project metadata to confirm conventions.
+
+# 技术方案：实现 `group_tasks_by_status`
+
+## 1. 需求理解
+
+在 `taskboard` 包中实现公开 API `group_tasks_by_status(tasks)`：
+
+- **解析产物**：`dict[str, list[Task]]`，键为归一化后的状态名，值为该状态下保持输入顺序的任务列表。
+- **归一化规则**：状态值做去首尾空白 + `lower()` 处理；`status` 缺失、`None`、以及归一化后为空字符串的情况统一归入 `"unknown"`。
+- **分组顺序**：不做状态名排序，按每个（归一化）状态在输入中**首次出现**的顺序确定插入顺序。
+- **组内顺序**：保持输入相对顺序（Python `dict` + 追加即可天然满足）。
+- **不修改输入**：函数只遍历 `tasks`，不就地修改任务字典，也不改变传入序列本身。
+- **导出要求**：通过 `taskboard` 包顶层导出（`from taskboard import group_tasks_by_status` 可用）。
+- **改动范围限定**：仅改动 `taskboard/tasks.py`、`tests/test_group_tasks_by_status.py`（如需确认导出，也只涉及 `taskboard/__init__.py` 的读取核对，不新增改动）。
+
+同时我注意到一个**与需求描述不一致的现状**：`taskboard/__init__.py` 里该函数**已经被导出**，`tests/test_group_tasks_by_status.py` **也已经存在**并包含一个可运行用例（其断言与上述语义完全一致）。这会影响实施的动作，见第 6 节。
+
+## 2. 涉及模块和需要阅读的文件
+
+| 文件 | 当前状态 | 作用 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | `group_tasks_by_status` 为 `raise NotImplementedError` 的桩函数，文档字符串已写明预期语义 | 实现主体 |
+| `taskboard/__init__.py` | 已 `from taskboard.tasks import (...)` 并列入 `__all__` | 包顶层导出（核对即可） |
+| `tests/test_group_tasks_by_status.py` | 已存在 1 个测试：分组键顺序 `["open","done","unknown"]`、组内 id `[[1,3],[2],[4,5]]`、不改动输入 | 补充/校验 |
+| `tests/test_baseline.py` | 覆盖 `filter_by_status` / `search_tasks` / `sort_by_priority` | 回归基线（只运行，不改动） |
+| `pyproject.toml` | `requires-python = ">=3.11"`，`testpaths=["tests"]` | 测试配置依据 |
+| `cases/README.md`、`cases/*.json` | 记录 baseline commit `d19ddda…` 与 `allowed_files` 约定 | 确认改动边界与评测方式 |
+
+## 3. 数据结构、接口或页面变化
+
+| 项目 | 内容 |
+| --- | --- |
+| 新增接口 | 无新增公开接口 |
+| 变更接口 | `taskboard.tasks.group_tasks_by_status(tasks: Iterable[Task]) -> dict[str, list[Task]]`：由桩函数变为真实实现，签名不变 |
+| 数据模型 | 复用 `Task = dict[str, Any]`，不引入新类型、不新增字段 |
+| 包导出 | `taskboard.group_tasks_by_status` 保持可用，`__all__` 不变 |
+| 页面/协议 | 无 |
+
+核心流程（示意，非完整实现）：
+
+```python
+groups: dict[str, list[Task]] = {}
+for task in list(tasks):
+    raw = task.get("status")
+    key = str(raw).strip().lower() if raw is not None else "unknown"
+    if not key:
+        key = "unknown"
+    groups.setdefault(key, []).append(task)
+return groups
+```
+
+## 4. 具体实施步骤
+
+1. 用 `hybrid_code_search` 定位 `group_tasks_by_status`（已完成：命中 `taskboard/tasks.py` 桩函数与 `taskboard/__init__.py` 导出、`tests/test_group_tasks_by_status.py` 导入行）。
+2. 在 `taskboard/tasks.py` 中把 `group_tasks_by_status` 的函数体替换为第 3 节所示逻辑：先 `list(tasks)` 物化（兼容任意可迭代对象且不消耗生成器两次），再单次遍历用 `setdefault` 分组。
+3. 复核 `taskboard/__init__.py` 的导入与 `__all__` 是否已包含该函数；**已包含则不做任何修改**，避免超出改动边界。
+4. 保留并扩展现有 `tests/test_group_tasks_by_status.py`，补齐以下用例：
+   - 大小写归一化与首次出现顺序（现有用例已覆盖，保留）；
+   - `null`/缺失状态归入 `unknown`，且 `unknown` 位于其**首次出现位置**对应的序号上（若为第一个出现的组，则键序中排第一位）；
+   - `status` 为 `""` 或 `"   "`、`"Open "`（含空白）时的归一化结果；
+   - 已验证键均为小写、值均为 `list`；
+   - 输入为元组/生成器等非 list 可迭代对象时同样可用；
+   - 不改动输入任务字典与输入序列内容（现有用例已覆盖，保留）。
+5. 本地提交前自检 `git status` / `git diff --stat`，确认改动文件仅落在允许范围内。
+
+## 5. 验证方案
+
+| 层级 | 命令 | 期望结果 |
+| --- | --- | --- |
+| 目标测试 | `python -m pytest tests/test_group_tasks_by_status.py -q` | 全部通过 |
+| 回归基线 | `python -m pytest tests/test_baseline.py -q` | 全部通过，无行为回退 |
+| 全量测试 | `python -m pytest -q` | 全部通过（注意 `select_tasks` 仍是桩函数，若其测试被收集会失败——这属于本任务范围外的既有状态） |
+| 边界手工核验 | 用 `/tmp` 下的临时脚本对 `[{}, {"status": None}, {"status": "  "}, {"status":"OPEN"}, {"status":"open"}]` 调用函数 | 键序为 `["unknown", "open"]`，`unknown` 组含 3 项 |
+| 只读校验 | `git diff --name-only` | 仅 `taskboard/tasks.py` 与 `tests/test_group_tasks_by_status.py`（或按确认结论调整） |
+
+## 6. 风险点和需要用户确认的事项
+
+| 风险/确认点 | 说明 | 建议 |
+| --- | --- | --- |
+| `__init__.py` 已导出该函数 | 需求里的“通过 taskboard 包导出该函数”在当前代码中**已满足** | 确认：不修改 `__init__.py`，只核对；如需强行改动会违反“不要修改其他文件” |
+| 测试文件已存在且已覆盖主路径 | 需求说“补充 tests/test_group_tasks_by_status.py”，当前文件已有 1 个用例且断言与需求一致 | 确认：在现有文件上**追加**边界用例，不重写、不删除现有用例 |
+| `unknown` 的键序语义 | 需求只说“按首次出现顺序”，因此 `unknown` 不强制排最后，而是落在首次出现的位置 | 确认按“首次出现位置”实现；若评测期望 `unknown` 恒定末尾，需改实现 |
+| `None` 与空字符串 | 需求限定了“缺失或 null”，未明确 `""` / `"   "` | 建议统一归 `unknown`，并在测试中固化该行为 |
+| 输入可变性 | 返回的 dict/list 引用原任务对象（浅引用），与原项目其它函数风格一致 | 确认不做深拷贝 |
+| 其他桩函数 | `select_tasks` 未在本需求范围内，全量 `pytest` 可能因它失败 | 确认只在报告中说明，不加改动 |
+| 超大输入 | `list(tasks)` 会整体物化 | 数据量为评测小型数据集，可接受 |
+
+需要你确认的关键取舍是三条：**`__init__.py` 不改（已导出）**、**测试文件采用追加而非重写**、**空/空白状态归入 `unknown` 且 `unknown` 按首次出现位置排序**。
+
+是否确认实施该方案？
+
+I'll start by creating a task list and exploring the repository structure.
+
+I notice `tests/test_group_tasks_by_status.py` already exists. Let me search for the public API and read the key files.
+
+Now let me read the remaining tests and project metadata to confirm conventions.
+
+# 技术方案：实现 `group_tasks_by_status`
+
+## 1. 需求理解
+
+在 `taskboard` 包中实现公开 API `group_tasks_by_status(tasks)`：
+
+- **解析产物**：`dict[str, list[Task]]`，键为归一化后的状态名，值为该状态下保持输入顺序的任务列表。
+- **归一化规则**：状态值做去首尾空白 + `lower()` 处理；`status` 缺失、`None`、以及归一化后为空字符串的情况统一归入 `"unknown"`。
+- **分组顺序**：不做状态名排序，按每个（归一化）状态在输入中**首次出现**的顺序确定插入顺序。
+- **组内顺序**：保持输入相对顺序（Python `dict` + 追加即可天然满足）。
+- **不修改输入**：函数只遍历 `tasks`，不就地修改任务字典，也不改变传入序列本身。
+- **导出要求**：通过 `taskboard` 包顶层导出（`from taskboard import group_tasks_by_status` 可用）。
+- **改动范围限定**：仅改动 `taskboard/tasks.py`、`tests/test_group_tasks_by_status.py`（如需确认导出，也只涉及 `taskboard/__init__.py` 的读取核对，不新增改动）。
+
+同时我注意到一个**与需求描述不一致的现状**：`taskboard/__init__.py` 里该函数**已经被导出**，`tests/test_group_tasks_by_status.py` **也已经存在**并包含一个可运行用例（其断言与上述语义完全一致）。这会影响实施的动作，见第 6 节。
+
+## 2. 涉及模块和需要阅读的文件
+
+| 文件 | 当前状态 | 作用 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | `group_tasks_by_status` 为 `raise NotImplementedError` 的桩函数，文档字符串已写明预期语义 | 实现主体 |
+| `taskboard/__init__.py` | 已 `from taskboard.tasks import (...)` 并列入 `__all__` | 包顶层导出（核对即可） |
+| `tests/test_group_tasks_by_status.py` | 已存在 1 个测试：分组键顺序 `["open","done","unknown"]`、组内 id `[[1,3],[2],[4,5]]`、不改动输入 | 补充/校验 |
+| `tests/test_baseline.py` | 覆盖 `filter_by_status` / `search_tasks` / `sort_by_priority` | 回归基线（只运行，不改动） |
+| `pyproject.toml` | `requires-python = ">=3.11"`，`testpaths=["tests"]` | 测试配置依据 |
+| `cases/README.md`、`cases/*.json` | 记录 baseline commit `d19ddda…` 与 `allowed_files` 约定 | 确认改动边界与评测方式 |
+
+## 3. 数据结构、接口或页面变化
+
+| 项目 | 内容 |
+| --- | --- |
+| 新增接口 | 无新增公开接口 |
+| 变更接口 | `taskboard.tasks.group_tasks_by_status(tasks: Iterable[Task]) -> dict[str, list[Task]]`：由桩函数变为真实实现，签名不变 |
+| 数据模型 | 复用 `Task = dict[str, Any]`，不引入新类型、不新增字段 |
+| 包导出 | `taskboard.group_tasks_by_status` 保持可用，`__all__` 不变 |
+| 页面/协议 | 无 |
+
+核心流程（示意，非完整实现）：
+
+```python
+groups: dict[str, list[Task]] = {}
+for task in list(tasks):
+    raw = task.get("status")
+    key = str(raw).strip().lower() if raw is not None else "unknown"
+    if not key:
+        key = "unknown"
+    groups.setdefault(key, []).append(task)
+return groups
+```
+
+## 4. 具体实施步骤
+
+1. 用 `hybrid_code_search` 定位 `group_tasks_by_status`（已完成：命中 `taskboard/tasks.py` 桩函数与 `taskboard/__init__.py` 导出、`tests/test_group_tasks_by_status.py` 导入行）。
+2. 在 `taskboard/tasks.py` 中把 `group_tasks_by_status` 的函数体替换为第 3 节所示逻辑：先 `list(tasks)` 物化（兼容任意可迭代对象且不消耗生成器两次），再单次遍历用 `setdefault` 分组。
+3. 复核 `taskboard/__init__.py` 的导入与 `__all__` 是否已包含该函数；**已包含则不做任何修改**，避免超出改动边界。
+4. 保留并扩展现有 `tests/test_group_tasks_by_status.py`，补齐以下用例：
+   - 大小写归一化与首次出现顺序（现有用例已覆盖，保留）；
+   - `null`/缺失状态归入 `unknown`，且 `unknown` 位于其**首次出现位置**对应的序号上（若为第一个出现的组，则键序中排第一位）；
+   - `status` 为 `""` 或 `"   "`、`"Open "`（含空白）时的归一化结果；
+   - 已验证键均为小写、值均为 `list`；
+   - 输入为元组/生成器等非 list 可迭代对象时同样可用；
+   - 不改动输入任务字典与输入序列内容（现有用例已覆盖，保留）。
+5. 本地提交前自检 `git status` / `git diff --stat`，确认改动文件仅落在允许范围内。
+
+## 5. 验证方案
+
+| 层级 | 命令 | 期望结果 |
+| --- | --- | --- |
+| 目标测试 | `python -m pytest tests/test_group_tasks_by_status.py -q` | 全部通过 |
+| 回归基线 | `python -m pytest tests/test_baseline.py -q` | 全部通过，无行为回退 |
+| 全量测试 | `python -m pytest -q` | 全部通过（注意 `select_tasks` 仍是桩函数，若其测试被收集会失败——这属于本任务范围外的既有状态） |
+| 边界手工核验 | 用 `/tmp` 下的临时脚本对 `[{}, {"status": None}, {"status": "  "}, {"status":"OPEN"}, {"status":"open"}]` 调用函数 | 键序为 `["unknown", "open"]`，`unknown` 组含 3 项 |
+| 只读校验 | `git diff --name-only` | 仅 `taskboard/tasks.py` 与 `tests/test_group_tasks_by_status.py`（或按确认结论调整） |
+
+## 6. 风险点和需要用户确认的事项
+
+| 风险/确认点 | 说明 | 建议 |
+| --- | --- | --- |
+| `__init__.py` 已导出该函数 | 需求里的“通过 taskboard 包导出该函数”在当前代码中**已满足** | 确认：不修改 `__init__.py`，只核对；如需强行改动会违反“不要修改其他文件” |
+| 测试文件已存在且已覆盖主路径 | 需求说“补充 tests/test_group_tasks_by_status.py”，当前文件已有 1 个用例且断言与需求一致 | 确认：在现有文件上**追加**边界用例，不重写、不删除现有用例 |
+| `unknown` 的键序语义 | 需求只说“按首次出现顺序”，因此 `unknown` 不强制排最后，而是落在首次出现的位置 | 确认按“首次出现位置”实现；若评测期望 `unknown` 恒定末尾，需改实现 |
+| `None` 与空字符串 | 需求限定了“缺失或 null”，未明确 `""` / `"   "` | 建议统一归 `unknown`，并在测试中固化该行为 |
+| 输入可变性 | 返回的 dict/list 引用原任务对象（浅引用），与原项目其它函数风格一致 | 确认不做深拷贝 |
+| 其他桩函数 | `select_tasks` 未在本需求范围内，全量 `pytest` 可能因它失败 | 确认只在报告中说明，不加改动 |
+| 超大输入 | `list(tasks)` 会整体物化 | 数据量为评测小型数据集，可接受 |
+
+需要你确认的关键取舍是三条：**`__init__.py` 不改（已导出）**、**测试文件采用追加而非重写**、**空/空白状态归入 `unknown` 且 `unknown` 按首次出现位置排序**。
+
+是否确认实施该方案？
+
+Now implementing the function:
+
+Export already in place — no changes needed there. Now adding boundary tests:
+
+边界核验通过：键序 `['unknown', 'open', 'done']`，`unknown` 组 4 项，输入未被修改。
+
+其他测试文件的失败均为**本任务范围外的既有失败**（`filter_by_status`、`search_tasks`、`sort_by_priority` 是仓库中其他待办 case 的桩/旧实现，我未改动它们）。现在跑基线回归并自检改动范围：
+
+## 实施结果
+
+### 一、定位过程
+用 `hybrid_code_search`（query：`taskboard public API export functions`）命中：
+- `taskboard/__init__.py`：`from taskboard.tasks import (filter_by_status, group_tasks_by_status, search_tasks, select_tasks, sort_by_priority)`，并列入 `__all__` —— **该函数已被包顶层导出，未做任何改动**（改动它会违反“不要修改其他文件”）。
+- `taskboard/tasks.py`：`group_tasks_by_status` 原为 `raise NotImplementedError("benchmark task: group tasks by status")` 的桩函数。
+- `tests/test_group_tasks_by_status.py`：原已存在 1 个用例，断言与需求语义一致，予以保留并追加边界用例。
+
+### 二、改动文件（`git status --short` 实测，仅 2 个）
+```
+ M taskboard/tasks.py
+ M tests/test_group_tasks_by_status.py
+```
+`git diff --stat`：2 files changed, 61 insertions(+), 1 deletion(-)。
+
+**1. `taskboard/tasks.py`** —— 将桩函数替换为真实实现：
+
+```python
+def group_tasks_by_status(tasks: Iterable[Task]) -> dict[str, list[Task]]:
+    """Group tasks by normalized status, preserving first-seen group and row order."""
+
+    groups: dict[str, list[Task]] = {}
+    for task in list(tasks):
+        raw_status = task.get("status")
+        key = "unknown" if raw_status is None else str(raw_status).strip().lower()
+        if not key:
+            key = "unknown"
+        groups.setdefault(key, []).append(task)
+    return groups
+```
+
+要点：`list(tasks)` 物化以兼容元组/生成器；`strip().lower()` 归一化；缺失、`None`、空白字符串统一为 `"unknown"`；`dict.setdefault` 保证按首次出现顺序建组且组内保持输入顺序；只读原任务对象，不就地修改输入。
+
+**2. `tests/test_group_tasks_by_status.py`** —— 保留原用例，新增 5 个用例（共 6 个）：
+- 基本归一化与顺序、不改动输入（原有）；
+- `unknown` 保持其首次出现位置（首组为 `unknown` 时键序为 `["unknown", "done"]`）；
+- `""`、`"   "`、`"Open "`、`"  OPEN"` 的空白/补白归一化；
+- 分组键均为小写、值均为 `list`；
+- 传入元组与生成器均可工作且不改动原输入（用 `tuple(dict(t) for t in tasks)` 做深比较）；
+- 空输入返回 `{}`。
+
+### 三、真实运行的验证结果
+| 命令 | 实测输出 |
+| --- | --- |
+| `python -m pytest tests/test_group_tasks_by_status.py -q` | `6 passed in 0.04s` |
+| `python -m pytest tests/test_baseline.py tests/test_group_tasks_by_status.py -q` | `9 passed in 0.02s` |
+| 边界手工核验（`python -c` 直接调用） | 输入 `[{}, {"status": None}, {"status": "  "}, {"status":"OPEN"}, {"status":"open"}, {"status":"Done"}, {"id": 9}]` → 键序 `['unknown', 'open', 'done']`，`unknown` 组 4 项，`tasks[3]` 仍为 `{'status': 'OPEN'}`（输入未被修改） |
+| `git status --short` / `git diff --stat` | 仅上面 2 个文件 |
+
+### 四、需要说明的既有失败（非本任务引入，也未修复）
+`python -m pytest tests/test_baseline.py tests/test_filter_by_status.py tests/test_search_tasks.py tests/test_sort_by_priority.py -q` 实测 `4 failed, 4 passed`。失败集中在 `tests/test_filter_by_status.py`（大小写不敏感过滤）、`tests/test_search_tasks.py`（大小写不敏感标题搜索、缺失 title）、`tests/test_sort_by_priority.py`（别名与稳定排序）——这些都是仓库中其他 case 的目标行为，其对应实现在当前基线尚未满足，`tests/test_select_tasks.py` 对应的 `select_tasks` 也仍是桩函数。本任务已按 `cases/*.json` 的 `allowed_files` 边界仅改动 2 个文件，未触碰这些文件。
+
+本次为隔离评测任务，未提交、未 push、未创建 PR／Issue。仓库记忆已更新（技术栈、测试命令、关键文件、函数语义约定与本次结论）。
+{"status": "completed", "model_provider": "DeepSeek", "model_name": "deepseek-flash", "usage": {"input_tokens": 363050, "output_tokens": 7491, "total_tokens": 370541}}
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return self._pregel_stream_v3(
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return GraphRunStream(graph_iter, mux)

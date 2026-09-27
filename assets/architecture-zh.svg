@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1300" viewBox="0 0 1600 1300" role="img" aria-labelledby="title desc">
+  <title id="title">CODING 项目系统架构</title>
+  <desc id="desc">展示当前应用、Agent 执行、持久化、沙箱评测和虚线标注的横向扩容目标。</desc>
+  <defs>
+    <linearGradient id="hero" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#18264f"/><stop offset="1" stop-color="#3459c5"/></linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#6881b6"/></marker>
+    <marker id="arrow-light" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#8b9ab7"/></marker>
+    <style>
+      text{font-family:"Microsoft YaHei","Noto Sans CJK SC","Segoe UI",Arial,sans-serif;fill:#17233d}
+      .title{font-size:34px;font-weight:750;fill:#fff}.subtitle{font-size:17px;fill:#dbe5ff}
+      .section{font-size:19px;font-weight:750;letter-spacing:.4px;fill:#34435e}
+      .head{font-size:19px;font-weight:700}.body{font-size:15px;fill:#53627b}.tiny{font-size:13px;fill:#66758e}
+      .panel{fill:#fff;stroke:#dbe3f0;stroke-width:1.5}.node{fill:#f8faff;stroke:#cbd6e9;stroke-width:1.5}
+      .blue{fill:#eef3ff;stroke:#92a8ed}.teal{fill:#edf9f8;stroke:#91d1cb}.amber{fill:#fff7e9;stroke:#f0c878}
+      .arrow{fill:none;stroke:#6881b6;stroke-width:2.5;marker-end:url(#arrow)}
+      .softarrow{fill:none;stroke:#8b9ab7;stroke-width:2;marker-end:url(#arrow-light)}
+      .dash{fill:#fbfcff;stroke:#8896b3;stroke-width:2;stroke-dasharray:9 7}
+    </style>
+  </defs>
+  <rect width="1600" height="1300" rx="26" fill="#f2f5fb"/>
+  <rect x="40" y="28" width="1520" height="76" rx="18" fill="url(#hero)"/>
+  <text x="72" y="67" class="title">CODING · 项目系统架构</text>
+  <text x="74" y="91" class="subtitle">理解仓库的 Agent · 可恢复会话 · 隔离且可复跑的评测</text>
+  <line x1="1210" y1="55" x2="1260" y2="55" stroke="#dbe5ff" stroke-width="3"/><text x="1272" y="61" class="subtitle">当前链路</text>
+  <line x1="1390" y1="55" x2="1440" y2="55" stroke="#dbe5ff" stroke-width="3" stroke-dasharray="8 6"/><text x="1450" y="61" class="subtitle">扩容目标</text>
+
+  <rect x="40" y="120" width="1520" height="455" rx="20" class="panel"/>
+  <text x="68" y="155" class="section">01 · 产品运行链路</text>
+  <rect x="70" y="180" width="245" height="100" rx="14" class="node blue"/>
+  <text x="92" y="216" class="head">Vue 3 工作台</text><text x="92" y="244" class="body">提交任务 · 查看计划与补丁</text><text x="92" y="265" class="body">实时状态与历史会话</text>
+  <rect x="370" y="180" width="265" height="100" rx="14" class="node blue"/>
+  <text x="392" y="216" class="head">FastAPI 应用</text><text x="392" y="244" class="body">HTTP API · 审批操作</text><text x="392" y="265" class="body">SSE 事件接口</text>
+  <rect x="690" y="180" width="280" height="100" rx="14" class="node amber"/>
+  <text x="712" y="216" class="head">多层意图路由</text><text x="712" y="244" class="body">LLM 语义分类 + 关键词规则兜底</text><text x="712" y="265" class="body">规划 · 编码 · 审查 · QA</text>
+  <rect x="1025" y="180" width="500" height="100" rx="14" class="node blue"/>
+  <text x="1048" y="216" class="head">主 Agent · DeepAgents / LangGraph</text><text x="1048" y="244" class="body">统筹任务、委派工作并汇总结果</text><text x="1048" y="265" class="body">Checkpoint 恢复 · 用户审批后继续执行</text>
+  <path d="M315 230H360" class="arrow"/><path d="M635 230H680" class="arrow"/><path d="M970 230H1015" class="arrow"/>
+
+  <rect x="70" y="330" width="330" height="112" rx="14" class="node"/>
+  <text x="92" y="366" class="head">按任务动态装配</text><text x="92" y="394" class="body">Prompt · 工具 · 权限</text><text x="92" y="416" class="body">Skills 与任务上下文</text>
+  <rect x="440" y="330" width="300" height="112" rx="14" class="node teal"/>
+  <text x="462" y="366" class="head">专业 SubAgent</text><text x="462" y="394" class="body">任务拆解 · 分析 · Reviewer</text><text x="462" y="416" class="body">动作决策与审查发现回传</text>
+  <rect x="780" y="330" width="330" height="112" rx="14" class="node amber"/>
+  <text x="802" y="366" class="head">工具与安全中间件</text><text x="802" y="394" class="body">路径/参数校验 · 工具异常恢复</text><text x="802" y="416" class="body">模型、工具调用和时长上限</text>
+  <rect x="1150" y="330" width="375" height="112" rx="14" class="node blue"/>
+  <text x="1172" y="366" class="head">流式输出与运行状态</text><text x="1172" y="394" class="body">队列缓冲 → 稳定 SSE 事件协议</text><text x="1172" y="416" class="body">PostgreSQL / SQLite checkpoint 与任务状态</text>
+  <path d="M1275 280V305H235V320" class="softarrow"/>
+  <path d="M400 386H430" class="arrow"/><path d="M740 386H770" class="arrow"/><path d="M1110 386H1140" class="arrow"/>
+  <path d="M590 442V474H1010V442" class="softarrow"/>
+  <rect x="300" y="486" width="1000" height="58" rx="15" fill="#18264f"/>
+  <text x="800" y="522" text-anchor="middle" font-size="20" font-weight="700" fill="#fff">规划 → 编码 → 审查 → 修复 → 验证 → 汇报结果</text>
+
+  <rect x="40" y="600" width="1520" height="258" rx="20" class="panel"/>
+  <text x="68" y="637" class="section">02 · 仓库、执行与持久化</text>
+  <rect x="65" y="668" width="275" height="145" rx="14" class="node blue"/>
+  <text x="86" y="704" class="head">代码检索</text><text x="86" y="734" class="body">CodeGraph + grep 混合检索</text><text x="86" y="759" class="body">仓库与 PR 上下文</text><text x="86" y="786" class="tiny">供 Agent 工具定位相关代码</text>
+  <rect x="365" y="668" width="275" height="145" rx="14" class="node"/>
+  <text x="386" y="704" class="head">受控项目工作区</text><text x="386" y="734" class="body">限制路径范围的文件后端</text><text x="386" y="759" class="body">Git 分支与仓库工具</text><text x="386" y="786" class="tiny">按仓库管理工作副本</text>
+  <rect x="665" y="668" width="275" height="145" rx="14" class="node amber"/>
+  <text x="686" y="704" class="head">OpenSandbox · Eval 路径</text><text x="686" y="734" class="body">隔离环境中执行命令</text><text x="686" y="759" class="body">上传源码快照 · 回传补丁</text><text x="686" y="786" class="tiny">评测完成后清理沙箱资源</text>
+  <rect x="965" y="668" width="275" height="145" rx="14" class="node teal"/>
+  <text x="986" y="704" class="head">SQLite / PostgreSQL</text><text x="986" y="734" class="body">业务状态 · 会话 checkpoint</text><text x="986" y="759" class="body">Worker 租约 · 审计事件</text><text x="986" y="786" class="tiny">SQLite 本地默认 · PostgreSQL 可选</text>
+  <rect x="1265" y="668" width="270" height="145" rx="14" class="node"/>
+  <text x="1286" y="704" class="head">仓库长期记忆</text><text x="1286" y="734" class="body">项目结构 · 测试命令</text><text x="1286" y="759" class="body">技术决策 · 历史 · PR 上下文</text><text x="1286" y="786" class="tiny">跨会话检索与复用</text>
+  <path d="M235 442V570H202V658" class="softarrow"/><path d="M945 442V570H502V658" class="softarrow"/>
+  <path d="M945 442V570H802V658" class="softarrow"/><path d="M1335 442V570H1102V658" class="softarrow"/><path d="M1335 442V570H1400V658" class="softarrow"/>
+
+  <rect x="40" y="882" width="1520" height="193" rx="20" class="panel"/>
+  <text x="68" y="919" class="section">03 · 可复现 Agent Eval</text>
+  <rect x="68" y="944" width="255" height="94" rx="13" class="node blue"/><text x="88" y="978" class="head">固定输入版本</text><text x="88" y="1006" class="body">Agent SHA · 题目 · 目标 SHA</text>
+  <rect x="368" y="944" width="255" height="94" rx="13" class="node"/><text x="388" y="978" class="head">独立案例副本</text><text x="388" y="1006" class="body">每题创建新工作区</text>
+  <rect x="668" y="944" width="255" height="94" rx="13" class="node amber"/><text x="688" y="978" class="head">启动真实 Agent</text><text x="688" y="1006" class="body">模型 · 工具 · 检索轨迹</text>
+  <rect x="968" y="944" width="255" height="94" rx="13" class="node teal"/><text x="988" y="978" class="head">验收门禁</text><text x="988" y="1006" class="body">目标 · 回归 · 隐藏验收</text>
+  <rect x="1268" y="944" width="255" height="94" rx="13" class="node blue"/><text x="1288" y="978" class="head">可复核报告</text><text x="1288" y="1006" class="body">补丁 · Token · 耗时 · HTML</text>
+  <path d="M323 991H358" class="arrow"/><path d="M623 991H658" class="arrow"/><path d="M923 991H958" class="arrow"/><path d="M1223 991H1258" class="arrow"/>
+
+  <rect x="40" y="1098" width="1520" height="165" rx="20" class="dash"/>
+  <text x="68" y="1135" class="section">横向扩容目标 · 部署设计，并非当前默认运行链路</text>
+  <text x="70" y="1175" class="head">2 个 ASGI 节点</text><text x="70" y="1204" class="body">接收 HTTP / SSE</text>
+  <path d="M260 1180H340" class="softarrow"/>
+  <text x="360" y="1175" class="head">Redis</text><text x="360" y="1204" class="body">队列 · 仓库锁 · 事件流</text>
+  <path d="M620 1180H700" class="softarrow"/>
+  <text x="720" y="1175" class="head">3 个 Agent Worker</text><text x="720" y="1204" class="body">共享 PostgreSQL 与工作区</text>
+  <text x="1110" y="1172" class="body">容量估算：峰值约 170 个请求，</text><text x="1110" y="1200" class="body">20–30 个 coding/review 并发任务。</text>
+  <text x="1110" y="1227" class="tiny">仓库未附验证该数字的压测报告。</text>
+</svg>

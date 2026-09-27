@@ -1,0 +1,145 @@
+diff --git a/taskboard/__init__.py b/taskboard/__init__.py
+index fb699df..a2cd772 100644
+--- a/taskboard/__init__.py
++++ b/taskboard/__init__.py
+@@ -1,5 +1,5 @@
+ """Small target project used by the CODING Agent evaluation suite."""
+ 
+-from taskboard.tasks import filter_by_status, search_tasks, sort_by_priority
++from taskboard.tasks import filter_by_status, paginate_tasks, search_tasks, sort_by_priority
+ 
+-__all__ = ["filter_by_status", "search_tasks", "sort_by_priority"]
++__all__ = ["filter_by_status", "paginate_tasks", "search_tasks", "sort_by_priority"]
+diff --git a/taskboard/tasks.py b/taskboard/tasks.py
+index 24f522b..5bdcf24 100644
+--- a/taskboard/tasks.py
++++ b/taskboard/tasks.py
+@@ -7,6 +7,14 @@ from typing import Any
+ Task = dict[str, Any]
+ 
+ 
++def _validate_positive_int(value: Any, name: str) -> int:
++    """Return value as a positive int, rejecting bools and non-integers."""
++
++    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
++        raise ValueError(f"{name} must be a positive integer, got {value!r}")
++    return value
++
++
+ def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]:
+     """Return tasks matching status; no filter returns every task."""
+ 
+@@ -30,3 +38,18 @@ def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:
+ 
+     order = {"high": 0, "medium": 1, "low": 2}
+     return sorted(tasks, key=lambda task: order.get(str(task.get("priority", "")).lower(), 99))
++
++
++def paginate_tasks(tasks: Iterable[Task], *, page: int, page_size: int) -> list[Task]:
++    """Return one page of tasks; pages are 1-based and keep the input order.
++
++    Raises ValueError when page or page_size is not a positive integer (bools do
++    not count as integers). Pages past the end return an empty list.
++    """
++
++    page = _validate_positive_int(page, "page")
++    page_size = _validate_positive_int(page_size, "page_size")
++
++    rows = list(tasks)
++    start = (page - 1) * page_size
++    return rows[start : start + page_size]
+diff --git a/tests/test_paginate_tasks.py b/tests/test_paginate_tasks.py
+index 354c5be..e6a8e52 100644
+--- a/tests/test_paginate_tasks.py
++++ b/tests/test_paginate_tasks.py
+@@ -14,7 +14,89 @@ def test_pagination_accepts_iterables_and_returns_empty_for_pages_past_the_end()
+     assert paginate_tasks(({"id": i} for i in range(3)), page=4, page_size=2) == []
+ 
+ 
+-@pytest.mark.parametrize("page,page_size", [(0, 2), (-1, 2), (1, 0), (1, -3), (True, 2), (1, 1.5)])
++@pytest.mark.parametrize(
++    "page,page_size",
++    [
++        (0, 2),
++        (-1, 2),
++        (1, 0),
++        (1, -3),
++        (True, 2),
++        (1, 1.5),
++        (False, 2),
++        (1, True),
++        (1.0, 2),
++        (1, "2"),
++        (None, 2),
++        (1, None),
++    ],
++)
+ def test_pagination_rejects_non_positive_or_non_integer_arguments(page, page_size):
+     with pytest.raises(ValueError):
+         paginate_tasks([], page=page, page_size=page_size)
++
++
++def test_pagination_requires_keyword_arguments():
++    tasks = [{"id": 1}, {"id": 2}]
++    with pytest.raises(TypeError):
++        paginate_tasks(tasks, 1, 2)
++
++
++def test_page_size_larger_than_input_returns_everything_on_first_page():
++    assert paginate_tasks([{"id": 1}, {"id": 2}], page=1, page_size=10) == [{"id": 1}, {"id": 2}]
++
++
++def test_walking_every_page_reproduces_the_input_in_order():
++    tasks = [{"id": index} for index in range(1, 8)]
++    collected = []
++    page = 1
++    while True:
++        chunk = paginate_tasks(tasks, page=page, page_size=2)
++        if not chunk:
++            break
++        collected.extend(chunk)
++        page += 1
++    assert collected == tasks
++
++
++def test_last_page_boundary_and_pages_far_past_the_end_are_empty():
++    tasks = [{"id": index} for index in range(1, 5)]
++    assert paginate_tasks(tasks, page=2, page_size=2) == [{"id": 3}, {"id": 4}]
++    assert paginate_tasks(tasks, page=3, page_size=2) == []
++    assert paginate_tasks(tasks, page=9999, page_size=2) == []
++
++
++def test_empty_input_with_valid_arguments_returns_empty_list():
++    assert paginate_tasks([], page=1, page_size=3) == []
++    assert paginate_tasks([], page=5, page_size=3) == []
++
++
++def test_pagination_accepts_one_shot_iterables_without_re_consuming_them():
++    tasks = [{"id": index} for index in range(1, 6)]
++    assert paginate_tasks(iter(tasks), page=2, page_size=2) == tasks[2:4]
++    assert paginate_tasks((task for task in tasks), page=1, page_size=2) == tasks[0:2]
++    assert paginate_tasks(map(lambda task: dict(task), tasks), page=3, page_size=2) == tasks[4:6]
++    assert paginate_tasks(filter(None, tasks), page=1, page_size=100) == tasks
++
++
++def test_pagination_does_not_mutate_or_copy_the_input():
++    first = {"id": 1}
++    second = {"id": 2}
++    third = {"id": 3}
++    fourth = {"id": 4}
++    tasks = [first, second, third, fourth]
++    snapshot = [dict(task) for task in tasks]
++
++    page = paginate_tasks(tasks, page=2, page_size=2)
++
++    assert tasks == snapshot
++    assert len(tasks) == len(snapshot)
++    assert len(page) == 2
++    assert page[0] is third
++    assert page[1] is fourth
++
++
++def test_pagination_handles_large_offsets_without_error():
++    tasks = [{"id": index} for index in range(1, 11)]
++    assert paginate_tasks(tasks, page=100_000, page_size=1) == []
++    assert paginate_tasks(tasks, page=10, page_size=1) == [{"id": 10}]

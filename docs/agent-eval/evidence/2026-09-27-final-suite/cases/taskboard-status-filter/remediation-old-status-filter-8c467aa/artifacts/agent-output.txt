@@ -1,0 +1,309 @@
+I'll start by planning this technical design task.
+
+# `filter_by_status` 状态筛选修复技术方案
+
+## 1. 需求理解
+
+`hybrid_code_search` 定位结果（合并 `codegraph+grep`）：
+
+| 命中位置 | 内容 |
+| --- | --- |
+| `taskboard/tasks.py:10-16` | `def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]`，函数体为 `rows = list(tasks)`；`status is None` 直接返回 `rows`；否则 `[task for task in rows if task.get("status") == status]` |
+| `taskboard/__init__.py:3,5` | re-export，`__all__` 包含 `filter_by_status` |
+| `tests/test_filter_by_status.py:1,12,17` | 现有 2 个测试 |
+| `tests/test_baseline.py:12` | `assert filter_by_status(TASKS) == TASKS` |
+
+需要达成的行为（对应 `cases/README.md` 中的 `taskboard-status-filter` case）：
+
+1. **大小写不敏感**：`filter_by_status(tasks, "Open")` 应匹配 `status="open"`、`"OPEN"`、`"Open"` 等任意大小写形式。
+2. **`status is None` 仍返回全部任务**：现有 `None` 分支行为正确，修复时必须保留（不能因为大小写处理把 `None` 变成 `""` 去比较，否则会退化为「只返回没有 status 字段的任务」）。
+3. **不修改输入**：既不能修改传入的可迭代对象（原地 `sort`/`remove`/`append`/`pop` 等），也不能修改任务对象本身（不写入归一化后的 `status` 字段）。现有 `rows = list(tasks)` 已隐含「浅拷贝外层列表」，需要显式保住这条不变量并补测试。
+
+## 2. 涉及模块和需要阅读的文件
+
+| 文件 | 作用 | 本次动作 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | 目标实现所在模块，同时含 `search_tasks`、`sort_by_priority` | 仅修改 `filter_by_status` 函数体与其 docstring |
+| `tests/test_filter_by_status.py` | 本 case 的目标测试文件 | 补齐大小写混合、无匹配、输入未修改等用例 |
+| `tests/test_baseline.py` | 现有无筛选参数行为基线 | 只读，确认不能破坏 |
+| `tests/test_search_tasks.py`、`tests/test_sort_by_priority.py` | 其他 case，共享同一模块 | 只读，确认约束「只改两个文件」下的回归边界 |
+| `taskboard/__init__.py` | 公开导出 | 只读，签名不变，无需修改 |
+| `pyproject.toml` | pytest 配置（`testpaths = ["tests"]`） | 只读 |
+
+## 3. 数据结构、接口或页面变化
+
+- **接口签名不变**：`filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]`。属于纯行为修复，不引入新参数、新返回类型、新依赖。
+- **`Task = dict[str, Any]` 结构不变**：不新增字段，不改变 `status` 字段语义；返回值仍是「输入中满足条件的同一批 dict 对象引用」，不新建 dict、不复制任务内容。
+- **行为契约（修复后应成立）**：
+
+| 输入条件 | 期望输出 |
+| --- | --- |
+| `status` 为 `None`（或缺省） | 输入的全部任务，保持原顺序（与输入元素为同一对象） |
+| `status` 为 `""` | 仅匹配 `status` 为空字符串（或归一化后相等）的任务；为保持向后兼容，也可选择按「空字符串不筛选」处理——**需用户确认，见第 6 节** |
+| 任务缺 `status` 键或 `status` 为 `None` / 非字符串 | 不参与匹配（不加入结果），且不抛异常 |
+| 大小写不同的相同状态值 | 视为相等，顺序保持输入顺序 |
+
+## 4. 具体实施步骤
+
+**步骤 A：修改 `taskboard/tasks.py` 中的 `filter_by_status`**
+
+保持「先把可迭代对象物化为新列表、再过滤」的两段式结构，把等值比较换成大小写归一后的比较。核心逻辑（伪代码，示意语义而非最终代码）：
+
+```
+rows = list(tasks)                     # 不改原 iterable
+if status is None:
+    return rows                        # 原样返回，保持「返回全部」语义
+target = status.lower() if isinstance(status, str) else status
+return [t for t in rows if _status_matches(t.get("status"), target)]
+```
+
+`_status_matches` 的判定要点（可内联，也可抽成模块内私有小函数，倾向内联以把改动限制在一个函数内）：
+
+1. `value` 为 `None` → 不匹配（现有 `==` 语义下 `None` 也不会等于字符串，保持兼容）。
+2. `value` 为字符串且 `target` 为字符串 → `value.lower() == target.lower()`；建议用 `str.casefold()` 代替 `lower()`，以覆盖更完整的大小写折叠（如 `"Straße"`）。
+3. `value` 为非字符串（int 等） → 沿用现有宽松语义：先 `str(value)` 再折叠比较，避免因新代码对脏数据抛 `AttributeError` 而引入回归。
+4. **不写回 `task["status"]`**，不调用 `task.setdefault` / 赋值，任何归一化只发生在临时局部变量。
+
+同时更新 docstring，写明「状态匹配忽略大小写；`status=None` 返回全部；不修改输入列表与任务对象」。
+
+**步骤 B：调整 `tests/test_filter_by_status.py`**
+
+保留既有两个用例（一个覆盖大小写不敏感 + 输入未被修改，一个覆盖无匹配返回空列表），并补充：
+
+| 用例 | 覆盖点 |
+| --- | --- |
+| 大小写混合 | 输入包含 `"open"`、`"OPEN"`、`"Open"`、`"done"`，查询分别用 `"Open"`、`"OPEN"`、`"open"` 三种写法，断言结果 id 集合一致且顺序为输入顺序 |
+| 无匹配项 | 查询一个不存在的状态，断言 `== []`（空列表，而非 `None`，也不是全部任务） |
+| 输入未被修改（列表层面） | 输入为普通 `list` 时快照长度与顺序；输入为 `tuple` 时断言 `filter_by_status` 正常返回（证明未依赖原地操作） |
+| 输入未被修改（对象层面） | 用 `original = [dict(t) for t in tasks]` 深一层快照，断言调用后 `tasks == original`；并在查询值大小写与数据不同（如数据 `"OPEN"`、查询 `"open"`）的情况下断言 `task["status"]` 仍为 `"OPEN"`（防止实现「顺便改写字段」） |
+| `status=None` 语义 | 断言 `filter_by_status(tasks)` 与 `filter_by_status(tasks, None)` 都返回全部任务且元素为同一对象（`is` 比较），保持与 `tests/test_baseline.py` 一致 |
+| 边界安全（建议补充） | 任务缺 `status` 键、`status` 为 `None` 时不抛异常且不被匹配 |
+
+测试风格与现有文件保持一致：纯 `assert`、无 pytest 导入、断言 id 列表而非整对象，避免与真实仓库新增的 fixture 耦合。
+
+**步骤 C：不在本次范围内**
+
+- 不修改 `search_tasks`、`sort_by_priority`，即使基线测试当前也失败（`python -m pytest -q` 实测 `4 failed, 4 passed`：另外 3 个失败来自 `tests/test_search_tasks.py` ×2 与 `tests/test_sort_by_priority.py` ×1）。
+- 不修改 `taskboard/__init__.py`、`pyproject.toml` 或其他测试文件。
+
+## 5. 验证方案
+
+1. **定向验证**：仓库根执行 `python -m pytest tests/test_filter_by_status.py -q`，必须全部通过。
+2. **回归验证**：执行 `python -m pytest tests/test_baseline.py -q`，确认无筛选参数的行为未被破坏。
+3. **全量现状核对**：执行 `python -m pytest -q`。预期 `tests/test_filter_by_status.py` 与 `tests/test_baseline.py` 全绿；`tests/test_search_tasks.py`、`tests/test_sort_by_priority.py` 仍会失败（本次范围外且被用户明确禁止修改），这属于预期结果，不是本次修复引入的回归——实施后需要把这三处失败单独说明。
+4. **静态边界检查**：`git diff --stat` 确认只有 `taskboard/tasks.py` 与 `tests/test_filter_by_status.py` 两个文件变更。
+5. **可选的补充核实**（供oracle 之外的独立检查）：用 `python -c` 直接调用函数验证 `filter_by_status([...], "Open")` 与 `"OPEN"`、`"open"` 结果一致，且调用后原列表逐元素等于调用前快照。
+
+## 6. 风险点和需要用户确认的事项
+
+| 风险/待确认 | 说明 | 建议 |
+| --- | --- | --- |
+| `status == ""` 的语义 | 当前实现会去匹配 `status` 为空串的任务；若按 `None` 语义（返回全部），会产生行为歧义 | 默认保持“精确匹配空串”不变，改动最小；如需改为「空串=不过滤」请确认 |
+| 非字符串状态值（如 `{"status": 1}` 与查询 `"1"`） | 现有 `==` 语义下不会相等，若支持需 `str()` 归一，会略微放宽匹配范围 | 默认按 `str(value)` 归一以保持宽容；如要求严格仅字符串比较请确认 |
+| 大小写折叠策略 | `lower()` 与 `casefold()` 在少数 Unicode 字符上结果不同 | 建议使用 `casefold()`，语义更严格且不影响 ASCII 场景 |
+| 输入为「已排序/惰性可迭代对象」 | 函数对 `Iterable` 同时支持 list/tuple/generator；`list(tasks)` 会消费生成器，这是现有行为，保持不变 | 无需改变；只需保证不原地改动外部 list |
+| 元素为同一对象引用而非副本 | 返回值与输入共享 dict，调用方若改动返回值仍会影响原任务 | 维持现状（`tests/test_baseline.py` 也是按引用比较）；如需深拷贝请确认 |
+| 全量测试不会全绿 | 同仓库其他两个功能在基线就失败，评测可能额外检查全量结果 | 需确认严格「只改两个文件」的边界优先于「让全量 pytest 变绿」 |
+| 工作区未跟踪产物 | 仓库根存在 `.codegraph/` 索引目录，实施提交时不得把它纳入变更 | 只 `git add` 两个目标文件 |
+
+## 7. 涉及文件与改动量预估
+
+| 文件 | 改动性质 | 预估规模 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | 修改 `filter_by_status` 函数体（3-4 行）+ docstring | 约 5-8 行 |
+| `tests/test_filter_by_status.py` | 保留 2 个既有用例，新增约 4-5 个用例 | 约 30-45 行 |
+
+是否确认实施该方案？
+
+I'll start by planning this technical design task.
+
+# `filter_by_status` 状态筛选修复技术方案
+
+## 1. 需求理解
+
+`hybrid_code_search` 定位结果（合并 `codegraph+grep`）：
+
+| 命中位置 | 内容 |
+| --- | --- |
+| `taskboard/tasks.py:10-16` | `def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]`，函数体为 `rows = list(tasks)`；`status is None` 直接返回 `rows`；否则 `[task for task in rows if task.get("status") == status]` |
+| `taskboard/__init__.py:3,5` | re-export，`__all__` 包含 `filter_by_status` |
+| `tests/test_filter_by_status.py:1,12,17` | 现有 2 个测试 |
+| `tests/test_baseline.py:12` | `assert filter_by_status(TASKS) == TASKS` |
+
+需要达成的行为（对应 `cases/README.md` 中的 `taskboard-status-filter` case）：
+
+1. **大小写不敏感**：`filter_by_status(tasks, "Open")` 应匹配 `status="open"`、`"OPEN"`、`"Open"` 等任意大小写形式。
+2. **`status is None` 仍返回全部任务**：现有 `None` 分支行为正确，修复时必须保留（不能因为大小写处理把 `None` 变成 `""` 去比较，否则会退化为「只返回没有 status 字段的任务」）。
+3. **不修改输入**：既不能修改传入的可迭代对象（原地 `sort`/`remove`/`append`/`pop` 等），也不能修改任务对象本身（不写入归一化后的 `status` 字段）。现有 `rows = list(tasks)` 已隐含「浅拷贝外层列表」，需要显式保住这条不变量并补测试。
+
+## 2. 涉及模块和需要阅读的文件
+
+| 文件 | 作用 | 本次动作 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | 目标实现所在模块，同时含 `search_tasks`、`sort_by_priority` | 仅修改 `filter_by_status` 函数体与其 docstring |
+| `tests/test_filter_by_status.py` | 本 case 的目标测试文件 | 补齐大小写混合、无匹配、输入未修改等用例 |
+| `tests/test_baseline.py` | 现有无筛选参数行为基线 | 只读，确认不能破坏 |
+| `tests/test_search_tasks.py`、`tests/test_sort_by_priority.py` | 其他 case，共享同一模块 | 只读，确认约束「只改两个文件」下的回归边界 |
+| `taskboard/__init__.py` | 公开导出 | 只读，签名不变，无需修改 |
+| `pyproject.toml` | pytest 配置（`testpaths = ["tests"]`） | 只读 |
+
+## 3. 数据结构、接口或页面变化
+
+- **接口签名不变**：`filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]`。属于纯行为修复，不引入新参数、新返回类型、新依赖。
+- **`Task = dict[str, Any]` 结构不变**：不新增字段，不改变 `status` 字段语义；返回值仍是「输入中满足条件的同一批 dict 对象引用」，不新建 dict、不复制任务内容。
+- **行为契约（修复后应成立）**：
+
+| 输入条件 | 期望输出 |
+| --- | --- |
+| `status` 为 `None`（或缺省） | 输入的全部任务，保持原顺序（与输入元素为同一对象） |
+| `status` 为 `""` | 仅匹配 `status` 为空字符串（或归一化后相等）的任务；为保持向后兼容，也可选择按「空字符串不筛选」处理——**需用户确认，见第 6 节** |
+| 任务缺 `status` 键或 `status` 为 `None` / 非字符串 | 不参与匹配（不加入结果），且不抛异常 |
+| 大小写不同的相同状态值 | 视为相等，顺序保持输入顺序 |
+
+## 4. 具体实施步骤
+
+**步骤 A：修改 `taskboard/tasks.py` 中的 `filter_by_status`**
+
+保持「先把可迭代对象物化为新列表、再过滤」的两段式结构，把等值比较换成大小写归一后的比较。核心逻辑（伪代码，示意语义而非最终代码）：
+
+```
+rows = list(tasks)                     # 不改原 iterable
+if status is None:
+    return rows                        # 原样返回，保持「返回全部」语义
+target = status.lower() if isinstance(status, str) else status
+return [t for t in rows if _status_matches(t.get("status"), target)]
+```
+
+`_status_matches` 的判定要点（可内联，也可抽成模块内私有小函数，倾向内联以把改动限制在一个函数内）：
+
+1. `value` 为 `None` → 不匹配（现有 `==` 语义下 `None` 也不会等于字符串，保持兼容）。
+2. `value` 为字符串且 `target` 为字符串 → `value.lower() == target.lower()`；建议用 `str.casefold()` 代替 `lower()`，以覆盖更完整的大小写折叠（如 `"Straße"`）。
+3. `value` 为非字符串（int 等） → 沿用现有宽松语义：先 `str(value)` 再折叠比较，避免因新代码对脏数据抛 `AttributeError` 而引入回归。
+4. **不写回 `task["status"]`**，不调用 `task.setdefault` / 赋值，任何归一化只发生在临时局部变量。
+
+同时更新 docstring，写明「状态匹配忽略大小写；`status=None` 返回全部；不修改输入列表与任务对象」。
+
+**步骤 B：调整 `tests/test_filter_by_status.py`**
+
+保留既有两个用例（一个覆盖大小写不敏感 + 输入未被修改，一个覆盖无匹配返回空列表），并补充：
+
+| 用例 | 覆盖点 |
+| --- | --- |
+| 大小写混合 | 输入包含 `"open"`、`"OPEN"`、`"Open"`、`"done"`，查询分别用 `"Open"`、`"OPEN"`、`"open"` 三种写法，断言结果 id 集合一致且顺序为输入顺序 |
+| 无匹配项 | 查询一个不存在的状态，断言 `== []`（空列表，而非 `None`，也不是全部任务） |
+| 输入未被修改（列表层面） | 输入为普通 `list` 时快照长度与顺序；输入为 `tuple` 时断言 `filter_by_status` 正常返回（证明未依赖原地操作） |
+| 输入未被修改（对象层面） | 用 `original = [dict(t) for t in tasks]` 深一层快照，断言调用后 `tasks == original`；并在查询值大小写与数据不同（如数据 `"OPEN"`、查询 `"open"`）的情况下断言 `task["status"]` 仍为 `"OPEN"`（防止实现「顺便改写字段」） |
+| `status=None` 语义 | 断言 `filter_by_status(tasks)` 与 `filter_by_status(tasks, None)` 都返回全部任务且元素为同一对象（`is` 比较），保持与 `tests/test_baseline.py` 一致 |
+| 边界安全（建议补充） | 任务缺 `status` 键、`status` 为 `None` 时不抛异常且不被匹配 |
+
+测试风格与现有文件保持一致：纯 `assert`、无 pytest 导入、断言 id 列表而非整对象，避免与真实仓库新增的 fixture 耦合。
+
+**步骤 C：不在本次范围内**
+
+- 不修改 `search_tasks`、`sort_by_priority`，即使基线测试当前也失败（`python -m pytest -q` 实测 `4 failed, 4 passed`：另外 3 个失败来自 `tests/test_search_tasks.py` ×2 与 `tests/test_sort_by_priority.py` ×1）。
+- 不修改 `taskboard/__init__.py`、`pyproject.toml` 或其他测试文件。
+
+## 5. 验证方案
+
+1. **定向验证**：仓库根执行 `python -m pytest tests/test_filter_by_status.py -q`，必须全部通过。
+2. **回归验证**：执行 `python -m pytest tests/test_baseline.py -q`，确认无筛选参数的行为未被破坏。
+3. **全量现状核对**：执行 `python -m pytest -q`。预期 `tests/test_filter_by_status.py` 与 `tests/test_baseline.py` 全绿；`tests/test_search_tasks.py`、`tests/test_sort_by_priority.py` 仍会失败（本次范围外且被用户明确禁止修改），这属于预期结果，不是本次修复引入的回归——实施后需要把这三处失败单独说明。
+4. **静态边界检查**：`git diff --stat` 确认只有 `taskboard/tasks.py` 与 `tests/test_filter_by_status.py` 两个文件变更。
+5. **可选的补充核实**（供oracle 之外的独立检查）：用 `python -c` 直接调用函数验证 `filter_by_status([...], "Open")` 与 `"OPEN"`、`"open"` 结果一致，且调用后原列表逐元素等于调用前快照。
+
+## 6. 风险点和需要用户确认的事项
+
+| 风险/待确认 | 说明 | 建议 |
+| --- | --- | --- |
+| `status == ""` 的语义 | 当前实现会去匹配 `status` 为空串的任务；若按 `None` 语义（返回全部），会产生行为歧义 | 默认保持“精确匹配空串”不变，改动最小；如需改为「空串=不过滤」请确认 |
+| 非字符串状态值（如 `{"status": 1}` 与查询 `"1"`） | 现有 `==` 语义下不会相等，若支持需 `str()` 归一，会略微放宽匹配范围 | 默认按 `str(value)` 归一以保持宽容；如要求严格仅字符串比较请确认 |
+| 大小写折叠策略 | `lower()` 与 `casefold()` 在少数 Unicode 字符上结果不同 | 建议使用 `casefold()`，语义更严格且不影响 ASCII 场景 |
+| 输入为「已排序/惰性可迭代对象」 | 函数对 `Iterable` 同时支持 list/tuple/generator；`list(tasks)` 会消费生成器，这是现有行为，保持不变 | 无需改变；只需保证不原地改动外部 list |
+| 元素为同一对象引用而非副本 | 返回值与输入共享 dict，调用方若改动返回值仍会影响原任务 | 维持现状（`tests/test_baseline.py` 也是按引用比较）；如需深拷贝请确认 |
+| 全量测试不会全绿 | 同仓库其他两个功能在基线就失败，评测可能额外检查全量结果 | 需确认严格「只改两个文件」的边界优先于「让全量 pytest 变绿」 |
+| 工作区未跟踪产物 | 仓库根存在 `.codegraph/` 索引目录，实施提交时不得把它纳入变更 | 只 `git add` 两个目标文件 |
+
+## 7. 涉及文件与改动量预估
+
+| 文件 | 改动性质 | 预估规模 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | 修改 `filter_by_status` 函数体（3-4 行）+ docstring | 约 5-8 行 |
+| `tests/test_filter_by_status.py` | 保留 2 个既有用例，新增约 4-5 个用例 | 约 30-45 行 |
+
+是否确认实施该方案？
+
+I'll implement the confirmed plan.
+
+Now the tests.
+
+已按确认的方案完成实施（未提交、未 push、未创建 PR）。
+
+## 修改内容
+
+### 1. `taskboard/tasks.py`
+
+`hybrid_code_search` 定位到 `taskboard/tasks.py:10-16` 的 `filter_by_status` 后，仅改动了该函数并新增一个模块内私有辅助函数（`search_tasks`、`sort_by_priority` 保持原样）：
+
+```python
+def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]:
+    """Return tasks matching status, ignoring case; no filter returns every task.
+    ...（docstring 说明 None 语义与「不修改输入」不变量）"""
+
+    rows = list(tasks)
+    if status is None:
+        return rows
+    target = _status_key(status)
+    return [task for task in rows if _status_key(task.get("status")) == target]
+
+
+def _status_key(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.casefold()
+    return str(value).casefold()
+```
+
+要点：
+- 比较改用 `str.casefold()` 折叠，`"Open"`/`"OPEN"`/`"open"` 等价匹配。
+- `status is None` 提前返回、原样返回全部任务，没有被大小写归一逻辑影响。
+- `None` / 缺失 `status` 归一为 `None`，不会等于任何字符串状态，也不抛异常。
+- 全程只做临时局部变量归一化，未写回 `task["status"]`，未对输入做任何原地操作；返回值仍是原任务 dict 的引用。
+
+### 2. `tests/test_filter_by_status.py`
+
+保留原有 2 个用例，扩充到 10 个，新增覆盖：大小写混合值 × 多种查询拼写、只存在其它状态时返回真正的空 `list`、`list` 输入不被修改、`tuple` 输入可正常处理、任务字段值未被改写（`"OPEN"`/`"Done"` 原样保留）、`status` 缺省与显式 `None` 都返回全部且元素为同一对象、缺 `status`/`status=None` 的任务不参与匹配。
+
+## 验证结果（实际执行）
+
+| 命令 | 结果 |
+| --- | --- |
+| `python -m pytest tests/test_filter_by_status.py -q` | **10 passed** |
+| `python -m pytest tests/test_baseline.py -q` | **3 passed**（`status=None` 回归基线未被破坏） |
+| `python -m pytest -q` | **3 failed, 13 passed** |
+| `python -c "...filter_by_status..."` 独立核对 | `[1, 2] [1, 2] [1, 2]`（三种查询拼写一致）、无匹配返回 `[]`、`None` 返回全量、调用后输入列表与字段值未被修改 |
+
+全量 pytest 剩余的 3 个失败分别是 `tests/test_search_tasks.py` 的 2 个和 `tests/test_sort_by_priority.py` 的 1 个，属于方案第 5、6 节已说明的范围外失败（基线即为 `4 failed, 4 passed`，本次将其中的 `filter_by_status` 失败转为通过），并非本次改动引入的回归。
+
+## 变更范围
+
+`git diff --stat` 确认仅两个文件变更，符合「只修改 `taskboard/tasks.py` 与 `tests/test_filter_by_status.py`」的约束：
+
+```
+ taskboard/tasks.py             | 24 +++++++++++-
+ tests/test_filter_by_status.py | 88 ++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 110 insertions(+), 2 deletions(-)
+```
+
+工作区中的 `.codegraph/` 未被修改。
+
+## 与方案的差异说明
+
+方案将辅助判定写成内联逻辑或私有小函数，实施时选择了抽取模块内私有函数 `_status_key`：它同时承担「大小写折叠」和「`None` 归一为 `None`」两个职责，能让列表推导式保持一行、并避免在推导式里写嵌套三元表达式；对外接口、行为和测试内容与方案一致，未做范围外改动。
+
+按评测约束，本次未创建分支、未 `git commit`、未 `git push`、未创建 PR。
+{"status": "completed", "model_provider": "DeepSeek", "model_name": "deepseek-flash", "usage": {"input_tokens": 1024108, "output_tokens": 10788, "total_tokens": 1034896}}
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return self._pregel_stream_v3(
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return GraphRunStream(graph_iter, mux)

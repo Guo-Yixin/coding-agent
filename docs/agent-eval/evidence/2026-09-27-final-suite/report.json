@@ -1,0 +1,1114 @@
+{
+  "cases": [
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 45404,
+      "artifacts": {
+        "agent_output": "cases/taskboard-group-by-status/remediation-old-five-a6941fb/artifacts/agent-output.txt",
+        "manual_review": "cases/taskboard-group-by-status/remediation-old-five-a6941fb/artifacts/manual-review.md",
+        "patch": "cases/taskboard-group-by-status/remediation-old-five-a6941fb/artifacts/patch.diff",
+        "tests": "cases/taskboard-group-by-status/remediation-old-five-a6941fb/artifacts/tests.log",
+        "trace": "cases/taskboard-group-by-status/remediation-old-five-a6941fb/traces/agent-events.jsonl"
+      },
+      "case_id": "taskboard-group-by-status",
+      "changed_files": [
+        "taskboard/tasks.py",
+        "tests/test_group_tasks_by_status.py"
+      ],
+      "errors": [],
+      "input_tokens": 363050,
+      "metadata": {
+        "model_provider": "DeepSeek",
+        "model_name": "deepseek-flash",
+        "model_usage": {
+          "input_tokens": 363050,
+          "output_tokens": 7491,
+          "total_tokens": 370541
+        },
+        "retrieval_call_count": 2,
+        "tool_usage": {
+          "call_count": 31,
+          "calls_by_tool": {
+            "edit_file": 4,
+            "execute": 7,
+            "hybrid_code_search": 1,
+            "ls": 3,
+            "read_file": 10,
+            "write_todos": 6
+          },
+          "failure_count": 0,
+          "result_count": 77,
+          "success_count": 77
+        },
+        "test_behavior": {
+          "required_test_files": [
+            "tests/test_group_tasks_by_status.py"
+          ],
+          "required_test_files_modified": true
+        },
+        "target_repo_sha": "eb344e9e566f3c68176f0fc57d53686e47caedbf",
+        "expected_status": "completed",
+        "model_call_limit": "18",
+        "tool_call_limit": "30",
+        "codegraph_index": {
+          "available": true,
+          "exit_code": 0,
+          "latency_ms": 834,
+          "output_tail": "T  Initializing CodeGraph\n|\n*  Initialized in [LOCAL_PATH]\n|\nScanning files...\nParsing code...\nResolving refs...\nLinking dynamic dispatch...\n|\n*  Indexed 8 files\n|\n•  35 nodes, 66 edges in 393ms\n|\n—  Done\n\n",
+          "succeeded": true
+        },
+        "agent_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "selected_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "agent_runtime_snapshot_sha256": "c47c8885653cb4c07c5acf515717b9bf4c8dfc32b0dfaf54cf9f89e38bafa9ef",
+        "plan_rejection_ok": true,
+        "plan_rubric": [
+          {
+            "accepted_terms": [
+              "需求理解",
+              "需求拆解",
+              "目标"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "涉及文件",
+              "相关文件",
+              "改动文件",
+              "taskboard/tasks.py",
+              "taskboard/__init__.py",
+              "tests/"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "验证方案",
+              "测试方案",
+              "pytest",
+              "测试命令"
+            ],
+            "passed": true
+          }
+        ],
+        "sandbox_e2e_passed": true,
+        "sandbox": null
+      },
+      "oracle_tests_passed": true,
+      "output_tokens": 7491,
+      "patch": "diff --git a/taskboard/tasks.py b/taskboard/tasks.py\nindex b689d5b..de86063 100644\n--- a/taskboard/tasks.py\n+++ b/taskboard/tasks.py\n@@ -35,7 +35,14 @@ def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:\n def group_tasks_by_status(tasks: Iterable[Task]) -> dict[str, list[Task]]:\n     \"\"\"Group tasks by normalized status, preserving first-seen group and row order.\"\"\"\n \n-    raise NotImplementedError(\"benchmark task: group tasks by status\")\n+    groups: dict[str, list[Task]] = {}\n+    for task in list(tasks):\n+        raw_status = task.get(\"status\")\n+        key = \"unknown\" if raw_status is None else str(raw_status).strip().lower()\n+        if not key:\n+            key = \"unknown\"\n+        groups.setdefault(key, []).append(task)\n+    return groups\n \n \n def select_tasks(\ndiff --git a/tests/test_group_tasks_by_status.py b/tests/test_group_tasks_by_status.py\nindex 9195e60..b585aa8 100644\n--- a/tests/test_group_tasks_by_status.py\n+++ b/tests/test_group_tasks_by_status.py\n@@ -21,3 +21,56 @@ def test_groups_normalized_statuses_and_preserves_order():\n         {\"id\": 4},\n         {\"id\": 5, \"status\": None},\n     ]\n+\n+\n+def test_unknown_group_keeps_its_first_seen_position():\n+    tasks = [\n+        {\"id\": 1},\n+        {\"id\": 2, \"status\": \"Done\"},\n+        {\"id\": 3, \"status\": None},\n+    ]\n+\n+    groups = group_tasks_by_status(tasks)\n+\n+    assert list(groups) == [\"unknown\", \"done\"]\n+    assert [[task[\"id\"] for task in rows] for rows in groups.values()] == [[1, 3], [2]]\n+\n+\n+def test_blank_and_padded_statuses_are_normalized():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"\"},\n+        {\"id\": 2, \"status\": \"   \"},\n+        {\"id\": 3, \"status\": \"Open \"},\n+        {\"id\": 4, \"status\": \"  OPEN\"},\n+    ]\n+\n+    groups = group_tasks_by_status(tasks)\n+\n+    assert list(groups) == [\"unknown\", \"open\"]\n+    assert [[task[\"id\"] for task in rows] for rows in groups.values()] == [[1, 2], [3, 4]]\n+\n+\n+def test_group_keys_are_lowercase_and_values_are_lists():\n+    groups = group_tasks_by_status([{\"id\": 1, \"status\": \"In Review\"}])\n+\n+    assert all(isinstance(key, str) and key == key.lower() for key in groups)\n+    assert all(isinstance(rows, list) for rows in groups.values())\n+\n+\n+def test_accepts_non_list_iterables_without_mutating_input():\n+    tasks = (\n+        {\"id\": 1, \"status\": \"Open\"},\n+        {\"id\": 2, \"status\": \"OPEN\"},\n+        {\"id\": 3},\n+    )\n+    original = tuple(dict(task) for task in tasks)\n+\n+    groups = group_tasks_by_status(task for task in tasks)\n+\n+    assert list(groups) == [\"open\", \"unknown\"]\n+    assert [[task[\"id\"] for task in rows] for rows in groups.values()] == [[1, 2], [3]]\n+    assert tasks == original\n+\n+\n+def test_empty_input_returns_empty_mapping():\n+    assert group_tasks_by_status([]) == {}\n",
+      "patch_apply": true,
+      "regression_test_latency_ms": 888,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": 1.0,
+      "status": "passed",
+      "target_test_latency_ms": 1014,
+      "target_tests_passed": true,
+      "tool_recovery_rate": null,
+      "total_tokens": 370541
+    },
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 65335,
+      "artifacts": {
+        "agent_output": "cases/taskboard-priority-aliases/remediation-old-five-a6941fb/artifacts/agent-output.txt",
+        "manual_review": "cases/taskboard-priority-aliases/remediation-old-five-a6941fb/artifacts/manual-review.md",
+        "patch": "cases/taskboard-priority-aliases/remediation-old-five-a6941fb/artifacts/patch.diff",
+        "tests": "cases/taskboard-priority-aliases/remediation-old-five-a6941fb/artifacts/tests.log",
+        "trace": "cases/taskboard-priority-aliases/remediation-old-five-a6941fb/traces/agent-events.jsonl"
+      },
+      "case_id": "taskboard-priority-aliases",
+      "changed_files": [
+        "taskboard/tasks.py",
+        "tests/test_sort_by_priority.py"
+      ],
+      "errors": [],
+      "input_tokens": 1003756,
+      "metadata": {
+        "model_provider": "DeepSeek",
+        "model_name": "deepseek-flash",
+        "model_usage": {
+          "input_tokens": 1003756,
+          "output_tokens": 9739,
+          "total_tokens": 1013495
+        },
+        "retrieval_call_count": 2,
+        "tool_usage": {
+          "call_count": 41,
+          "calls_by_tool": {
+            "edit_file": 3,
+            "execute": 12,
+            "grep": 2,
+            "hybrid_code_search": 1,
+            "ls": 3,
+            "read_file": 12,
+            "write_file": 1,
+            "write_todos": 7
+          },
+          "failure_count": 0,
+          "result_count": 103,
+          "success_count": 103
+        },
+        "test_behavior": {
+          "required_test_files": [
+            "tests/test_sort_by_priority.py"
+          ],
+          "required_test_files_modified": true
+        },
+        "target_repo_sha": "d19ddda0ac269adf1e68d7d2840968527b313bc4",
+        "expected_status": "completed",
+        "model_call_limit": "24",
+        "tool_call_limit": "40",
+        "codegraph_index": {
+          "available": true,
+          "exit_code": 0,
+          "latency_ms": 831,
+          "output_tail": "T  Initializing CodeGraph\n|\n*  Initialized in [LOCAL_PATH]\n|\nScanning files...\nParsing code...\nResolving refs...\nLinking dynamic dispatch...\n|\n*  Indexed 6 files\n|\n•  27 nodes, 50 edges in 395ms\n|\n—  Done\n\n",
+          "succeeded": true
+        },
+        "agent_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "selected_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "agent_runtime_snapshot_sha256": "c47c8885653cb4c07c5acf515717b9bf4c8dfc32b0dfaf54cf9f89e38bafa9ef",
+        "plan_rejection_ok": true,
+        "plan_rubric": [
+          {
+            "accepted_terms": [
+              "需求理解",
+              "需求拆解",
+              "目标"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "涉及文件",
+              "相关文件",
+              "改动文件",
+              "taskboard/tasks.py",
+              "tests/"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "验证方案",
+              "测试方案",
+              "pytest",
+              "测试命令"
+            ],
+            "passed": true
+          }
+        ],
+        "sandbox_e2e_passed": true,
+        "sandbox": null
+      },
+      "oracle_tests_passed": true,
+      "output_tokens": 9739,
+      "patch": "diff --git a/taskboard/tasks.py b/taskboard/tasks.py\nindex 24f522b..b6e8b32 100644\n--- a/taskboard/tasks.py\n+++ b/taskboard/tasks.py\n@@ -25,8 +25,26 @@ def search_tasks(tasks: Iterable[Task], query: str) -> list[Task]:\n     return [task for task in rows if query in str(task.get(\"title\", \"\"))]\n \n \n+_PRIORITY_RANKS = {\"high\": 0, \"medium\": 1, \"low\": 2}\n+_PRIORITY_ALIASES = {\"urgent\": \"high\", \"backlog\": \"low\"}\n+_UNKNOWN_PRIORITY = 99\n+\n+\n+def _priority_rank(task: Task) -> int:\n+    \"\"\"Map a task priority to its rank, aliases and case insensitive.\"\"\"\n+\n+    raw = task.get(\"priority\")\n+    key = str(raw).strip().lower() if raw is not None else \"\"\n+    key = _PRIORITY_ALIASES.get(key, key)\n+    return _PRIORITY_RANKS.get(key, _UNKNOWN_PRIORITY)\n+\n+\n def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:\n-    \"\"\"Return tasks ordered by priority while preserving equal-priority order.\"\"\"\n+    \"\"\"Return tasks ordered by priority while preserving equal-priority order.\n+\n+    Priorities are compared case insensitively, ``urgent`` ranks as ``high``\n+    and ``backlog`` ranks as ``low``. Missing or unknown priorities are stable\n+    among themselves and sorted after every known priority.\n+    \"\"\"\n \n-    order = {\"high\": 0, \"medium\": 1, \"low\": 2}\n-    return sorted(tasks, key=lambda task: order.get(str(task.get(\"priority\", \"\")).lower(), 99))\n+    return sorted(tasks, key=_priority_rank)\ndiff --git a/tests/test_sort_by_priority.py b/tests/test_sort_by_priority.py\nindex 632b4d0..cdd60e5 100644\n--- a/tests/test_sort_by_priority.py\n+++ b/tests/test_sort_by_priority.py\n@@ -1,6 +1,37 @@\n from taskboard.tasks import sort_by_priority\n \n \n+def test_priority_sort_treats_urgent_as_high_and_backlog_as_low():\n+    tasks = [\n+        {\"id\": 1, \"priority\": \"backlog\"},\n+        {\"id\": 2, \"priority\": \"medium\"},\n+        {\"id\": 3, \"priority\": \"urgent\"},\n+        {\"id\": 4, \"priority\": \"high\"},\n+        {\"id\": 5, \"priority\": \"low\"},\n+    ]\n+    assert [task[\"id\"] for task in sort_by_priority(tasks)] == [3, 4, 2, 1, 5]\n+\n+\n+def test_priority_sort_ignores_case_and_accepts_mixed_case_values():\n+    mixed_case = [\n+        {\"id\": 1, \"priority\": \"BACKLOG\"},\n+        {\"id\": 2, \"priority\": \"MeDiUm\"},\n+        {\"id\": 3, \"priority\": \"Urgent\"},\n+        {\"id\": 4, \"priority\": \"High\"},\n+        {\"id\": 5, \"priority\": \"low\"},\n+    ]\n+    lowercase = [\n+        {\"id\": 1, \"priority\": \"backlog\"},\n+        {\"id\": 2, \"priority\": \"medium\"},\n+        {\"id\": 3, \"priority\": \"urgent\"},\n+        {\"id\": 4, \"priority\": \"high\"},\n+        {\"id\": 5, \"priority\": \"low\"},\n+    ]\n+    expected = [3, 4, 2, 1, 5]\n+    assert [task[\"id\"] for task in sort_by_priority(mixed_case)] == expected\n+    assert [task[\"id\"] for task in sort_by_priority(lowercase)] == expected\n+\n+\n def test_priority_sort_keeps_equal_and_unknown_priorities_stable():\n     tasks = [\n         {\"id\": 1, \"priority\": \"low\"},\n@@ -10,3 +41,36 @@ def test_priority_sort_keeps_equal_and_unknown_priorities_stable():\n         {\"id\": 5, \"priority\": \"high\"},\n     ]\n     assert [task[\"id\"] for task in sort_by_priority(tasks)] == [2, 4, 5, 1, 3]\n+\n+\n+def test_priority_sort_keeps_equal_priority_tasks_in_input_order():\n+    tasks = [\n+        {\"id\": 1, \"priority\": \"medium\"},\n+        {\"id\": 2, \"priority\": \"high\"},\n+        {\"id\": 3, \"priority\": \"urgent\"},\n+        {\"id\": 4, \"priority\": \"backlog\"},\n+        {\"id\": 5, \"priority\": \"low\"},\n+        {\"id\": 6, \"priority\": \"MEDIUM\"},\n+    ]\n+    assert [task[\"id\"] for task in sort_by_priority(tasks)] == [2, 3, 1, 6, 4, 5]\n+\n+\n+def test_priority_sort_places_unknown_priorities_last_and_stably():\n+    tasks = [\n+        {\"id\": 1, \"priority\": \"whenever\"},\n+        {\"id\": 2, \"priority\": \"high\"},\n+        {\"id\": 3, \"priority\": \"someday\"},\n+        {\"id\": 4, \"priority\": \"low\"},\n+    ]\n+    assert [task[\"id\"] for task in sort_by_priority(tasks)] == [2, 4, 1, 3]\n+\n+\n+def test_priority_sort_treats_missing_and_empty_priorities_as_unknown():\n+    tasks = [\n+        {\"id\": 1},\n+        {\"id\": 2, \"priority\": \"high\"},\n+        {\"id\": 3, \"priority\": None},\n+        {\"id\": 4, \"priority\": \"\"},\n+        {\"id\": 5, \"priority\": \"urgent\"},\n+    ]\n+    assert [task[\"id\"] for task in sort_by_priority(tasks)] == [2, 5, 1, 3, 4]\n",
+      "patch_apply": true,
+      "regression_test_latency_ms": 845,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": 1.0,
+      "status": "passed",
+      "target_test_latency_ms": 854,
+      "target_tests_passed": true,
+      "tool_recovery_rate": null,
+      "total_tokens": 1013495
+    },
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 61112,
+      "artifacts": {
+        "agent_output": "cases/taskboard-select-tasks/remediation-old-five-a6941fb/artifacts/agent-output.txt",
+        "manual_review": "cases/taskboard-select-tasks/remediation-old-five-a6941fb/artifacts/manual-review.md",
+        "patch": "cases/taskboard-select-tasks/remediation-old-five-a6941fb/artifacts/patch.diff",
+        "tests": "cases/taskboard-select-tasks/remediation-old-five-a6941fb/artifacts/tests.log",
+        "trace": "cases/taskboard-select-tasks/remediation-old-five-a6941fb/traces/agent-events.jsonl"
+      },
+      "case_id": "taskboard-select-tasks",
+      "changed_files": [
+        "taskboard/tasks.py",
+        "tests/test_select_tasks.py"
+      ],
+      "errors": [],
+      "input_tokens": 517132,
+      "metadata": {
+        "model_provider": "DeepSeek",
+        "model_name": "deepseek-flash",
+        "model_usage": {
+          "input_tokens": 517132,
+          "output_tokens": 10740,
+          "total_tokens": 527872
+        },
+        "retrieval_call_count": 4,
+        "tool_usage": {
+          "call_count": 37,
+          "calls_by_tool": {
+            "edit_file": 4,
+            "execute": 7,
+            "hybrid_code_search": 3,
+            "ls": 4,
+            "read_file": 13,
+            "write_file": 1,
+            "write_todos": 5
+          },
+          "failure_count": 2,
+          "result_count": 96,
+          "success_count": 94
+        },
+        "test_behavior": {
+          "required_test_files": [
+            "tests/test_select_tasks.py"
+          ],
+          "required_test_files_modified": true
+        },
+        "target_repo_sha": "eb344e9e566f3c68176f0fc57d53686e47caedbf",
+        "expected_status": "completed",
+        "model_call_limit": "18",
+        "tool_call_limit": "30",
+        "codegraph_index": {
+          "available": true,
+          "exit_code": 0,
+          "latency_ms": 793,
+          "output_tail": "T  Initializing CodeGraph\n|\n*  Initialized in [LOCAL_PATH]\n|\nScanning files...\nParsing code...\nResolving refs...\nLinking dynamic dispatch...\n|\n*  Indexed 8 files\n|\n•  35 nodes, 66 edges in 359ms\n|\n—  Done\n\n",
+          "succeeded": true
+        },
+        "agent_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "selected_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "agent_runtime_snapshot_sha256": "c47c8885653cb4c07c5acf515717b9bf4c8dfc32b0dfaf54cf9f89e38bafa9ef",
+        "plan_rejection_ok": true,
+        "plan_rubric": [
+          {
+            "accepted_terms": [
+              "需求理解",
+              "需求拆解",
+              "目标"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "涉及文件",
+              "相关文件",
+              "改动文件",
+              "taskboard/tasks.py",
+              "taskboard/__init__.py",
+              "tests/"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "验证方案",
+              "测试方案",
+              "pytest",
+              "测试命令"
+            ],
+            "passed": true
+          }
+        ],
+        "sandbox_e2e_passed": true,
+        "sandbox": null
+      },
+      "oracle_tests_passed": true,
+      "output_tokens": 10740,
+      "patch": "diff --git a/taskboard/tasks.py b/taskboard/tasks.py\nindex b689d5b..a1b6b7c 100644\n--- a/taskboard/tasks.py\n+++ b/taskboard/tasks.py\n@@ -41,6 +41,25 @@ def group_tasks_by_status(tasks: Iterable[Task]) -> dict[str, list[Task]]:\n def select_tasks(\n     tasks: Iterable[Task], *, status: str | None = None, query: str = \"\"\n ) -> list[Task]:\n-    \"\"\"Select tasks by optional case-insensitive status and title query.\"\"\"\n+    \"\"\"Return tasks matching the case-insensitive status and title query filters.\n \n-    raise NotImplementedError(\"benchmark task: combine task filters\")\n+    Both filters are optional and combine as an intersection; results keep the\n+    input order and the input tasks are never mutated.\n+    \"\"\"\n+\n+    rows = list(tasks)\n+    keyword = query.strip().lower() if isinstance(query, str) else \"\"\n+    wanted_status = status.lower() if status is not None else None\n+\n+    def matches(task: Task) -> bool:\n+        if wanted_status is not None:\n+            current = task.get(\"status\")\n+            if current is None or str(current).lower() != wanted_status:\n+                return False\n+        if keyword:\n+            title = task.get(\"title\")\n+            if title is None or keyword not in str(title).lower():\n+                return False\n+        return True\n+\n+    return [task for task in rows if matches(task)]\ndiff --git a/tests/test_select_tasks.py b/tests/test_select_tasks.py\nindex 8a790a6..8de49c7 100644\n--- a/tests/test_select_tasks.py\n+++ b/tests/test_select_tasks.py\n@@ -1,3 +1,5 @@\n+import pytest\n+\n from taskboard import select_tasks\n \n \n@@ -14,3 +16,91 @@ def test_select_tasks_combines_case_insensitive_filters_and_keeps_input_order():\n     assert [task[\"id\"] for task in select_tasks(tasks, query=\"API\")] == [1, 2, 3]\n     assert [task[\"id\"] for task in select_tasks(tasks, status=\"missing\")] == []\n     assert tasks == original\n+\n+\n+def test_select_tasks_without_filters_returns_new_list_with_every_task():\n+    tasks = [\n+        {\"id\": 1, \"title\": \"Fix API timeout\", \"status\": \"Open\"},\n+        {\"id\": 2, \"title\": \"Write docs\", \"status\": \"done\"},\n+    ]\n+    original = [dict(task) for task in tasks]\n+\n+    assert select_tasks(tasks) == tasks\n+    assert select_tasks(tasks, query=\"\") == tasks\n+    assert select_tasks(tasks) is not tasks\n+    assert tasks == original\n+\n+\n+def test_select_tasks_status_only_is_case_insensitive_in_both_directions():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"Open\"},\n+        {\"id\": 2, \"status\": \"done\"},\n+        {\"id\": 3, \"status\": \"OPEN\"},\n+    ]\n+\n+    assert [task[\"id\"] for task in select_tasks(tasks, status=\"oPeN\")] == [1, 3]\n+    assert [task[\"id\"] for task in select_tasks(tasks, status=\"DONE\")] == [2]\n+\n+\n+def test_select_tasks_ignores_tasks_without_a_usable_title():\n+    tasks = [\n+        {\"id\": 1, \"title\": \"API guide\"},\n+        {\"id\": 2},\n+        {\"id\": 3, \"title\": None},\n+    ]\n+    original = [dict(task) for task in tasks]\n+\n+    assert [task[\"id\"] for task in select_tasks(tasks, query=\"api\")] == [1]\n+    assert select_tasks(tasks, status=\"open\", query=\"api\") == []\n+    assert tasks == original\n+\n+\n+def test_select_tasks_intersection_can_be_empty():\n+    tasks = [\n+        {\"id\": 1, \"title\": \"Fix API timeout\", \"status\": \"open\"},\n+        {\"id\": 2, \"title\": \"Write docs\", \"status\": \"done\"},\n+    ]\n+\n+    assert [task[\"id\"] for task in select_tasks(tasks, status=\"done\", query=\"api\")] == []\n+    assert [task[\"id\"] for task in select_tasks(tasks, status=\"done\", query=\"docs\")] == [2]\n+\n+\n+def test_select_tasks_accepts_one_shot_iterables_keeping_order():\n+    tasks = (\n+        {\"id\": index, \"title\": title, \"status\": status}\n+        for index, title, status in [\n+            (1, \"API docs\", \"open\"),\n+            (2, \"API design\", \"done\"),\n+            (3, \"Clean UI\", \"open\"),\n+            (4, \"api review\", \"OPEN\"),\n+        ]\n+    )\n+\n+    assert [task[\"id\"] for task in select_tasks(tasks, status=\"open\", query=\"API\")] == [1, 4]\n+\n+\n+def test_select_tasks_does_not_mutate_input_tasks():\n+    tasks = [\n+        {\"id\": 1, \"title\": \"Fix API timeout\", \"status\": \"Open\"},\n+        {\"id\": 2, \"title\": \"Write API docs\", \"status\": \"done\"},\n+        {\"id\": 3, \"status\": \"open\"},\n+    ]\n+    original = [dict(task) for task in tasks]\n+    references = [task for task in tasks]\n+\n+    select_tasks(tasks, status=\"OPEN\", query=\"api\")\n+\n+    assert tasks == original\n+    assert [id(task) for task in tasks] == [id(task) for task in references]\n+\n+\n+def test_select_tasks_filters_are_keyword_only():\n+    tasks = [\n+        {\"id\": 1, \"title\": \"Fix API timeout\", \"status\": \"open\"},\n+        {\"id\": 2, \"title\": \"Clean UI\", \"status\": \"done\"},\n+    ]\n+\n+    with pytest.raises(TypeError):\n+        select_tasks(tasks, \"open\")\n+    with pytest.raises(TypeError):\n+        select_tasks(tasks, \"open\", \"api\")\n",
+      "patch_apply": true,
+      "regression_test_latency_ms": 840,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": 1.0,
+      "status": "passed",
+      "target_test_latency_ms": 867,
+      "target_tests_passed": true,
+      "tool_recovery_rate": 1.0,
+      "total_tokens": 527872
+    },
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 68100,
+      "artifacts": {
+        "agent_output": "cases/taskboard-status-filter/remediation-old-status-filter-8c467aa/artifacts/agent-output.txt",
+        "manual_review": "cases/taskboard-status-filter/remediation-old-status-filter-8c467aa/artifacts/manual-review.md",
+        "patch": "cases/taskboard-status-filter/remediation-old-status-filter-8c467aa/artifacts/patch.diff",
+        "tests": "cases/taskboard-status-filter/remediation-old-status-filter-8c467aa/artifacts/tests.log",
+        "trace": "cases/taskboard-status-filter/remediation-old-status-filter-8c467aa/traces/agent-events.jsonl"
+      },
+      "case_id": "taskboard-status-filter",
+      "changed_files": [
+        "taskboard/tasks.py",
+        "tests/test_filter_by_status.py"
+      ],
+      "errors": [],
+      "input_tokens": 1024108,
+      "metadata": {
+        "model_provider": "DeepSeek",
+        "model_name": "deepseek-flash",
+        "model_usage": {
+          "input_tokens": 1024108,
+          "output_tokens": 10788,
+          "total_tokens": 1034896
+        },
+        "retrieval_call_count": 2,
+        "tool_usage": {
+          "call_count": 45,
+          "calls_by_tool": {
+            "edit_file": 5,
+            "execute": 9,
+            "grep": 1,
+            "hybrid_code_search": 1,
+            "ls": 4,
+            "read_file": 14,
+            "write_file": 1,
+            "write_todos": 10
+          },
+          "failure_count": 0,
+          "result_count": 113,
+          "success_count": 113
+        },
+        "test_behavior": {
+          "required_test_files": [
+            "tests/test_filter_by_status.py"
+          ],
+          "required_test_files_modified": true
+        },
+        "target_repo_sha": "d19ddda0ac269adf1e68d7d2840968527b313bc4",
+        "expected_status": "completed",
+        "model_call_limit": "32",
+        "tool_call_limit": "48",
+        "codegraph_index": {
+          "available": true,
+          "exit_code": 0,
+          "latency_ms": 897,
+          "output_tail": "T  Initializing CodeGraph\n|\n*  Initialized in [LOCAL_PATH]\n|\nScanning files...\nParsing code...\nResolving refs...\nLinking dynamic dispatch...\n|\n*  Indexed 6 files\n|\n•  27 nodes, 50 edges in 395ms\n|\n—  Done\n\n",
+          "succeeded": true
+        },
+        "agent_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "selected_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "agent_runtime_snapshot_sha256": "f54fd5c69294a6528378fced45faa53f59c8ceedb25aaf8df62b8aa44da5569b",
+        "plan_rejection_ok": true,
+        "plan_rubric": [
+          {
+            "accepted_terms": [
+              "需求理解",
+              "需求拆解",
+              "目标"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "涉及文件",
+              "相关文件",
+              "改动文件",
+              "taskboard/tasks.py",
+              "tests/"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "验证方案",
+              "测试方案",
+              "pytest",
+              "测试命令"
+            ],
+            "passed": true
+          }
+        ],
+        "sandbox_e2e_passed": true,
+        "sandbox": null
+      },
+      "oracle_tests_passed": true,
+      "output_tokens": 10788,
+      "patch": "diff --git a/taskboard/tasks.py b/taskboard/tasks.py\nindex 24f522b..7233772 100644\n--- a/taskboard/tasks.py\n+++ b/taskboard/tasks.py\n@@ -8,12 +8,32 @@ Task = dict[str, Any]\n \n \n def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]:\n-    \"\"\"Return tasks matching status; no filter returns every task.\"\"\"\n+    \"\"\"Return tasks matching status, ignoring case; no filter returns every task.\n+\n+    ``status`` of ``None`` returns every task unchanged. Matching is\n+    case-insensitive and tasks whose status is missing, ``None`` or otherwise\n+    unequal never match. Neither the input iterable nor the task objects are\n+    modified: results reference the original task dicts.\n+    \"\"\"\n \n     rows = list(tasks)\n     if status is None:\n         return rows\n-    return [task for task in rows if task.get(\"status\") == status]\n+    target = _status_key(status)\n+    return [task for task in rows if _status_key(task.get(\"status\")) == target]\n+\n+\n+def _status_key(value: Any) -> str | None:\n+    \"\"\"Normalize a status value for case-insensitive comparison.\n+\n+    ``None`` stays ``None`` so it never equals a real status.\n+    \"\"\"\n+\n+    if value is None:\n+        return None\n+    if isinstance(value, str):\n+        return value.casefold()\n+    return str(value).casefold()\n \n \n def search_tasks(tasks: Iterable[Task], query: str) -> list[Task]:\ndiff --git a/tests/test_filter_by_status.py b/tests/test_filter_by_status.py\nindex 1197689..add20d7 100644\n--- a/tests/test_filter_by_status.py\n+++ b/tests/test_filter_by_status.py\n@@ -15,3 +15,91 @@ def test_status_filter_is_case_insensitive_and_does_not_mutate_tasks():\n \n def test_status_filter_returns_empty_list_when_no_task_matches():\n     assert filter_by_status([{\"status\": \"open\"}], \"blocked\") == []\n+\n+\n+def test_status_filter_matches_mixed_case_values_for_every_query_spelling():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"open\"},\n+        {\"id\": 2, \"status\": \"Open\"},\n+        {\"id\": 3, \"status\": \"OPEN\"},\n+        {\"id\": 4, \"status\": \"done\"},\n+        {\"id\": 5, \"status\": \"oPeN\"},\n+    ]\n+\n+    for query in (\"open\", \"Open\", \"OPEN\", \"oPeN\"):\n+        assert [task[\"id\"] for task in filter_by_status(tasks, query)] == [1, 2, 3, 5]\n+\n+    assert [task[\"id\"] for task in filter_by_status(tasks, \"DONE\")] == [4]\n+\n+\n+def test_status_filter_returns_empty_list_when_only_other_statuses_exist():\n+    tasks = [{\"id\": 1, \"status\": \"open\"}, {\"id\": 2, \"status\": \"OPEN\"}]\n+\n+    result = filter_by_status(tasks, \"blocked\")\n+\n+    assert result == []\n+    assert isinstance(result, list)\n+\n+\n+def test_status_filter_does_not_mutate_the_input_list():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"open\"},\n+        {\"id\": 2, \"status\": \"done\"},\n+        {\"id\": 3, \"status\": \"OPEN\"},\n+    ]\n+    snapshot_ids = [task[\"id\"] for task in tasks]\n+\n+    filter_by_status(tasks, \"Open\")\n+\n+    assert [task[\"id\"] for task in tasks] == snapshot_ids\n+    assert len(tasks) == 3\n+\n+\n+def test_status_filter_accepts_non_list_iterables_without_mutating_them():\n+    tasks = (\n+        {\"id\": 1, \"status\": \"open\"},\n+        {\"id\": 2, \"status\": \"OPEN\"},\n+    )\n+\n+    assert [task[\"id\"] for task in filter_by_status(tasks, \"Open\")] == [1, 2]\n+    assert tasks == ({\"id\": 1, \"status\": \"open\"}, {\"id\": 2, \"status\": \"OPEN\"})\n+\n+\n+def test_status_filter_does_not_rewrite_task_status_values():\n+    tasks = [{\"id\": 1, \"status\": \"OPEN\"}, {\"id\": 2, \"status\": \"Done\"}]\n+    original = [dict(task) for task in tasks]\n+\n+    assert [task[\"id\"] for task in filter_by_status(tasks, \"open\")] == [1]\n+\n+    assert tasks == original\n+    assert [task[\"status\"] for task in tasks] == [\"OPEN\", \"Done\"]\n+\n+\n+def test_missing_status_filter_returns_every_task_unchanged():\n+    tasks = [{\"id\": 1, \"status\": \"open\"}, {\"id\": 2, \"status\": \"done\"}]\n+\n+    default_result = filter_by_status(tasks)\n+    explicit_none_result = filter_by_status(tasks, None)\n+\n+    assert default_result == tasks\n+    assert explicit_none_result == tasks\n+    assert all(returned is original for returned, original in zip(default_result, tasks))\n+    assert all(returned is original for returned, original in zip(explicit_none_result, tasks))\n+\n+\n+def test_status_filter_skips_tasks_without_a_comparable_status():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"open\"},\n+        {\"id\": 2},\n+        {\"id\": 3, \"status\": None},\n+    ]\n+\n+    assert [task[\"id\"] for task in filter_by_status(tasks, \"Open\")] == [1]\n+    assert [task[\"id\"] for task in filter_by_status(tasks, \"\")] == []\n+\n+\n+def test_status_filter_never_matches_none_against_a_missing_status():\n+    tasks = [{\"id\": 1}, {\"id\": 2, \"status\": None}]\n+\n+    assert filter_by_status(tasks) == tasks\n+    assert filter_by_status(tasks, \"none\") == []\n",
+      "patch_apply": true,
+      "regression_test_latency_ms": 991,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": 1.0,
+      "status": "passed",
+      "target_test_latency_ms": 1005,
+      "target_tests_passed": true,
+      "tool_recovery_rate": null,
+      "total_tokens": 1034896
+    },
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 46618,
+      "artifacts": {
+        "agent_output": "cases/taskboard-title-search/remediation-old-five-a6941fb/artifacts/agent-output.txt",
+        "manual_review": "cases/taskboard-title-search/remediation-old-five-a6941fb/artifacts/manual-review.md",
+        "patch": "cases/taskboard-title-search/remediation-old-five-a6941fb/artifacts/patch.diff",
+        "tests": "cases/taskboard-title-search/remediation-old-five-a6941fb/artifacts/tests.log",
+        "trace": "cases/taskboard-title-search/remediation-old-five-a6941fb/traces/agent-events.jsonl"
+      },
+      "case_id": "taskboard-title-search",
+      "changed_files": [
+        "taskboard/tasks.py",
+        "tests/test_search_tasks.py"
+      ],
+      "errors": [],
+      "input_tokens": 329554,
+      "metadata": {
+        "model_provider": "DeepSeek",
+        "model_name": "deepseek-flash",
+        "model_usage": {
+          "input_tokens": 329554,
+          "output_tokens": 8217,
+          "total_tokens": 337771
+        },
+        "retrieval_call_count": 2,
+        "tool_usage": {
+          "call_count": 27,
+          "calls_by_tool": {
+            "edit_file": 3,
+            "execute": 7,
+            "hybrid_code_search": 1,
+            "ls": 3,
+            "read_file": 7,
+            "write_file": 1,
+            "write_todos": 5
+          },
+          "failure_count": 0,
+          "result_count": 69,
+          "success_count": 69
+        },
+        "test_behavior": {
+          "required_test_files": [
+            "tests/test_search_tasks.py"
+          ],
+          "required_test_files_modified": true
+        },
+        "target_repo_sha": "d19ddda0ac269adf1e68d7d2840968527b313bc4",
+        "expected_status": "completed",
+        "model_call_limit": "24",
+        "tool_call_limit": "40",
+        "codegraph_index": {
+          "available": true,
+          "exit_code": 0,
+          "latency_ms": 811,
+          "output_tail": "T  Initializing CodeGraph\n|\n*  Initialized in [LOCAL_PATH]\n|\nScanning files...\nParsing code...\nResolving refs...\nLinking dynamic dispatch...\n|\n*  Indexed 6 files\n|\n•  27 nodes, 50 edges in 387ms\n|\n—  Done\n\n",
+          "succeeded": true
+        },
+        "agent_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "selected_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "agent_runtime_snapshot_sha256": "c47c8885653cb4c07c5acf515717b9bf4c8dfc32b0dfaf54cf9f89e38bafa9ef",
+        "plan_rejection_ok": true,
+        "plan_rubric": [
+          {
+            "accepted_terms": [
+              "需求理解",
+              "需求拆解",
+              "目标"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "涉及文件",
+              "相关文件",
+              "改动文件",
+              "taskboard/tasks.py",
+              "tests/"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "验证方案",
+              "测试方案",
+              "pytest",
+              "测试命令"
+            ],
+            "passed": true
+          }
+        ],
+        "sandbox_e2e_passed": true,
+        "sandbox": null
+      },
+      "oracle_tests_passed": true,
+      "output_tokens": 8217,
+      "patch": "diff --git a/taskboard/tasks.py b/taskboard/tasks.py\nindex 24f522b..2e9335c 100644\n--- a/taskboard/tasks.py\n+++ b/taskboard/tasks.py\n@@ -17,12 +17,25 @@ def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[T\n \n \n def search_tasks(tasks: Iterable[Task], query: str) -> list[Task]:\n-    \"\"\"Find tasks whose title contains query, preserving input order.\"\"\"\n+    \"\"\"Find tasks whose title contains query, ignoring case and preserving order.\n+\n+    An empty query returns every task untouched. Tasks without a usable\n+    string title are skipped instead of raising or matching by accident.\n+    \"\"\"\n \n     rows = list(tasks)\n     if not query:\n         return rows\n-    return [task for task in rows if query in str(task.get(\"title\", \"\"))]\n+\n+    needle = query.casefold()\n+    matches: list[Task] = []\n+    for task in rows:\n+        title = task.get(\"title\")\n+        if not isinstance(title, str):\n+            continue\n+        if needle in title.casefold():\n+            matches.append(task)\n+    return matches\n \n \n def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:\ndiff --git a/tests/test_search_tasks.py b/tests/test_search_tasks.py\nindex 4110daf..0987fc7 100644\n--- a/tests/test_search_tasks.py\n+++ b/tests/test_search_tasks.py\n@@ -4,11 +4,60 @@ from taskboard.tasks import search_tasks\n def test_search_is_case_insensitive_and_preserves_order():\n     tasks = [\n         {\"id\": 1, \"title\": \"Fix API timeout\"},\n-        {\"id\": 2, \"title\": \"Write API docs\"},\n+        {\"id\": 2, \"title\": \"Write api docs\"},\n         {\"id\": 3, \"title\": \"Clean UI\"},\n+        {\"id\": 4, \"title\": \"Refactor ApI client\"},\n     ]\n-    assert [task[\"id\"] for task in search_tasks(tasks, \"api\")] == [1, 2]\n+    assert [task[\"id\"] for task in search_tasks(tasks, \"api\")] == [1, 2, 4]\n+\n+\n+def test_search_query_case_does_not_change_results():\n+    tasks = [\n+        {\"id\": 1, \"title\": \"Fix API timeout\"},\n+        {\"id\": 2, \"title\": \"Write api docs\"},\n+    ]\n+    lowercase = [task[\"id\"] for task in search_tasks(tasks, \"api\")]\n+    mixedcase = [task[\"id\"] for task in search_tasks(tasks, \"Api\")]\n+    uppercase = [task[\"id\"] for task in search_tasks(tasks, \"API\")]\n+    assert lowercase == mixedcase == uppercase == [1, 2]\n \n \n def test_search_ignores_tasks_without_a_title():\n-    assert search_tasks([{\"id\": 1}, {\"id\": 2, \"title\": \"API\"}], \"api\") == [{\"id\": 2, \"title\": \"API\"}]\n+    tasks = [{\"id\": 1}, {\"id\": 2, \"title\": \"API\"}, {\"id\": 3, \"title\": None}]\n+    assert search_tasks(tasks, \"api\") == [{\"id\": 2, \"title\": \"API\"}]\n+\n+\n+def test_search_skips_non_string_titles_without_raising():\n+    tasks = [{\"id\": 1, \"title\": 42}, {\"id\": 2, \"title\": [\"api\"]}, {\"id\": 3, \"title\": \"API\"}]\n+    assert [task[\"id\"] for task in search_tasks(tasks, \"api\")] == [3]\n+\n+\n+def test_empty_query_returns_all_tasks_without_mutating_input():\n+    tasks = [\n+        {\"id\": 1, \"title\": \"Fix API\", \"status\": \"open\"},\n+        {\"id\": 2},\n+        {\"id\": 3, \"title\": None},\n+    ]\n+    original = [dict(task) for task in tasks]\n+\n+    result = search_tasks(tasks, \"\")\n+\n+    assert result == tasks\n+    assert tasks == original\n+\n+\n+def test_search_without_matches_returns_empty_list():\n+    tasks = [{\"id\": 1, \"title\": \"Fix API\"}, {\"id\": 2, \"title\": \"Clean UI\"}]\n+    assert search_tasks(tasks, \"missing\") == []\n+\n+\n+def test_search_returns_original_task_objects():\n+    tasks = [{\"id\": 1, \"title\": \"Fix API\"}]\n+    result = search_tasks(tasks, \"api\")\n+    assert len(result) == 1\n+    assert result[0] is tasks[0]\n+\n+\n+def test_empty_query_keeps_results_in_input_order():\n+    tasks = [{\"id\": 3}, {\"id\": 1, \"title\": \"Fix API\"}, {\"id\": 2, \"title\": \"Clean UI\"}]\n+    assert [task[\"id\"] for task in search_tasks(tasks, \"\")] == [3, 1, 2]\n",
+      "patch_apply": true,
+      "regression_test_latency_ms": 860,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": 1.0,
+      "status": "passed",
+      "target_test_latency_ms": 869,
+      "target_tests_passed": true,
+      "tool_recovery_rate": null,
+      "total_tokens": 337771
+    },
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 66366,
+      "artifacts": {
+        "agent_output": "cases/taskboard-count-by-status/remediation-new-five-139e970/artifacts/agent-output.txt",
+        "manual_review": "cases/taskboard-count-by-status/remediation-new-five-139e970/artifacts/manual-review.md",
+        "patch": "cases/taskboard-count-by-status/remediation-new-five-139e970/artifacts/patch.diff",
+        "tests": "cases/taskboard-count-by-status/remediation-new-five-139e970/artifacts/tests.log",
+        "trace": "cases/taskboard-count-by-status/remediation-new-five-139e970/traces/agent-events.jsonl"
+      },
+      "case_id": "taskboard-count-by-status",
+      "changed_files": [
+        "taskboard/__init__.py",
+        "taskboard/tasks.py",
+        "tests/test_count_by_status.py"
+      ],
+      "errors": [],
+      "input_tokens": 776524,
+      "metadata": {
+        "model_provider": "DeepSeek",
+        "model_name": "deepseek-flash",
+        "model_usage": {
+          "input_tokens": 776524,
+          "output_tokens": 11417,
+          "total_tokens": 787941
+        },
+        "retrieval_call_count": 4,
+        "tool_usage": {
+          "call_count": 45,
+          "calls_by_tool": {
+            "edit_file": 5,
+            "execute": 16,
+            "hybrid_code_search": 2,
+            "ls": 2,
+            "read_file": 11,
+            "write_file": 2,
+            "write_todos": 7
+          },
+          "failure_count": 1,
+          "result_count": 108,
+          "success_count": 107
+        },
+        "test_behavior": {
+          "required_test_files": [
+            "tests/test_count_by_status.py"
+          ],
+          "required_test_files_modified": true
+        },
+        "target_repo_sha": "d65047705e6e947bcd33e193ab4c8fdfeb8956c8",
+        "expected_status": "completed",
+        "model_call_limit": "32",
+        "tool_call_limit": "80",
+        "codegraph_index": {
+          "available": true,
+          "exit_code": 0,
+          "latency_ms": 887,
+          "output_tail": "T  Initializing CodeGraph\n|\n*  Initialized in [LOCAL_PATH]\n|\nScanning files...\nParsing code...\nResolving refs...\nLinking dynamic dispatch...\n|\n*  Indexed 7 files\n|\n•  31 nodes, 53 edges in 412ms\n|\n—  Done\n\n",
+          "succeeded": true
+        },
+        "agent_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "selected_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "agent_runtime_snapshot_sha256": "7c0ac64229959571080fb40d9371fc3ee2e4bb168aa7762409488fd1e0d3644a",
+        "plan_rejection_ok": true,
+        "plan_rubric": [
+          {
+            "accepted_terms": [
+              "需求理解",
+              "需求拆解",
+              "目标"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "涉及文件",
+              "相关文件",
+              "改动文件",
+              "taskboard/tasks.py",
+              "taskboard/__init__.py",
+              "tests/"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "验证方案",
+              "测试方案",
+              "pytest",
+              "测试命令"
+            ],
+            "passed": true
+          }
+        ],
+        "sandbox_e2e_passed": true,
+        "sandbox": null
+      },
+      "oracle_tests_passed": true,
+      "output_tokens": 11417,
+      "patch": "diff --git a/taskboard/__init__.py b/taskboard/__init__.py\nindex fb699df..a2d0588 100644\n--- a/taskboard/__init__.py\n+++ b/taskboard/__init__.py\n@@ -1,5 +1,10 @@\n \"\"\"Small target project used by the CODING Agent evaluation suite.\"\"\"\n \n-from taskboard.tasks import filter_by_status, search_tasks, sort_by_priority\n+from taskboard.tasks import (\n+    count_by_status,\n+    filter_by_status,\n+    search_tasks,\n+    sort_by_priority,\n+)\n \n-__all__ = [\"filter_by_status\", \"search_tasks\", \"sort_by_priority\"]\n+__all__ = [\"count_by_status\", \"filter_by_status\", \"search_tasks\", \"sort_by_priority\"]\ndiff --git a/taskboard/tasks.py b/taskboard/tasks.py\nindex 24f522b..1628688 100644\n--- a/taskboard/tasks.py\n+++ b/taskboard/tasks.py\n@@ -6,6 +6,25 @@ from typing import Any\n \n Task = dict[str, Any]\n \n+UNKNOWN_STATUS = \"unknown\"\n+\n+\n+def count_by_status(tasks: Iterable[Task]) -> dict[str, int]:\n+    \"\"\"Count tasks per normalized status, keyed in first-seen order.\n+\n+    A status is normalized by trimming surrounding whitespace and lowercasing.\n+    Missing, ``None``, and blank statuses are all counted under ``\"unknown\"``.\n+    The input tasks are never modified.\n+    \"\"\"\n+\n+    counts: dict[str, int] = {}\n+    for task in tasks:\n+        raw = task.get(\"status\")\n+        key = str(raw).strip().lower() if raw is not None else \"\"\n+        key = key or UNKNOWN_STATUS\n+        counts[key] = counts.get(key, 0) + 1\n+    return counts\n+\n \n def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]:\n     \"\"\"Return tasks matching status; no filter returns every task.\"\"\"\ndiff --git a/tests/test_count_by_status.py b/tests/test_count_by_status.py\nindex 4a38c64..10e30a7 100644\n--- a/tests/test_count_by_status.py\n+++ b/tests/test_count_by_status.py\n@@ -14,3 +14,96 @@ def test_counts_normalized_statuses_and_keeps_first_seen_order():\n \n def test_empty_input_has_no_groups():\n     assert count_by_status([]) == {}\n+\n+\n+def test_whitespace_and_case_variants_share_one_group():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"OPEN\"},\n+        {\"id\": 2, \"status\": \" open \"},\n+        {\"id\": 3, \"status\": \"Open\"},\n+        {\"id\": 4, \"status\": \"\\topen\\n\"},\n+    ]\n+    assert count_by_status(tasks) == {\"open\": 4}\n+\n+\n+def test_missing_null_and_blank_statuses_all_count_as_unknown():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"\"},\n+        {\"id\": 2, \"status\": \"   \"},\n+        {\"id\": 3, \"status\": None},\n+        {\"id\": 4},\n+        {\"id\": 5, \"status\": \"\\t\"},\n+        {\"id\": 6, \"status\": \"open\"},\n+    ]\n+    assert count_by_status(tasks) == {\"unknown\": 5, \"open\": 1}\n+\n+\n+def test_keys_follow_first_seen_order_not_alphabetical_order():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"done\"},\n+        {\"id\": 2, \"status\": \"OPEN\"},\n+        {\"id\": 3, \"status\": \"blocked\"},\n+    ]\n+\n+    assert list(count_by_status(tasks)) == [\"done\", \"open\", \"blocked\"]\n+\n+\n+def test_unknown_is_placed_at_its_first_seen_position():\n+    tasks = [\n+        {\"id\": 1},\n+        {\"id\": 2, \"status\": \"open\"},\n+        {\"id\": 3, \"status\": None},\n+    ]\n+    result = count_by_status(tasks)\n+\n+    assert list(result) == [\"unknown\", \"open\"]\n+    assert result == {\"unknown\": 2, \"open\": 1}\n+\n+\n+def test_input_tasks_are_not_modified():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"  Open \"},\n+        {\"id\": 2},\n+        {\"id\": 3, \"status\": None},\n+    ]\n+    original = [dict(task) for task in tasks]\n+\n+    count_by_status(tasks)\n+\n+    assert tasks == original\n+    assert tasks == [\n+        {\"id\": 1, \"status\": \"  Open \"},\n+        {\"id\": 2},\n+        {\"id\": 3, \"status\": None},\n+    ]\n+\n+\n+def test_accepts_a_one_shot_iterable():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"open\"},\n+        {\"id\": 2, \"status\": \" OPEN \"},\n+        {\"id\": 3, \"status\": \"done\"},\n+    ]\n+\n+    assert count_by_status(iter(tasks)) == {\"open\": 2, \"done\": 1}\n+\n+\n+def test_values_that_normalize_to_unknown_join_the_unknown_group():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"unknown\"},\n+        {\"id\": 2, \"status\": \" UNKNOWN \"},\n+        {\"id\": 3},\n+        {\"id\": 4, \"status\": \"\"},\n+    ]\n+    assert count_by_status(tasks) == {\"unknown\": 4}\n+\n+\n+def test_single_task_input():\n+    assert count_by_status([{\"id\": 1, \"status\": \"done\"}]) == {\"done\": 1}\n+\n+\n+def test_repeated_calls_return_consistent_results():\n+    tasks = [{\"id\": 1, \"status\": \"open\"}, {\"id\": 2}]\n+\n+    assert count_by_status(tasks) == {\"open\": 1, \"unknown\": 1}\n+    assert count_by_status(tasks) == {\"open\": 1, \"unknown\": 1}\n",
+      "patch_apply": true,
+      "regression_test_latency_ms": 920,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": 1.0,
+      "status": "passed",
+      "target_test_latency_ms": 860,
+      "target_tests_passed": true,
+      "tool_recovery_rate": 1.0,
+      "total_tokens": 787941
+    },
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 62344,
+      "artifacts": {
+        "agent_output": "cases/taskboard-filter-by-priority/remediation-new-priority-oracle-rescore-9b07905/artifacts/agent-output.txt",
+        "manual_review": "cases/taskboard-filter-by-priority/remediation-new-priority-oracle-rescore-9b07905/artifacts/manual-review.md",
+        "patch": "cases/taskboard-filter-by-priority/remediation-new-priority-oracle-rescore-9b07905/artifacts/patch.diff",
+        "tests": "cases/taskboard-filter-by-priority/remediation-new-priority-oracle-rescore-9b07905/artifacts/tests.log"
+      },
+      "case_id": "taskboard-filter-by-priority",
+      "changed_files": [
+        "taskboard/__init__.py",
+        "taskboard/tasks.py",
+        "tests/test_filter_by_priority.py"
+      ],
+      "errors": [],
+      "input_tokens": 527768,
+      "metadata": {
+        "model_provider": "DeepSeek",
+        "model_name": "deepseek-flash",
+        "model_usage": {
+          "input_tokens": 527768,
+          "output_tokens": 10301,
+          "total_tokens": 538069
+        },
+        "retrieval_call_count": 4,
+        "tool_usage": {
+          "call_count": 38,
+          "calls_by_tool": {
+            "edit_file": 4,
+            "execute": 9,
+            "hybrid_code_search": 3,
+            "ls": 4,
+            "read_file": 11,
+            "write_file": 1,
+            "write_todos": 6
+          },
+          "failure_count": 2,
+          "result_count": 100,
+          "success_count": 98
+        },
+        "test_behavior": {
+          "required_test_files": [
+            "tests/test_filter_by_priority.py"
+          ],
+          "required_test_files_modified": true
+        },
+        "target_repo_sha": "d65047705e6e947bcd33e193ab4c8fdfeb8956c8",
+        "expected_status": "completed",
+        "model_call_limit": "32",
+        "tool_call_limit": "80",
+        "codegraph_index": {
+          "available": true,
+          "exit_code": 0,
+          "latency_ms": 803,
+          "output_tail": "T  Initializing CodeGraph\n|\n*  Initialized in [LOCAL_PATH]\n|\nScanning files...\nParsing code...\nResolving refs...\nLinking dynamic dispatch...\n|\n*  Indexed 7 files\n|\n•  31 nodes, 53 edges in 358ms\n|\n—  Done\n\n",
+          "succeeded": true
+        },
+        "agent_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "selected_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "agent_runtime_snapshot_sha256": "7c0ac64229959571080fb40d9371fc3ee2e4bb168aa7762409488fd1e0d3644a",
+        "plan_rejection_ok": true,
+        "plan_rubric": [
+          {
+            "accepted_terms": [
+              "需求理解",
+              "需求拆解",
+              "目标"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "涉及文件",
+              "相关文件",
+              "改动文件",
+              "taskboard/tasks.py",
+              "taskboard/__init__.py",
+              "tests/"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "验证方案",
+              "测试方案",
+              "pytest",
+              "测试命令"
+            ],
+            "passed": true
+          }
+        ],
+        "sandbox_e2e_passed": true,
+        "sandbox": null
+      },
+      "oracle_tests_passed": true,
+      "output_tokens": 10301,
+      "patch": "diff --git a/taskboard/__init__.py b/taskboard/__init__.py\nindex fb699df..dc1de55 100644\n--- a/taskboard/__init__.py\n+++ b/taskboard/__init__.py\n@@ -1,5 +1,10 @@\n \"\"\"Small target project used by the CODING Agent evaluation suite.\"\"\"\n \n-from taskboard.tasks import filter_by_status, search_tasks, sort_by_priority\n+from taskboard.tasks import (\n+    filter_by_priority,\n+    filter_by_status,\n+    search_tasks,\n+    sort_by_priority,\n+)\n \n-__all__ = [\"filter_by_status\", \"search_tasks\", \"sort_by_priority\"]\n+__all__ = [\"filter_by_priority\", \"filter_by_status\", \"search_tasks\", \"sort_by_priority\"]\ndiff --git a/taskboard/tasks.py b/taskboard/tasks.py\nindex 24f522b..0bb7ea0 100644\n--- a/taskboard/tasks.py\n+++ b/taskboard/tasks.py\n@@ -16,6 +16,19 @@ def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[T\n     return [task for task in rows if task.get(\"status\") == status]\n \n \n+PRIORITY_ALIASES = {\"urgent\": \"high\", \"backlog\": \"low\"}\n+UNKNOWN_PRIORITY = \"unknown\"\n+\n+\n+def _normalize_priority(value: object) -> str:\n+    \"\"\"Map a raw priority value to its canonical, case-insensitive form.\"\"\"\n+\n+    text = \"\" if value is None else str(value).strip().lower()\n+    if not text:\n+        return UNKNOWN_PRIORITY\n+    return PRIORITY_ALIASES.get(text, text)\n+\n+\n def search_tasks(tasks: Iterable[Task], query: str) -> list[Task]:\n     \"\"\"Find tasks whose title contains query, preserving input order.\"\"\"\n \n@@ -30,3 +43,19 @@ def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:\n \n     order = {\"high\": 0, \"medium\": 1, \"low\": 2}\n     return sorted(tasks, key=lambda task: order.get(str(task.get(\"priority\", \"\")).lower(), 99))\n+\n+\n+def filter_by_priority(\n+    tasks: Iterable[Task], priorities: str | Iterable[str] | None = None\n+) -> list[Task]:\n+    \"\"\"Return tasks matching normalized priorities; no filter returns every task.\"\"\"\n+\n+    rows = list(tasks)\n+    if priorities is None:\n+        return rows\n+\n+    if isinstance(priorities, str):\n+        wanted = {_normalize_priority(priorities)}\n+    else:\n+        wanted = {_normalize_priority(priority) for priority in priorities}\n+    return [task for task in rows if _normalize_priority(task.get(\"priority\")) in wanted]\ndiff --git a/tests/test_filter_by_priority.py b/tests/test_filter_by_priority.py\nindex 369e7e4..72ce945 100644\n--- a/tests/test_filter_by_priority.py\n+++ b/tests/test_filter_by_priority.py\n@@ -18,3 +18,57 @@ def test_none_returns_all_and_unknown_matches_missing_priority_without_mutating_\n     assert filter_by_priority(tasks) == tasks\n     assert [task[\"id\"] for task in filter_by_priority(tasks, \"unknown\")] == [1, 2]\n     assert tasks == snapshot\n+\n+\n+def test_priority_aliases_work_in_both_directions():\n+    tasks = [\n+        {\"id\": 1, \"priority\": \"urgent\"},\n+        {\"id\": 2, \"priority\": \"high\"},\n+        {\"id\": 3, \"priority\": \"backlog\"},\n+        {\"id\": 4, \"priority\": \"low\"},\n+    ]\n+    assert [task[\"id\"] for task in filter_by_priority(tasks, \"high\")] == [1, 2]\n+    assert [task[\"id\"] for task in filter_by_priority(tasks, \"urgent\")] == [1, 2]\n+    assert [task[\"id\"] for task in filter_by_priority(tasks, \"low\")] == [3, 4]\n+    assert [task[\"id\"] for task in filter_by_priority(tasks, \"backlog\")] == [3, 4]\n+\n+\n+def test_filter_accepts_sets_tuples_and_generators_keeping_task_order():\n+    tasks = [\n+        {\"id\": 1, \"priority\": \"medium\"},\n+        {\"id\": 2, \"priority\": \"Urgent\"},\n+        {\"id\": 3, \"priority\": \"LOW\"},\n+        {\"id\": 4, \"priority\": \"high\"},\n+    ]\n+    snapshot = [dict(task) for task in tasks]\n+\n+    assert [task[\"id\"] for task in filter_by_priority(tasks, {\"HIGH\", \"Urgent\", \"MEDIUM\"})] == [\n+        1,\n+        2,\n+        4,\n+    ]\n+    assert [task[\"id\"] for task in filter_by_priority(tasks, (\"backlog\", \"medium\"))] == [1, 3]\n+    assert [task[\"id\"] for task in filter_by_priority(tasks, (p for p in [\"low\"]))] == [3]\n+    assert isinstance(filter_by_priority(tasks, \"high\"), list)\n+    assert tasks == snapshot\n+\n+\n+def test_blank_priority_counts_as_unknown():\n+    tasks = [\n+        {\"id\": 1, \"priority\": \"   \"},\n+        {\"id\": 2, \"priority\": \"\"},\n+        {\"id\": 3, \"priority\": \"unknown\"},\n+        {\"id\": 4, \"priority\": \"low\"},\n+    ]\n+    assert [task[\"id\"] for task in filter_by_priority(tasks, \"unknown\")] == [1, 2, 3]\n+\n+\n+def test_unmatched_priority_returns_empty_list():\n+    tasks = [{\"id\": 1, \"priority\": \"high\"}, {\"id\": 2, \"priority\": None}]\n+    assert filter_by_priority(tasks, \"critical\") == []\n+\n+\n+def test_single_string_argument_is_not_split_into_characters():\n+    tasks = [{\"id\": 1, \"priority\": \"high\"}, {\"id\": 2, \"priority\": \"medium\"}]\n+    assert [task[\"id\"] for task in filter_by_priority(tasks, \"high\")] == [1]\n+    assert filter_by_priority(tasks, \"h\") == []\n",
+      "patch_apply": true,
+      "regression_test_latency_ms": 843,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": 1.0,
+      "status": "passed",
+      "target_test_latency_ms": 885,
+      "target_tests_passed": true,
+      "tool_recovery_rate": 1.0,
+      "total_tokens": 538069
+    },
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 67732,
+      "artifacts": {
+        "agent_output": "cases/taskboard-find-overdue-tasks/remediation-new-five-139e970/artifacts/agent-output.txt",
+        "manual_review": "cases/taskboard-find-overdue-tasks/remediation-new-five-139e970/artifacts/manual-review.md",
+        "patch": "cases/taskboard-find-overdue-tasks/remediation-new-five-139e970/artifacts/patch.diff",
+        "tests": "cases/taskboard-find-overdue-tasks/remediation-new-five-139e970/artifacts/tests.log",
+        "trace": "cases/taskboard-find-overdue-tasks/remediation-new-five-139e970/traces/agent-events.jsonl"
+      },
+      "case_id": "taskboard-find-overdue-tasks",
+      "changed_files": [
+        "taskboard/__init__.py",
+        "taskboard/tasks.py",
+        "tests/test_find_overdue_tasks.py"
+      ],
+      "errors": [],
+      "input_tokens": 792902,
+      "metadata": {
+        "model_provider": "DeepSeek",
+        "model_name": "deepseek-flash",
+        "model_usage": {
+          "input_tokens": 792902,
+          "output_tokens": 11668,
+          "total_tokens": 804570
+        },
+        "retrieval_call_count": 6,
+        "tool_usage": {
+          "call_count": 41,
+          "calls_by_tool": {
+            "edit_file": 7,
+            "execute": 6,
+            "hybrid_code_search": 3,
+            "ls": 4,
+            "read_file": 11,
+            "write_file": 1,
+            "write_todos": 9
+          },
+          "failure_count": 0,
+          "result_count": 103,
+          "success_count": 103
+        },
+        "test_behavior": {
+          "required_test_files": [
+            "tests/test_find_overdue_tasks.py"
+          ],
+          "required_test_files_modified": true
+        },
+        "target_repo_sha": "d65047705e6e947bcd33e193ab4c8fdfeb8956c8",
+        "expected_status": "completed",
+        "model_call_limit": "32",
+        "tool_call_limit": "80",
+        "codegraph_index": {
+          "available": true,
+          "exit_code": 0,
+          "latency_ms": 811,
+          "output_tail": "T  Initializing CodeGraph\n|\n*  Initialized in [LOCAL_PATH]\n|\nScanning files...\nParsing code...\nResolving refs...\nLinking dynamic dispatch...\n|\n*  Indexed 7 files\n|\n•  32 nodes, 54 edges in 372ms\n|\n—  Done\n\n",
+          "succeeded": true
+        },
+        "agent_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "selected_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "agent_runtime_snapshot_sha256": "7c0ac64229959571080fb40d9371fc3ee2e4bb168aa7762409488fd1e0d3644a",
+        "plan_rejection_ok": true,
+        "plan_rubric": [
+          {
+            "accepted_terms": [
+              "需求理解",
+              "需求拆解",
+              "目标"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "涉及文件",
+              "相关文件",
+              "改动文件",
+              "taskboard/tasks.py",
+              "taskboard/__init__.py",
+              "tests/"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "验证方案",
+              "测试方案",
+              "pytest",
+              "测试命令"
+            ],
+            "passed": true
+          }
+        ],
+        "sandbox_e2e_passed": true,
+        "sandbox": null
+      },
+      "oracle_tests_passed": true,
+      "output_tokens": 11668,
+      "patch": "diff --git a/taskboard/__init__.py b/taskboard/__init__.py\nindex fb699df..3cd4ae5 100644\n--- a/taskboard/__init__.py\n+++ b/taskboard/__init__.py\n@@ -1,5 +1,10 @@\n \"\"\"Small target project used by the CODING Agent evaluation suite.\"\"\"\n \n-from taskboard.tasks import filter_by_status, search_tasks, sort_by_priority\n+from taskboard.tasks import (\n+    filter_by_status,\n+    find_overdue_tasks,\n+    search_tasks,\n+    sort_by_priority,\n+)\n \n-__all__ = [\"filter_by_status\", \"search_tasks\", \"sort_by_priority\"]\n+__all__ = [\"filter_by_status\", \"find_overdue_tasks\", \"search_tasks\", \"sort_by_priority\"]\ndiff --git a/taskboard/tasks.py b/taskboard/tasks.py\nindex 24f522b..ee1fd29 100644\n--- a/taskboard/tasks.py\n+++ b/taskboard/tasks.py\n@@ -1,11 +1,14 @@\n from __future__ import annotations\n \n from collections.abc import Iterable\n+from datetime import date, datetime\n from typing import Any\n \n \n Task = dict[str, Any]\n \n+FINISHED_STATUSES = frozenset({\"done\", \"completed\", \"cancelled\"})\n+\n \n def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]:\n     \"\"\"Return tasks matching status; no filter returns every task.\"\"\"\n@@ -30,3 +33,47 @@ def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:\n \n     order = {\"high\": 0, \"medium\": 1, \"low\": 2}\n     return sorted(tasks, key=lambda task: order.get(str(task.get(\"priority\", \"\")).lower(), 99))\n+\n+\n+def _as_date(value: Any) -> date | None:\n+    \"\"\"Coerce a date, datetime or ISO date string into a date; None when unsupported.\"\"\"\n+\n+    if isinstance(value, datetime):\n+        return value.date()\n+    if isinstance(value, date):\n+        return value\n+    if isinstance(value, str):\n+        try:\n+            return date.fromisoformat(value.strip())\n+        except ValueError:\n+            return None\n+    return None\n+\n+\n+def _coerce_today(today: Any) -> date:\n+    \"\"\"Return today as a date, raising ValueError when it cannot be parsed.\"\"\"\n+\n+    if isinstance(today, datetime):\n+        return today.date()\n+    if isinstance(today, date):\n+        return today\n+    if isinstance(today, str):\n+        try:\n+            return date.fromisoformat(today.strip())\n+        except ValueError as error:\n+            raise ValueError(f\"today is not a valid ISO date: {today!r}\") from error\n+    raise ValueError(f\"today must be a date or ISO date string: {type(today).__name__}\")\n+\n+\n+def find_overdue_tasks(tasks: Iterable[Task], *, today: date | str) -> list[Task]:\n+    \"\"\"Return unfinished tasks whose due_date is strictly before today, in input order.\"\"\"\n+\n+    rows = list(tasks)\n+    cutoff = _coerce_today(today)\n+    return [\n+        task\n+        for task in rows\n+        if (due := _as_date(task.get(\"due_date\"))) is not None\n+        and due < cutoff\n+        and str(task.get(\"status\", \"\")).strip().lower() not in FINISHED_STATUSES\n+    ]\ndiff --git a/tests/test_find_overdue_tasks.py b/tests/test_find_overdue_tasks.py\nindex a532c9d..e37e59c 100644\n--- a/tests/test_find_overdue_tasks.py\n+++ b/tests/test_find_overdue_tasks.py\n@@ -1,4 +1,6 @@\n-from datetime import date\n+from datetime import date, datetime\n+\n+import pytest\n \n from taskboard import find_overdue_tasks\n \n@@ -16,3 +18,73 @@ def test_returns_only_unfinished_tasks_strictly_before_today_in_input_order():\n def test_ignores_missing_or_invalid_due_dates_and_accepts_iso_today():\n     tasks = [{\"id\": 1}, {\"id\": 2, \"due_date\": \"not-a-date\"}, {\"id\": 3, \"due_date\": \"2024-01-01\"}]\n     assert [task[\"id\"] for task in find_overdue_tasks(tasks, today=\"2024-02-01\")] == [3]\n+\n+\n+def test_due_today_or_in_the_future_is_not_overdue():\n+    tasks = [\n+        {\"id\": 1, \"due_date\": \"2025-01-01\", \"status\": \"open\"},\n+        {\"id\": 2, \"due_date\": \"2025-01-02\", \"status\": \"open\"},\n+        {\"id\": 3, \"due_date\": \"2025-01-03\", \"status\": \"open\"},\n+    ]\n+    assert [task[\"id\"] for task in find_overdue_tasks(tasks, today=date(2025, 1, 2))] == [1]\n+\n+\n+def test_finished_statuses_are_excluded_regardless_of_case_and_padding():\n+    tasks = [\n+        {\"id\": 1, \"due_date\": \"2024-01-01\", \"status\": \"open\"},\n+        {\"id\": 2, \"due_date\": \"2024-01-01\", \"status\": \"done\"},\n+        {\"id\": 3, \"due_date\": \"2024-01-01\", \"status\": \"Done\"},\n+        {\"id\": 4, \"due_date\": \"2024-01-01\", \"status\": \"completed\"},\n+        {\"id\": 5, \"due_date\": \"2024-01-01\", \"status\": \"Completed\"},\n+        {\"id\": 6, \"due_date\": \"2024-01-01\", \"status\": \"cancelled\"},\n+        {\"id\": 7, \"due_date\": \"2024-01-01\", \"status\": \"  Cancelled  \"},\n+    ]\n+    assert [task[\"id\"] for task in find_overdue_tasks(tasks, today=date(2024, 6, 1))] == [1]\n+\n+\n+def test_tasks_without_status_still_count_as_unfinished():\n+    tasks = [\n+        {\"id\": 1, \"due_date\": \"2024-01-01\"},\n+        {\"id\": 2, \"due_date\": \"2024-01-01\", \"status\": None},\n+        {\"id\": 3, \"due_date\": \"2024-01-01\", \"status\": \"\"},\n+    ]\n+    assert [task[\"id\"] for task in find_overdue_tasks(tasks, today=date(2024, 6, 1))] == [1, 2, 3]\n+\n+\n+def test_today_accepts_date_and_equivalent_iso_string():\n+    tasks = [{\"id\": 1, \"due_date\": \"2024-12-31\", \"status\": \"open\"}]\n+    as_date = find_overdue_tasks(tasks, today=date(2025, 1, 1))\n+    as_iso = find_overdue_tasks(tasks, today=\"2025-01-01\")\n+    assert as_date == as_iso == [tasks[0]]\n+\n+\n+def test_datetime_today_uses_its_date_part():\n+    tasks = [{\"id\": 1, \"due_date\": \"2024-01-01\", \"status\": \"open\"}]\n+    assert find_overdue_tasks(tasks, today=datetime(2024, 6, 1, 12, 30)) == [tasks[0]]\n+\n+\n+@pytest.mark.parametrize(\"today\", [\"2024-13-45\", \"not-a-date\", \"\", \"2024/01/02\", 20240101, None])\n+def test_unparsable_today_raises_value_error(today):\n+    with pytest.raises(ValueError):\n+        find_overdue_tasks([{\"id\": 1, \"due_date\": \"2024-01-01\"}], today=today)\n+\n+\n+def test_result_keeps_original_objects_and_does_not_mutate_input():\n+    tasks = [\n+        {\"id\": 1, \"due_date\": \"2024-01-01\", \"status\": \"open\"},\n+        {\"id\": 2, \"due_date\": \"2024-01-01\", \"status\": \"done\"},\n+        {\"id\": 3, \"due_date\": \"2023-05-05\", \"status\": \"open\"},\n+    ]\n+    original = [dict(task) for task in tasks]\n+\n+    result = find_overdue_tasks(tasks, today=\"2024-06-01\")\n+\n+    assert [task[\"id\"] for task in result] == [1, 3]\n+    assert result[0] is tasks[0]\n+    assert result[1] is tasks[2]\n+    assert tasks == original\n+\n+\n+def test_returns_empty_list_when_nothing_is_overdue():\n+    tasks = [{\"id\": 1, \"due_date\": \"2025-01-01\", \"status\": \"open\"}]\n+    assert find_overdue_tasks(tasks, today=date(2024, 1, 1)) == []\n",
+      "patch_apply": true,
+      "regression_test_latency_ms": 885,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": 1.0,
+      "status": "passed",
+      "target_test_latency_ms": 1048,
+      "target_tests_passed": true,
+      "tool_recovery_rate": null,
+      "total_tokens": 804570
+    },
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 56368,
+      "artifacts": {
+        "agent_output": "cases/taskboard-merge-task-updates/remediation-new-five-139e970/artifacts/agent-output.txt",
+        "manual_review": "cases/taskboard-merge-task-updates/remediation-new-five-139e970/artifacts/manual-review.md",
+        "patch": "cases/taskboard-merge-task-updates/remediation-new-five-139e970/artifacts/patch.diff",
+        "tests": "cases/taskboard-merge-task-updates/remediation-new-five-139e970/artifacts/tests.log",
+        "trace": "cases/taskboard-merge-task-updates/remediation-new-five-139e970/traces/agent-events.jsonl"
+      },
+      "case_id": "taskboard-merge-task-updates",
+      "changed_files": [
+        "taskboard/__init__.py",
+        "taskboard/tasks.py",
+        "tests/test_merge_task_updates.py"
+      ],
+      "errors": [],
+      "input_tokens": 546851,
+      "metadata": {
+        "model_provider": "DeepSeek",
+        "model_name": "deepseek-flash",
+        "model_usage": {
+          "input_tokens": 546851,
+          "output_tokens": 10077,
+          "total_tokens": 556928
+        },
+        "retrieval_call_count": 4,
+        "tool_usage": {
+          "call_count": 39,
+          "calls_by_tool": {
+            "edit_file": 8,
+            "execute": 6,
+            "hybrid_code_search": 2,
+            "ls": 3,
+            "read_file": 13,
+            "write_file": 1,
+            "write_todos": 6
+          },
+          "failure_count": 1,
+          "result_count": 97,
+          "success_count": 96
+        },
+        "test_behavior": {
+          "required_test_files": [
+            "tests/test_merge_task_updates.py"
+          ],
+          "required_test_files_modified": true
+        },
+        "target_repo_sha": "d65047705e6e947bcd33e193ab4c8fdfeb8956c8",
+        "expected_status": "completed",
+        "model_call_limit": "32",
+        "tool_call_limit": "80",
+        "codegraph_index": {
+          "available": true,
+          "exit_code": 0,
+          "latency_ms": 1189,
+          "output_tail": "T  Initializing CodeGraph\n|\n*  Initialized in [LOCAL_PATH]\n|\nScanning files...\nParsing code...\nResolving refs...\nLinking dynamic dispatch...\n|\n*  Indexed 7 files\n|\n•  32 nodes, 54 edges in 440ms\n|\n—  Done\n\n",
+          "succeeded": true
+        },
+        "agent_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "selected_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "agent_runtime_snapshot_sha256": "7c0ac64229959571080fb40d9371fc3ee2e4bb168aa7762409488fd1e0d3644a",
+        "plan_rejection_ok": true,
+        "plan_rubric": [
+          {
+            "accepted_terms": [
+              "需求理解",
+              "需求拆解",
+              "目标"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "涉及文件",
+              "相关文件",
+              "改动文件",
+              "taskboard/tasks.py",
+              "taskboard/__init__.py",
+              "tests/"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "验证方案",
+              "测试方案",
+              "pytest",
+              "测试命令"
+            ],
+            "passed": true
+          }
+        ],
+        "sandbox_e2e_passed": true,
+        "sandbox": null
+      },
+      "oracle_tests_passed": true,
+      "output_tokens": 10077,
+      "patch": "diff --git a/taskboard/__init__.py b/taskboard/__init__.py\nindex fb699df..d98ef42 100644\n--- a/taskboard/__init__.py\n+++ b/taskboard/__init__.py\n@@ -1,5 +1,5 @@\n \"\"\"Small target project used by the CODING Agent evaluation suite.\"\"\"\n \n-from taskboard.tasks import filter_by_status, search_tasks, sort_by_priority\n+from taskboard.tasks import filter_by_status, merge_task_updates, search_tasks, sort_by_priority\n \n-__all__ = [\"filter_by_status\", \"search_tasks\", \"sort_by_priority\"]\n+__all__ = [\"filter_by_status\", \"merge_task_updates\", \"search_tasks\", \"sort_by_priority\"]\ndiff --git a/taskboard/tasks.py b/taskboard/tasks.py\nindex 24f522b..69e7d7d 100644\n--- a/taskboard/tasks.py\n+++ b/taskboard/tasks.py\n@@ -1,6 +1,6 @@\n from __future__ import annotations\n \n-from collections.abc import Iterable\n+from collections.abc import Iterable, Mapping\n from typing import Any\n \n \n@@ -30,3 +30,21 @@ def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:\n \n     order = {\"high\": 0, \"medium\": 1, \"low\": 2}\n     return sorted(tasks, key=lambda task: order.get(str(task.get(\"priority\", \"\")).lower(), 99))\n+\n+\n+def merge_task_updates(tasks: Iterable[Task], task_id: Any, updates: Mapping[str, Any]) -> list[Task]:\n+    \"\"\"Return a new list where only the first task matching task_id is updated.\n+\n+    The matching task is replaced by a copied dictionary merged with updates, so\n+    neither the input list nor any of its task dictionaries are modified. The\n+    identifier may not be changed: updates carrying an \"id\" that differs from\n+    task_id raise ValueError. A missing task_id raises KeyError.\n+    \"\"\"\n+\n+    rows = list(tasks)\n+    if \"id\" in updates and updates[\"id\"] != task_id:\n+        raise ValueError(f\"updates must not change task id: {updates['id']!r} != {task_id!r}\")\n+    for index, task in enumerate(rows):\n+        if task.get(\"id\") == task_id:\n+            return [*rows[:index], {**task, **updates}, *rows[index + 1:]]\n+    raise KeyError(task_id)\ndiff --git a/tests/test_merge_task_updates.py b/tests/test_merge_task_updates.py\nindex 341c66f..65f8c54 100644\n--- a/tests/test_merge_task_updates.py\n+++ b/tests/test_merge_task_updates.py\n@@ -3,14 +3,18 @@ import pytest\n from taskboard import merge_task_updates\n \n \n+def snapshot(tasks):\n+    return [dict(task) for task in tasks]\n+\n+\n def test_updates_one_matching_task_without_mutating_the_input():\n     tasks = [{\"id\": 1, \"title\": \"First\"}, {\"id\": 2, \"title\": \"Old\", \"status\": \"open\"}]\n-    snapshot = [dict(task) for task in tasks]\n+    snapshot_of_tasks = snapshot(tasks)\n     updated = merge_task_updates(tasks, 2, {\"title\": \"New\", \"status\": \"done\"})\n     assert updated == [{\"id\": 1, \"title\": \"First\"}, {\"id\": 2, \"title\": \"New\", \"status\": \"done\"}]\n     assert updated is not tasks\n     assert updated[1] is not tasks[1]\n-    assert tasks == snapshot\n+    assert tasks == snapshot_of_tasks\n \n \n def test_update_keeps_identifier_and_rejects_missing_task():\n@@ -18,3 +22,102 @@ def test_update_keeps_identifier_and_rejects_missing_task():\n         merge_task_updates([{\"id\": 1}], 1, {\"id\": 2})\n     with pytest.raises(KeyError):\n         merge_task_updates([], 9, {\"title\": \"missing\"})\n+\n+\n+def test_only_the_target_task_changes_and_the_order_is_preserved():\n+    tasks = [\n+        {\"id\": 1, \"title\": \"First\", \"status\": \"open\"},\n+        {\"id\": 2, \"title\": \"Second\", \"status\": \"open\"},\n+        {\"id\": 3, \"title\": \"Third\", \"status\": \"open\"},\n+    ]\n+    original = snapshot(tasks)\n+\n+    updated = merge_task_updates(tasks, 2, {\"status\": \"done\"})\n+\n+    assert [task[\"id\"] for task in updated] == [1, 2, 3]\n+    assert updated[0] == {\"id\": 1, \"title\": \"First\", \"status\": \"open\"}\n+    assert updated[1] == {\"id\": 2, \"title\": \"Second\", \"status\": \"done\"}\n+    assert updated[2] == {\"id\": 3, \"title\": \"Third\", \"status\": \"open\"}\n+    assert tasks == original\n+\n+\n+def test_result_list_and_target_task_are_new_objects():\n+    tasks = [{\"id\": 1, \"title\": \"First\"}, {\"id\": 2, \"title\": \"Second\"}]\n+\n+    updated = merge_task_updates(tasks, 2, {\"title\": \"Renamed\"})\n+\n+    assert updated is not tasks\n+    assert updated[1] is not tasks[1]\n+    assert updated[0] is tasks[0]\n+    assert tasks[1] == {\"id\": 2, \"title\": \"Second\"}\n+\n+\n+def test_updates_without_id_keep_the_identifier():\n+    tasks = [{\"id\": 7, \"title\": \"Old\", \"status\": \"open\"}]\n+\n+    updated = merge_task_updates(tasks, 7, {\"title\": \"New\"})\n+\n+    assert updated == [{\"id\": 7, \"title\": \"New\", \"status\": \"open\"}]\n+    assert updated[0][\"id\"] == 7\n+\n+\n+def test_updates_carrying_the_same_id_are_allowed():\n+    tasks = [{\"id\": 5, \"title\": \"Keep\"}]\n+\n+    updated = merge_task_updates(tasks, 5, {\"id\": 5, \"title\": \"Kept\"})\n+\n+    assert updated == [{\"id\": 5, \"title\": \"Kept\"}]\n+\n+\n+def test_identity_match_does_not_mutate_untouched_tasks():\n+    tasks = [\n+        {\"id\": 1, \"title\": \"First\"},\n+        {\"id\": 2, \"title\": \"Second\"},\n+        {\"id\": 3, \"title\": \"Third\"},\n+    ]\n+    original = snapshot(tasks)\n+\n+    updated = merge_task_updates(tasks, 1, {\"title\": \"First updated\"})\n+\n+    assert updated == [\n+        {\"id\": 1, \"title\": \"First updated\"},\n+        {\"id\": 2, \"title\": \"Second\"},\n+        {\"id\": 3, \"title\": \"Third\"},\n+    ]\n+    assert tasks == original\n+    assert all(task is original_task for task, original_task in zip(updated[1:], tasks[1:]))\n+\n+\n+def test_duplicate_identifiers_update_the_first_match_only():\n+    tasks = [{\"id\": 1, \"title\": \"Old\"}, {\"id\": 1, \"title\": \"Also old\"}]\n+    original = snapshot(tasks)\n+\n+    updated = merge_task_updates(tasks, 1, {\"title\": \"New\"})\n+\n+    assert updated == [{\"id\": 1, \"title\": \"New\"}, {\"id\": 1, \"title\": \"Also old\"}]\n+    assert tasks == original\n+\n+\n+def test_tasks_without_an_id_are_never_matched():\n+    tasks = [{\"title\": \"No id\"}, {\"id\": 2, \"title\": \"Has id\"}]\n+\n+    with pytest.raises(KeyError):\n+        merge_task_updates(tasks, 1, {\"title\": \"Missing\"})\n+\n+    assert merge_task_updates(tasks, 2, {\"title\": \"Updated\"})[0] == {\"title\": \"No id\"}\n+\n+\n+def test_missing_identifier_raises_key_error_and_keeps_input_intact():\n+    tasks = [{\"id\": 1, \"title\": \"First\"}, {\"id\": 2, \"title\": \"Second\"}]\n+    original = snapshot(tasks)\n+\n+    with pytest.raises(KeyError):\n+        merge_task_updates(tasks, 3, {\"title\": \"Nope\"})\n+\n+    assert tasks == original\n+\n+\n+def test_iterable_inputs_are_supported():\n+    updated = merge_task_updates(iter([{\"id\": 1, \"title\": \"Old\"}]), 1, {\"title\": \"New\"})\n+\n+    assert updated == [{\"id\": 1, \"title\": \"New\"}]\n",
+      "patch_apply": true,
+      "regression_test_latency_ms": 850,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": 1.0,
+      "status": "passed",
+      "target_test_latency_ms": 923,
+      "target_tests_passed": true,
+      "tool_recovery_rate": 1.0,
+      "total_tokens": 556928
+    },
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 74672,
+      "artifacts": {
+        "agent_output": "cases/taskboard-paginate-tasks/remediation-new-five-139e970/artifacts/agent-output.txt",
+        "manual_review": "cases/taskboard-paginate-tasks/remediation-new-five-139e970/artifacts/manual-review.md",
+        "patch": "cases/taskboard-paginate-tasks/remediation-new-five-139e970/artifacts/patch.diff",
+        "tests": "cases/taskboard-paginate-tasks/remediation-new-five-139e970/artifacts/tests.log",
+        "trace": "cases/taskboard-paginate-tasks/remediation-new-five-139e970/traces/agent-events.jsonl"
+      },
+      "case_id": "taskboard-paginate-tasks",
+      "changed_files": [
+        "taskboard/__init__.py",
+        "taskboard/tasks.py",
+        "tests/test_paginate_tasks.py"
+      ],
+      "errors": [],
+      "input_tokens": 980040,
+      "metadata": {
+        "model_provider": "DeepSeek",
+        "model_name": "deepseek-flash",
+        "model_usage": {
+          "input_tokens": 980040,
+          "output_tokens": 11772,
+          "total_tokens": 991812
+        },
+        "retrieval_call_count": 4,
+        "tool_usage": {
+          "call_count": 52,
+          "calls_by_tool": {
+            "edit_file": 8,
+            "execute": 12,
+            "hybrid_code_search": 2,
+            "ls": 5,
+            "read_file": 16,
+            "write_todos": 9
+          },
+          "failure_count": 0,
+          "result_count": 126,
+          "success_count": 126
+        },
+        "test_behavior": {
+          "required_test_files": [
+            "tests/test_paginate_tasks.py"
+          ],
+          "required_test_files_modified": true
+        },
+        "target_repo_sha": "d65047705e6e947bcd33e193ab4c8fdfeb8956c8",
+        "expected_status": "completed",
+        "model_call_limit": "32",
+        "tool_call_limit": "80",
+        "codegraph_index": {
+          "available": true,
+          "exit_code": 0,
+          "latency_ms": 802,
+          "output_tail": "T  Initializing CodeGraph\n|\n*  Initialized in [LOCAL_PATH]\n|\nScanning files...\nParsing code...\nResolving refs...\nLinking dynamic dispatch...\n|\n*  Indexed 7 files\n|\n•  33 nodes, 55 edges in 371ms\n|\n—  Done\n\n",
+          "succeeded": true
+        },
+        "agent_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "selected_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "agent_runtime_snapshot_sha256": "7c0ac64229959571080fb40d9371fc3ee2e4bb168aa7762409488fd1e0d3644a",
+        "plan_rejection_ok": true,
+        "plan_rubric": [
+          {
+            "accepted_terms": [
+              "需求理解",
+              "需求拆解",
+              "目标"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "涉及文件",
+              "相关文件",
+              "改动文件",
+              "taskboard/tasks.py",
+              "taskboard/__init__.py",
+              "tests/"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "验证方案",
+              "测试方案",
+              "pytest",
+              "测试命令"
+            ],
+            "passed": true
+          }
+        ],
+        "sandbox_e2e_passed": true,
+        "sandbox": null
+      },
+      "oracle_tests_passed": true,
+      "output_tokens": 11772,
+      "patch": "diff --git a/taskboard/__init__.py b/taskboard/__init__.py\nindex fb699df..a2cd772 100644\n--- a/taskboard/__init__.py\n+++ b/taskboard/__init__.py\n@@ -1,5 +1,5 @@\n \"\"\"Small target project used by the CODING Agent evaluation suite.\"\"\"\n \n-from taskboard.tasks import filter_by_status, search_tasks, sort_by_priority\n+from taskboard.tasks import filter_by_status, paginate_tasks, search_tasks, sort_by_priority\n \n-__all__ = [\"filter_by_status\", \"search_tasks\", \"sort_by_priority\"]\n+__all__ = [\"filter_by_status\", \"paginate_tasks\", \"search_tasks\", \"sort_by_priority\"]\ndiff --git a/taskboard/tasks.py b/taskboard/tasks.py\nindex 24f522b..5bdcf24 100644\n--- a/taskboard/tasks.py\n+++ b/taskboard/tasks.py\n@@ -7,6 +7,14 @@ from typing import Any\n Task = dict[str, Any]\n \n \n+def _validate_positive_int(value: Any, name: str) -> int:\n+    \"\"\"Return value as a positive int, rejecting bools and non-integers.\"\"\"\n+\n+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:\n+        raise ValueError(f\"{name} must be a positive integer, got {value!r}\")\n+    return value\n+\n+\n def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]:\n     \"\"\"Return tasks matching status; no filter returns every task.\"\"\"\n \n@@ -30,3 +38,18 @@ def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:\n \n     order = {\"high\": 0, \"medium\": 1, \"low\": 2}\n     return sorted(tasks, key=lambda task: order.get(str(task.get(\"priority\", \"\")).lower(), 99))\n+\n+\n+def paginate_tasks(tasks: Iterable[Task], *, page: int, page_size: int) -> list[Task]:\n+    \"\"\"Return one page of tasks; pages are 1-based and keep the input order.\n+\n+    Raises ValueError when page or page_size is not a positive integer (bools do\n+    not count as integers). Pages past the end return an empty list.\n+    \"\"\"\n+\n+    page = _validate_positive_int(page, \"page\")\n+    page_size = _validate_positive_int(page_size, \"page_size\")\n+\n+    rows = list(tasks)\n+    start = (page - 1) * page_size\n+    return rows[start : start + page_size]\ndiff --git a/tests/test_paginate_tasks.py b/tests/test_paginate_tasks.py\nindex 354c5be..e6a8e52 100644\n--- a/tests/test_paginate_tasks.py\n+++ b/tests/test_paginate_tasks.py\n@@ -14,7 +14,89 @@ def test_pagination_accepts_iterables_and_returns_empty_for_pages_past_the_end()\n     assert paginate_tasks(({\"id\": i} for i in range(3)), page=4, page_size=2) == []\n \n \n-@pytest.mark.parametrize(\"page,page_size\", [(0, 2), (-1, 2), (1, 0), (1, -3), (True, 2), (1, 1.5)])\n+@pytest.mark.parametrize(\n+    \"page,page_size\",\n+    [\n+        (0, 2),\n+        (-1, 2),\n+        (1, 0),\n+        (1, -3),\n+        (True, 2),\n+        (1, 1.5),\n+        (False, 2),\n+        (1, True),\n+        (1.0, 2),\n+        (1, \"2\"),\n+        (None, 2),\n+        (1, None),\n+    ],\n+)\n def test_pagination_rejects_non_positive_or_non_integer_arguments(page, page_size):\n     with pytest.raises(ValueError):\n         paginate_tasks([], page=page, page_size=page_size)\n+\n+\n+def test_pagination_requires_keyword_arguments():\n+    tasks = [{\"id\": 1}, {\"id\": 2}]\n+    with pytest.raises(TypeError):\n+        paginate_tasks(tasks, 1, 2)\n+\n+\n+def test_page_size_larger_than_input_returns_everything_on_first_page():\n+    assert paginate_tasks([{\"id\": 1}, {\"id\": 2}], page=1, page_size=10) == [{\"id\": 1}, {\"id\": 2}]\n+\n+\n+def test_walking_every_page_reproduces_the_input_in_order():\n+    tasks = [{\"id\": index} for index in range(1, 8)]\n+    collected = []\n+    page = 1\n+    while True:\n+        chunk = paginate_tasks(tasks, page=page, page_size=2)\n+        if not chunk:\n+            break\n+        collected.extend(chunk)\n+        page += 1\n+    assert collected == tasks\n+\n+\n+def test_last_page_boundary_and_pages_far_past_the_end_are_empty():\n+    tasks = [{\"id\": index} for index in range(1, 5)]\n+    assert paginate_tasks(tasks, page=2, page_size=2) == [{\"id\": 3}, {\"id\": 4}]\n+    assert paginate_tasks(tasks, page=3, page_size=2) == []\n+    assert paginate_tasks(tasks, page=9999, page_size=2) == []\n+\n+\n+def test_empty_input_with_valid_arguments_returns_empty_list():\n+    assert paginate_tasks([], page=1, page_size=3) == []\n+    assert paginate_tasks([], page=5, page_size=3) == []\n+\n+\n+def test_pagination_accepts_one_shot_iterables_without_re_consuming_them():\n+    tasks = [{\"id\": index} for index in range(1, 6)]\n+    assert paginate_tasks(iter(tasks), page=2, page_size=2) == tasks[2:4]\n+    assert paginate_tasks((task for task in tasks), page=1, page_size=2) == tasks[0:2]\n+    assert paginate_tasks(map(lambda task: dict(task), tasks), page=3, page_size=2) == tasks[4:6]\n+    assert paginate_tasks(filter(None, tasks), page=1, page_size=100) == tasks\n+\n+\n+def test_pagination_does_not_mutate_or_copy_the_input():\n+    first = {\"id\": 1}\n+    second = {\"id\": 2}\n+    third = {\"id\": 3}\n+    fourth = {\"id\": 4}\n+    tasks = [first, second, third, fourth]\n+    snapshot = [dict(task) for task in tasks]\n+\n+    page = paginate_tasks(tasks, page=2, page_size=2)\n+\n+    assert tasks == snapshot\n+    assert len(tasks) == len(snapshot)\n+    assert len(page) == 2\n+    assert page[0] is third\n+    assert page[1] is fourth\n+\n+\n+def test_pagination_handles_large_offsets_without_error():\n+    tasks = [{\"id\": index} for index in range(1, 11)]\n+    assert paginate_tasks(tasks, page=100_000, page_size=1) == []\n+    assert paginate_tasks(tasks, page=10, page_size=1) == [{\"id\": 10}]\n",
+      "patch_apply": true,
+      "regression_test_latency_ms": 838,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": 1.0,
+      "status": "passed",
+      "target_test_latency_ms": 884,
+      "target_tests_passed": true,
+      "tool_recovery_rate": null,
+      "total_tokens": 991812
+    }
+  ],
+  "config": {
+    "agent_source_sha": "逐题记录固定 Agent SHA，见案例详情",
+    "framework_source_sha": "6eb19fdc06916ac8d967b0f502daef50262b564e",
+    "runner_version": "4"
+  },
+  "created_at": "2026-09-27T06:12:20.630571+00:00",
+  "mode": "real",
+  "report_id": "d3ae062b594d093d",
+  "repository": "test-coding-eval",
+  "summary": {
+    "case_count": 10,
+    "failed_count": 0,
+    "oracle_test_case_count": 10,
+    "oracle_test_pass_rate": 1.0,
+    "oracle_test_passed_case_count": 10,
+    "passed_count": 10,
+    "patch_apply_rate": 1.0,
+    "regression_test_case_count": 10,
+    "regression_test_pass_rate": 1.0,
+    "regression_test_passed_case_count": 10,
+    "retrieval_hit_at_k": 1.0,
+    "target_test_case_count": 10,
+    "target_test_pass_rate": 1.0,
+    "target_test_passed_case_count": 10,
+    "token_usage_case_count": 10,
+    "tool_recovery_rate": 1.0,
+    "total_latency_ms": 614051,
+    "total_tokens": 6963895
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "cases": [
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 69682,
+      "artifacts": {},
+      "case_id": "taskboard-count-by-status",
+      "changed_files": [
+        "taskboard/__init__.py",
+        "taskboard/tasks.py",
+        "tests/test_count_by_status.py"
+      ],
+      "errors": [],
+      "input_tokens": 475831,
+      "metadata": {
+        "model_provider": "DeepSeek",
+        "model_name": "deepseek-flash",
+        "model_usage": {
+          "input_tokens": 475831,
+          "output_tokens": 7722,
+          "total_tokens": 483553
+        },
+        "retrieval_call_count": 2,
+        "tool_usage": {
+          "call_count": 34,
+          "calls_by_tool": {
+            "edit_file": 5,
+            "execute": 7,
+            "hybrid_code_search": 1,
+            "ls": 3,
+            "read_file": 11,
+            "write_file": 1,
+            "write_todos": 6
+          },
+          "failure_count": 1,
+          "result_count": 85,
+          "success_count": 84
+        },
+        "test_behavior": {
+          "required_test_files": [
+            "tests/test_count_by_status.py"
+          ],
+          "required_test_files_modified": true
+        },
+        "target_repo_sha": "d65047705e6e947bcd33e193ab4c8fdfeb8956c8",
+        "expected_status": "completed",
+        "model_call_limit": "32",
+        "tool_call_limit": "80",
+        "codegraph_index": {
+          "available": true,
+          "exit_code": 0,
+          "latency_ms": 828,
+          "output_tail": "T  Initializing CodeGraph\n|\n*  Initialized in [LOCAL_PATH]\n|\nScanning files...\nParsing code...\nResolving refs...\nLinking dynamic dispatch...\n|\n*  Indexed 7 files\n|\n•  31 nodes, 53 edges in 368ms\n|\n—  Done\n\n",
+          "succeeded": true
+        },
+        "agent_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "selected_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "agent_runtime_snapshot_sha256": "04748ed76036552fdae56e8ed5757752110904e6c2538adfd30421aaad42c5d0",
+        "plan_rejection_ok": true,
+        "plan_rubric": [
+          {
+            "accepted_terms": [
+              "需求理解",
+              "需求拆解",
+              "目标"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "涉及文件",
+              "相关文件",
+              "改动文件",
+              "taskboard/tasks.py",
+              "taskboard/__init__.py",
+              "tests/"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "验证方案",
+              "测试方案",
+              "pytest",
+              "测试命令"
+            ],
+            "passed": true
+          }
+        ],
+        "sandbox_e2e_passed": true,
+        "sandbox": {
+          "uploaded_file_count": 20,
+          "cleanup_succeeded": true,
+          "host_patch_exported": true,
+          "uploaded_bytes": 11680,
+          "target_workspace": "OpenSandbox:/",
+          "patch_bytes": 3542
+        }
+      },
+      "oracle_tests_passed": true,
+      "output_tokens": 7722,
+      "patch": "diff --git a/taskboard/__init__.py b/taskboard/__init__.py\nindex fb699df..e7820a2 100644\n--- a/taskboard/__init__.py\n+++ b/taskboard/__init__.py\n@@ -1,5 +1,5 @@\n \"\"\"Small target project used by the CODING Agent evaluation suite.\"\"\"\n \n-from taskboard.tasks import filter_by_status, search_tasks, sort_by_priority\n+from taskboard.tasks import count_by_status, filter_by_status, search_tasks, sort_by_priority\n \n-__all__ = [\"filter_by_status\", \"search_tasks\", \"sort_by_priority\"]\n+__all__ = [\"count_by_status\", \"filter_by_status\", \"search_tasks\", \"sort_by_priority\"]\ndiff --git a/taskboard/tasks.py b/taskboard/tasks.py\nindex 24f522b..a7d47f2 100644\n--- a/taskboard/tasks.py\n+++ b/taskboard/tasks.py\n@@ -30,3 +30,19 @@ def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:\n \n     order = {\"high\": 0, \"medium\": 1, \"low\": 2}\n     return sorted(tasks, key=lambda task: order.get(str(task.get(\"priority\", \"\")).lower(), 99))\n+\n+\n+def count_by_status(tasks: Iterable[Task]) -> dict[str, int]:\n+    \"\"\"Count tasks per normalized status, keyed in first-seen order.\n+\n+    Statuses are lowercased and stripped; missing or blank statuses count as\n+    ``\"unknown\"``. The input is never modified.\n+    \"\"\"\n+\n+    counts: dict[str, int] = {}\n+    for task in tasks:\n+        raw = task.get(\"status\")\n+        status = \"\" if raw is None else str(raw).strip().lower()\n+        key = status or \"unknown\"\n+        counts[key] = counts.get(key, 0) + 1\n+    return counts\ndiff --git a/tests/test_count_by_status.py b/tests/test_count_by_status.py\nindex 4a38c64..1ed7ae7 100644\n--- a/tests/test_count_by_status.py\n+++ b/tests/test_count_by_status.py\n@@ -14,3 +14,62 @@ def test_counts_normalized_statuses_and_keeps_first_seen_order():\n \n def test_empty_input_has_no_groups():\n     assert count_by_status([]) == {}\n+\n+\n+def test_key_order_follows_first_seen_status():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"Done\"},\n+        {\"id\": 2, \"status\": \" OPEN \"},\n+        {\"id\": 3, \"status\": \"open\"},\n+    ]\n+\n+    assert list(count_by_status(tasks)) == [\"done\", \"open\"]\n+    assert count_by_status(tasks) == {\"done\": 1, \"open\": 2}\n+\n+\n+def test_missing_null_and_blank_statuses_share_unknown_group():\n+    tasks = [\n+        {\"id\": 1},\n+        {\"id\": 2, \"status\": None},\n+        {\"id\": 3, \"status\": \"\"},\n+        {\"id\": 4, \"status\": \"   \"},\n+        {\"id\": 5, \"status\": \"open\"},\n+    ]\n+\n+    assert count_by_status(tasks) == {\"unknown\": 4, \"open\": 1}\n+    assert list(count_by_status(tasks)) == [\"unknown\", \"open\"]\n+\n+\n+def test_surrounding_whitespace_is_stripped_before_grouping():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"\\topen\\n\"},\n+        {\"id\": 2, \"status\": \" open\"},\n+    ]\n+\n+    assert count_by_status(tasks) == {\"open\": 2}\n+\n+\n+def test_input_tasks_and_objects_are_not_mutated():\n+    tasks = [\n+        {\"id\": 1, \"status\": \" Open \"},\n+        {\"id\": 2, \"status\": None},\n+        {\"id\": 3},\n+    ]\n+    original = [dict(task) for task in tasks]\n+    key_sets = [set(task) for task in tasks]\n+\n+    count_by_status(tasks)\n+\n+    assert tasks == original\n+    assert [set(task) for task in tasks] == key_sets\n+\n+\n+def test_accepts_generators_and_lists_without_reiterating():\n+    rows = [{\"status\": \"Open\"}, {\"status\": \"done\"}, {\"status\": \"OPEN\"}]\n+\n+    assert count_by_status(row for row in rows) == {\"open\": 2, \"done\": 1}\n+    assert count_by_status(iter(rows)) == {\"open\": 2, \"done\": 1}\n+\n+\n+def test_non_string_status_is_normalized_via_str():\n+    assert count_by_status([{\"status\": 1}, {\"status\": 1}]) == {\"1\": 2}\n",
+      "patch_apply": true,
+      "regression_test_latency_ms": 853,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": 1.0,
+      "status": "passed",
+      "target_test_latency_ms": 871,
+      "target_tests_passed": true,
+      "tool_recovery_rate": 1.0,
+      "total_tokens": 483553
+    }
+  ],
+  "config": {
+    "agent_source_sha": "9b07905ce3a07289d58b9ab0c9a56e2f93656042",
+    "agent_source_dirty_patch_sha256": null,
+    "agent_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+    "agent_runtime_snapshot_sha256": "04748ed76036552fdae56e8ed5757752110904e6c2538adfd30421aaad42c5d0",
+    "agent_runtime_overlay_files": {},
+    "framework_source_sha": "9b07905ce3a07289d58b9ab0c9a56e2f93656042",
+    "framework_source_dirty_patch_sha256": null,
+    "case_manifest_sha256": "d10bd77872723ecfe49b9c6de098a39a8b80af35ff8afd51ce19f0072b20841b",
+    "runner_version": "4"
+  },
+  "created_at": "2026-09-27T05:57:01.941834+00:00",
+  "mode": "real",
+  "report_id": "d10bd77872723ecf",
+  "repository": "test-coding-eval",
+  "summary": {
+    "case_count": 1,
+    "failed_count": 0,
+    "oracle_test_case_count": 1,
+    "oracle_test_pass_rate": 1.0,
+    "oracle_test_passed_case_count": 1,
+    "passed_count": 1,
+    "patch_apply_rate": 1.0,
+    "regression_test_case_count": 1,
+    "regression_test_pass_rate": 1.0,
+    "regression_test_passed_case_count": 1,
+    "retrieval_hit_at_k": 1.0,
+    "target_test_case_count": 1,
+    "target_test_pass_rate": 1.0,
+    "target_test_passed_case_count": 1,
+    "token_usage_case_count": 1,
+    "tool_recovery_rate": 1.0,
+    "total_latency_ms": 69682,
+    "total_tokens": 483553
+  }
+}

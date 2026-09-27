@@ -1,0 +1,347 @@
+I'll start by planning this task and exploring the repository structure.
+
+# filter_by_priority 技术方案
+
+## 1. 需求理解
+
+在 `taskboard` 包中新增并发导出 `filter_by_priority(tasks, priorities=None)`，语义如下：
+
+| 需求点 | 目标行为 |
+| --- | --- |
+| `priorities=None` | 不做过滤，返回全部任务（原顺序） |
+| 传字符串 | 视为单元素筛选集合，例如 `"high"` 只筛 high 类 |
+| 传字符串 Iterable | 视为多元素集合，例如 `["medium", "backlog"]` |
+| 大小写忽略 | 任务值 `"HIGH"` 与筛选值 `"high"` 视为同一级别 |
+| 别名等价 | `urgent` → `high`；`backlog` → `low`（双向归一后比较） |
+| 缺失/null 归 unknown | `task` 无 `priority` 键或值为 `None` 时，归一为 `unknown`；筛选值写 `"unknown"` 可命中这类任务 |
+| 顺序保持 | 结果按输入顺序输出，类似 `list` / 生成器等可迭代输入也向下转换为列表 |
+| 不修改输入 | 只做只读遍历与生成新列表，不写入任务字典 |
+
+与既有实现的关系：
+- **必须复用 `urgent/backlog` 别名语义**。`tests/test_baseline.py::test_priority_sort_orders_known_priorities` 与 `sort_by_priority` 已确认需要在排序中区分 urgent/backlog：`test_priority_sort_keeps_equal_and_unknown_priorities_stable` 期望 `[2(urgent), 4(high), 5(high), 1(low), 3(backlog)]`，即排序侧 `urgent` 与 `high` **不同组**、`backlog` 与 `low` **不同组**。
+- 因此筛选侧的别名等价不能改动 `sort_by_priority`，应作为**筛选专用的归一化**局部实现；`sort_by_priority` 保持现状不动（同时它是另一 case 的必改文件，和本任务的 allowed_files 重叠，需避免相互影响）。
+- `search_tasks` 的任务标题比较实际是大小写敏感的（`query in title`，小写查询匹配大写标题会失败），所以大小写忽略的实现方式要参考 `filter_by_status` 的做法思路 —— 使用 `str(...).lower()` 归一，但**不能照搬 `filter_by_status` 的相等比较**，因为它对 `None` 值与缺失键的处理不符合本需求（一致地把缺失和 null 归到 `unknown`）。
+
+## 2. 涉及模块和需要阅读的文件
+
+| 文件 | 作用 | 是否修改 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | 现 3 个函数所在模块，`Task` 类型别名在新函数中复用；新增 `filter_by_priority` | 是 |
+| `taskboard/__init__.py` | 包导出层，导入并放入 `__all__` | 是 |
+| `tests/test_filter_by_priority.py` | 目标用例已存在（含 `None` 返回全部、字符串与列表入参、缺失/null 归 unknown、`"later"` 不命中、不修改输入） | 是 |
+| `taskboard/tasks.py` 现有函数 | `filter_by_status` / `search_tasks` / `sort_by_priority` 作为实现模式参考 | 否 |
+| `tests/test_baseline.py`、`tests/test_filter_by_status.py`、`tests/test_search_tasks.py` | 回归对比基线：`TASKS` 用例数据、"不修改输入"的断言写法、返回空列表的断言写法 | 否 |
+| `tests/test_sort_by_priority.py` | 确认排序侧既定的优先级层级约定，避免误改 | 否 |
+| `tests/test_sort_by_priority.py` 和 `cases/taskboard-priority-aliases.json` | 说明 `taskboard/tasks.py` 上还有另一条并行需求（别名在排序侧的表达），跨 case 冲突留给用户确认 | 否 |
+
+**当前环境事实**（已核实）：
+- `execute` 的 `git remote -v` 与 `git status --short --branch` 确认工作目录 `/projects/github-Guo-Yixin-test-coding-eval`，`origin` 指向 `https://github.com/Guo-Yixin/test-coding-eval.git`，分支 `main`，工作区干净。
+- 仓库无 Python 虚拟环境、无依赖声明（`pyproject.toml` 只有 `pytest.testpaths=["tests"]`、`requires-python>=3.11`），`pytest` 用系统环境可直接执行。
+- `hybrid_code_search` 第一次调用返回 `TimeoutError`（评测侧一次性可恢复超时提示），第二次调用成功，已获得 `tasks.py`、`__init__.py`、各测试文件的结构化 hits。检索结论已在下方方案中使用。
+
+## 3. 数据结构、接口或页面变化
+
+**接口新增（无破坏性变更）**
+
+| 项 | 内容 |
+| --- | --- |
+| 函数 | `filter_by_priority(tasks: Iterable[Task], priorities: str / Iterable[str] / None = None) -> list[Task]` |
+| 参数名 | 必须为 `priorities`（按需求命名，支持关键字调用） |
+| 返回 | `list[Task]`，元素为原字典对象本身（浅拷贝式结果，不改写元素） |
+| 类型注释 | 参照现有风格使用 `from __future__ import annotations` 的现代注解；入参类型可写为 `str | Iterable[str] | None`，与现有 `Iterable` 导入（`collections.abc`）保持一致 |
+
+**归一化规则表（模块内私有常量/辅助逻辑，不在包外导出）**
+
+| 输入侧写法（忽略大小写） | 归一结果 |
+| --- | --- |
+| 键缺失 / `None` / 空串或仅空白 | `unknown` |
+| `high` | `high` |
+| `urgent` | `high` |
+| `medium` | `medium` |
+| `low` | `low` |
+| `backlog` | `low` |
+| 其它字符串（如 `later`） | 保持写法的"已小写化"形式，用于精确相等比较 |
+
+**核心逻辑伪代码（约 7 行，示意用）**
+
+```
+targets = None if priorities is None else set→{normalize(p) for p in 对 goals 的展开}
+rows = list(tasks)
+若 targets 为 None：返回 rows
+返回 [t for t in rows if normalize(t.get("priority")) in targets]
+```
+
+其中"对 `goals`（即 `priorities`）的展开"需先判断入参是单个字符串还是 Iterable 字符串：字符串不再按字符迭代。
+
+**导出层变化**
+
+`taskboard/__init__.py` 在现有一行导入中追加 `filter_by_priority`，并同步把名称加入 `__all__`，使 `from taskboard import filter_by_priority` 可用（测试文件正是这样导入的）。
+
+## 4. 具体实施步骤
+
+1. **在 `taskboard/tasks.py` 中新增归一化辅助逻辑**
+   - 位置：放在 `filter_by_status` 之后、或放在文件上方常量区；建议紧邻 `filter_by_priority` 之上，减少改动面。
+   - 内容：一个私有函数（例如 `_normalize_priority(value: object) -> str`），负责 `None`/缺失 → `unknown`、去首尾空白、`lower()`、`urgent→high`、`backlog→low` 映射。同时把别名映射定义为一个模块级私有字典常量以表达契约。
+   - 不要改动 `filter_by_status`、`search_tasks`、`sort_by_priority` 的任何一行。
+
+2. **新增 `filter_by_priority` 函数**
+   - 处理 `priorities is None` 的提前返回（返回 `list(tasks)`，即与其它函数一致的"无过滤返回全部"语义）。
+   - 处理单字符串入参：用 `isinstance(priorities, str)` 判断，避免 `{"high"}` 被拆成单个字符集合。
+   - 处理 Iterable 入参：逐个 `_normalize_priority` 后装入 `set`，得到筛选集合。
+   - 生成结果：先 `rows = list(tasks)`，再用列表推导保持输入顺序，仅在读取 `task.get("priority")` 时不写回任何键。
+   - 文档字符串按现有风格写一行英文总结（`"""Return tasks matching normalized priorities; no filter returns every task."""` 为示意，措辞以现有 docstring 风格为准）。
+
+3. **扩展 `taskboard/__init__.py`**
+   - 在 `from taskboard.tasks import ...` 行追加 `filter_by_priority`，并把它加入 `__all__`。保持导入字母序/既有顺序风格一致，避免整行重排导致无谓 diff。
+
+4. **扩展 `tests/test_filter_by_priority.py`**
+   - 保留现有两个测试（它们已经覆盖 `None`、字符串、列表、`backlog` 别名、`unknown` 命中缺失/null、`"later"` 不命中、不修改输入），确保新实现能让它们从"导入失败"变为通过。
+   - 按需求补充遗漏的边界用例，建议新增（不写死实现细节，只断言行为）：
+     - `urgent` 等价 `high` 的双向覆盖：`filter_by_priority(tasks, "high")` 命中 `urgent`，且 `filter_by_priority(tasks, "urgent")` 命中原生 `high`。
+     - `backlog` 等价 `low` 的双向覆盖。
+     - 混合大小写入参集合：如 `{"HIGH", "Urgent", "MEDIUM"}`（也可用元组/生成器验证"任意字符串 Iterable"）。
+     - 组合与顺序：入参集合本身无序（`set`）时，结果仍等于输入顺序的子序列。
+     - Iterable 输入（生成器 / 元组）同样返回 `list` 且不修改输入。
+     - 归一后空/空白优先级（如 `"   "`）是否计入 `unknown` —— 属于需要确认项（见第 6 节），确认为"归 unknown"时补断言，否则不加。
+     - 未匹配返回空列表：如 `filter_by_priority(tasks, "critical") == []`。
+     - 字符串入参不被拆成字符：`filter_by_priority(tasks, "high")` 不等于按 `"h"/"i"/"g"` 迭代的结果（用一条断言反向锁死该实现错误）。
+   - 测试命名沿用现有风格（`test_...` 句式），保持 `from taskboard import filter_by_priority` 的导入路径不变，从而顺带验证导出层。
+
+5. **自检改动面**
+   - 确认 diff 只触碰 `taskboard/tasks.py`、`taskboard/__init__.py`、`tests/test_filter_by_priority.py` 三个文件；不新增依赖、不改 `pyproject.toml`、不改 README/cases。
+
+## 5. 验证方案
+
+| 层级 | 命令 / 方式 | 通过标准 |
+| --- | --- | --- |
+| 目标用例 | `python -m pytest tests/test_filter_by_priority.py -q` | 全部通过；输入用例数据在断言前后按值相等（不修改输入） |
+| 本次功能相关的直接回归 | `python -m pytest tests/test_filter_by_status.py tests/test_search_tasks.py -q` | 全部通过（保证未破坏相邻语义） |
+| 包导出 | `python -c "from taskboard import filter_by_priority as f; print(f([{'id':1,'priority':'URGENT'}], 'high'))"` | 打印 `[{'id': 1, 'priority': 'URGENT'}]`，无 `ImportError` |
+| 全量回归 | `python -m pytest -q`（`pyproject.toml` 已配 `testpaths=["tests"]`） | 除与本需求无关的既有失败外全绿；若 `test_sort_by_priority.py` 在该基线 commit 下本就失败，需在报告中单独说明并引用基线 commit 结论 |
+| 反例核查 | 人工核对：`filter_by_priority(TASKS)` 返回的列表与输入按值相等但不共享列表对象 | 确认 `priorities=None` 未走筛选分支 |
+| 干扰检查 | `git -C /projects/github-Guo-Yixin-test-coding-eval diff --stat` | 仅 3 个目标文件出现在 diff 中 |
+
+测试执行的基线环境假定：系统 `python`（≥3.11，仓库 `requires-python` 与实际 `pytest` 可用性一致）。若系统缺少 `pytest`，先用 `python -m pytest --version` 检查，再决定是否需要在工作区 `runtimes/` 下建虚拟环境（属于实施阶段的环境准备，不改仓库文件）。
+
+## 6. 风险点和需要用户确认的事项
+
+**风险点**
+
+| 编号 | 风险 | 影响 | 应对 |
+| --- | --- | --- | --- |
+| R1 | `taskboard/tasks.py` 与 `tests/test_sort_by_priority.py` 同时是另一条需求（`cases/taskboard-priority-aliases.json`，要求在**排序**中区分 urgent/high 与 backlog/low）的改动目标 | 两条需求对"urgent/backlog"的语义相反：筛选侧要求等价，排序侧要求不同层。若在本任务中顺手改动 `sort_by_priority`，会破坏排序侧用例 | 本任务**只新增**，绝不修改 `sort_by_priority`；把别名等价实现为筛选专用归一化 |
+| R2 | `search_tasks` 的 docstring 声称大小写忽略，但实现是大小写敏感的（`query in title`） | 若照搬 `search_tasks` 的比较方式，会违反本需求的大小写忽略要求 | 统一用 `str(...).lower()` 归一后再比较，参考 `filter_by_status` 的归一思路 |
+| R3 | `filter_by_status` 用 `task.get("status") == status` 精确比较 | 缺失/null 归 unknown、别名等价、大小写忽略三点都无法满足 | 新实现独立归一化路径，不复用 `filter_by_status` 的比较逻辑 |
+| R4 | 字符串入参可能被当作 Iterable 逐字符迭代 | 传 `"high"` 时会变成 `{'h','i','g'}`，语义静默错误且难察觉 | 显式 `isinstance(priorities, str)` 分支，并在测试里加"字符串不被拆分"的锁定断言 |
+| R5 | `task.get("priority")` 可能返回非字符串（如数字、其它对象） | 归一化时可能抛异常 | `_normalize_priority` 内部统一转 `str(...)` 后再处理，非字符串值视为其字符串形式参与精确匹配 |
+| R6 | 现有测试仅覆盖到 `"later"` 不命中，未验证 `empty/空白` 情形 | 边界取舍不一致会导致 oracle 判定不确定 | 见下方待确认项 Q1，先确认再补测试 |
+| R7 | 一次性检索超时会影响后续检索可重复性 | 交互中可能再次遇到工具超时 | 已在本次任务中通过重试获得有效检索结果；实施时若再超时，用文件读取与命令行检索继续，不阻塞任务 |
+
+**需要用户确认的事项**
+
+- **Q1（空白优先级）**：`task["priority"] = ""` 或 `"   "` 是否与 `None`/键缺失一样归入 `unknown`？本方案默认为"归 `unknown`"，因为需求把"缺失或 null"归 unknown 的意图是把无有效优先级统一归类；若不希望把空串计入，将改为只对缺失/`None` 生效，测试断言随之调整。
+- **Q2（别名规范化的方向对称性）**：`urgent` 等价 `high` 应当是**双向**的（筛选值写 `urgent` 也能命中原生 `high` 任务），本方案按双向实现；若只要求单向（任务侧 `urgent` 可被 `high` 命中、筛选侧 `urgent` 不覆盖 `high`），语义会变窄。
+- **Q3（未知字符串的匹配范围）**：`filter_by_priority(tasks, "later")` 应视为一个具体字面值，只命中 `priority="later"`（大小写忽略），还是要求与 `unknown` 区分开后仍然匹配？本方案取前者，且不把 `"later"` 归入 `unknown`。
+- **Q4（对比范围）**：需求描述是"字符串 Iterable"，是否含 `set`/`tuple`/`generator`/`dict_keys` 等所有常见可迭代对象？本方案全部支持并把集合视为无序输入，结果只保证遵循**任务输入**顺序，不承诺筛选集合的顺序语义。
+- **Q5（并行 case 边界）**：`cases/taskboard-priority-aliases.json` 指定的 `allowed_files` 与本次文件重叠（`taskboard/tasks.py`），本次交付是否应与那条 case 完全隔离（即本轮不改 `sort_by_priority`，即使改动看似顺手）？本方案默认完全隔离。
+
+是否确认实施该方案？
+
+I'll start by planning this task and exploring the repository structure.
+
+# filter_by_priority 技术方案
+
+## 1. 需求理解
+
+在 `taskboard` 包中新增并发导出 `filter_by_priority(tasks, priorities=None)`，语义如下：
+
+| 需求点 | 目标行为 |
+| --- | --- |
+| `priorities=None` | 不做过滤，返回全部任务（原顺序） |
+| 传字符串 | 视为单元素筛选集合，例如 `"high"` 只筛 high 类 |
+| 传字符串 Iterable | 视为多元素集合，例如 `["medium", "backlog"]` |
+| 大小写忽略 | 任务值 `"HIGH"` 与筛选值 `"high"` 视为同一级别 |
+| 别名等价 | `urgent` → `high`；`backlog` → `low`（双向归一后比较） |
+| 缺失/null 归 unknown | `task` 无 `priority` 键或值为 `None` 时，归一为 `unknown`；筛选值写 `"unknown"` 可命中这类任务 |
+| 顺序保持 | 结果按输入顺序输出，类似 `list` / 生成器等可迭代输入也向下转换为列表 |
+| 不修改输入 | 只做只读遍历与生成新列表，不写入任务字典 |
+
+与既有实现的关系：
+- **必须复用 `urgent/backlog` 别名语义**。`tests/test_baseline.py::test_priority_sort_orders_known_priorities` 与 `sort_by_priority` 已确认需要在排序中区分 urgent/backlog：`test_priority_sort_keeps_equal_and_unknown_priorities_stable` 期望 `[2(urgent), 4(high), 5(high), 1(low), 3(backlog)]`，即排序侧 `urgent` 与 `high` **不同组**、`backlog` 与 `low` **不同组**。
+- 因此筛选侧的别名等价不能改动 `sort_by_priority`，应作为**筛选专用的归一化**局部实现；`sort_by_priority` 保持现状不动（同时它是另一 case 的必改文件，和本任务的 allowed_files 重叠，需避免相互影响）。
+- `search_tasks` 的任务标题比较实际是大小写敏感的（`query in title`，小写查询匹配大写标题会失败），所以大小写忽略的实现方式要参考 `filter_by_status` 的做法思路 —— 使用 `str(...).lower()` 归一，但**不能照搬 `filter_by_status` 的相等比较**，因为它对 `None` 值与缺失键的处理不符合本需求（一致地把缺失和 null 归到 `unknown`）。
+
+## 2. 涉及模块和需要阅读的文件
+
+| 文件 | 作用 | 是否修改 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | 现 3 个函数所在模块，`Task` 类型别名在新函数中复用；新增 `filter_by_priority` | 是 |
+| `taskboard/__init__.py` | 包导出层，导入并放入 `__all__` | 是 |
+| `tests/test_filter_by_priority.py` | 目标用例已存在（含 `None` 返回全部、字符串与列表入参、缺失/null 归 unknown、`"later"` 不命中、不修改输入） | 是 |
+| `taskboard/tasks.py` 现有函数 | `filter_by_status` / `search_tasks` / `sort_by_priority` 作为实现模式参考 | 否 |
+| `tests/test_baseline.py`、`tests/test_filter_by_status.py`、`tests/test_search_tasks.py` | 回归对比基线：`TASKS` 用例数据、"不修改输入"的断言写法、返回空列表的断言写法 | 否 |
+| `tests/test_sort_by_priority.py` | 确认排序侧既定的优先级层级约定，避免误改 | 否 |
+| `tests/test_sort_by_priority.py` 和 `cases/taskboard-priority-aliases.json` | 说明 `taskboard/tasks.py` 上还有另一条并行需求（别名在排序侧的表达），跨 case 冲突留给用户确认 | 否 |
+
+**当前环境事实**（已核实）：
+- `execute` 的 `git remote -v` 与 `git status --short --branch` 确认工作目录 `/projects/github-Guo-Yixin-test-coding-eval`，`origin` 指向 `https://github.com/Guo-Yixin/test-coding-eval.git`，分支 `main`，工作区干净。
+- 仓库无 Python 虚拟环境、无依赖声明（`pyproject.toml` 只有 `pytest.testpaths=["tests"]`、`requires-python>=3.11`），`pytest` 用系统环境可直接执行。
+- `hybrid_code_search` 第一次调用返回 `TimeoutError`（评测侧一次性可恢复超时提示），第二次调用成功，已获得 `tasks.py`、`__init__.py`、各测试文件的结构化 hits。检索结论已在下方方案中使用。
+
+## 3. 数据结构、接口或页面变化
+
+**接口新增（无破坏性变更）**
+
+| 项 | 内容 |
+| --- | --- |
+| 函数 | `filter_by_priority(tasks: Iterable[Task], priorities: str / Iterable[str] / None = None) -> list[Task]` |
+| 参数名 | 必须为 `priorities`（按需求命名，支持关键字调用） |
+| 返回 | `list[Task]`，元素为原字典对象本身（浅拷贝式结果，不改写元素） |
+| 类型注释 | 参照现有风格使用 `from __future__ import annotations` 的现代注解；入参类型可写为 `str | Iterable[str] | None`，与现有 `Iterable` 导入（`collections.abc`）保持一致 |
+
+**归一化规则表（模块内私有常量/辅助逻辑，不在包外导出）**
+
+| 输入侧写法（忽略大小写） | 归一结果 |
+| --- | --- |
+| 键缺失 / `None` / 空串或仅空白 | `unknown` |
+| `high` | `high` |
+| `urgent` | `high` |
+| `medium` | `medium` |
+| `low` | `low` |
+| `backlog` | `low` |
+| 其它字符串（如 `later`） | 保持写法的"已小写化"形式，用于精确相等比较 |
+
+**核心逻辑伪代码（约 7 行，示意用）**
+
+```
+targets = None if priorities is None else set→{normalize(p) for p in 对 goals 的展开}
+rows = list(tasks)
+若 targets 为 None：返回 rows
+返回 [t for t in rows if normalize(t.get("priority")) in targets]
+```
+
+其中"对 `goals`（即 `priorities`）的展开"需先判断入参是单个字符串还是 Iterable 字符串：字符串不再按字符迭代。
+
+**导出层变化**
+
+`taskboard/__init__.py` 在现有一行导入中追加 `filter_by_priority`，并同步把名称加入 `__all__`，使 `from taskboard import filter_by_priority` 可用（测试文件正是这样导入的）。
+
+## 4. 具体实施步骤
+
+1. **在 `taskboard/tasks.py` 中新增归一化辅助逻辑**
+   - 位置：放在 `filter_by_status` 之后、或放在文件上方常量区；建议紧邻 `filter_by_priority` 之上，减少改动面。
+   - 内容：一个私有函数（例如 `_normalize_priority(value: object) -> str`），负责 `None`/缺失 → `unknown`、去首尾空白、`lower()`、`urgent→high`、`backlog→low` 映射。同时把别名映射定义为一个模块级私有字典常量以表达契约。
+   - 不要改动 `filter_by_status`、`search_tasks`、`sort_by_priority` 的任何一行。
+
+2. **新增 `filter_by_priority` 函数**
+   - 处理 `priorities is None` 的提前返回（返回 `list(tasks)`，即与其它函数一致的"无过滤返回全部"语义）。
+   - 处理单字符串入参：用 `isinstance(priorities, str)` 判断，避免 `{"high"}` 被拆成单个字符集合。
+   - 处理 Iterable 入参：逐个 `_normalize_priority` 后装入 `set`，得到筛选集合。
+   - 生成结果：先 `rows = list(tasks)`，再用列表推导保持输入顺序，仅在读取 `task.get("priority")` 时不写回任何键。
+   - 文档字符串按现有风格写一行英文总结（`"""Return tasks matching normalized priorities; no filter returns every task."""` 为示意，措辞以现有 docstring 风格为准）。
+
+3. **扩展 `taskboard/__init__.py`**
+   - 在 `from taskboard.tasks import ...` 行追加 `filter_by_priority`，并把它加入 `__all__`。保持导入字母序/既有顺序风格一致，避免整行重排导致无谓 diff。
+
+4. **扩展 `tests/test_filter_by_priority.py`**
+   - 保留现有两个测试（它们已经覆盖 `None`、字符串、列表、`backlog` 别名、`unknown` 命中缺失/null、`"later"` 不命中、不修改输入），确保新实现能让它们从"导入失败"变为通过。
+   - 按需求补充遗漏的边界用例，建议新增（不写死实现细节，只断言行为）：
+     - `urgent` 等价 `high` 的双向覆盖：`filter_by_priority(tasks, "high")` 命中 `urgent`，且 `filter_by_priority(tasks, "urgent")` 命中原生 `high`。
+     - `backlog` 等价 `low` 的双向覆盖。
+     - 混合大小写入参集合：如 `{"HIGH", "Urgent", "MEDIUM"}`（也可用元组/生成器验证"任意字符串 Iterable"）。
+     - 组合与顺序：入参集合本身无序（`set`）时，结果仍等于输入顺序的子序列。
+     - Iterable 输入（生成器 / 元组）同样返回 `list` 且不修改输入。
+     - 归一后空/空白优先级（如 `"   "`）是否计入 `unknown` —— 属于需要确认项（见第 6 节），确认为"归 unknown"时补断言，否则不加。
+     - 未匹配返回空列表：如 `filter_by_priority(tasks, "critical") == []`。
+     - 字符串入参不被拆成字符：`filter_by_priority(tasks, "high")` 不等于按 `"h"/"i"/"g"` 迭代的结果（用一条断言反向锁死该实现错误）。
+   - 测试命名沿用现有风格（`test_...` 句式），保持 `from taskboard import filter_by_priority` 的导入路径不变，从而顺带验证导出层。
+
+5. **自检改动面**
+   - 确认 diff 只触碰 `taskboard/tasks.py`、`taskboard/__init__.py`、`tests/test_filter_by_priority.py` 三个文件；不新增依赖、不改 `pyproject.toml`、不改 README/cases。
+
+## 5. 验证方案
+
+| 层级 | 命令 / 方式 | 通过标准 |
+| --- | --- | --- |
+| 目标用例 | `python -m pytest tests/test_filter_by_priority.py -q` | 全部通过；输入用例数据在断言前后按值相等（不修改输入） |
+| 本次功能相关的直接回归 | `python -m pytest tests/test_filter_by_status.py tests/test_search_tasks.py -q` | 全部通过（保证未破坏相邻语义） |
+| 包导出 | `python -c "from taskboard import filter_by_priority as f; print(f([{'id':1,'priority':'URGENT'}], 'high'))"` | 打印 `[{'id': 1, 'priority': 'URGENT'}]`，无 `ImportError` |
+| 全量回归 | `python -m pytest -q`（`pyproject.toml` 已配 `testpaths=["tests"]`） | 除与本需求无关的既有失败外全绿；若 `test_sort_by_priority.py` 在该基线 commit 下本就失败，需在报告中单独说明并引用基线 commit 结论 |
+| 反例核查 | 人工核对：`filter_by_priority(TASKS)` 返回的列表与输入按值相等但不共享列表对象 | 确认 `priorities=None` 未走筛选分支 |
+| 干扰检查 | `git -C /projects/github-Guo-Yixin-test-coding-eval diff --stat` | 仅 3 个目标文件出现在 diff 中 |
+
+测试执行的基线环境假定：系统 `python`（≥3.11，仓库 `requires-python` 与实际 `pytest` 可用性一致）。若系统缺少 `pytest`，先用 `python -m pytest --version` 检查，再决定是否需要在工作区 `runtimes/` 下建虚拟环境（属于实施阶段的环境准备，不改仓库文件）。
+
+## 6. 风险点和需要用户确认的事项
+
+**风险点**
+
+| 编号 | 风险 | 影响 | 应对 |
+| --- | --- | --- | --- |
+| R1 | `taskboard/tasks.py` 与 `tests/test_sort_by_priority.py` 同时是另一条需求（`cases/taskboard-priority-aliases.json`，要求在**排序**中区分 urgent/high 与 backlog/low）的改动目标 | 两条需求对"urgent/backlog"的语义相反：筛选侧要求等价，排序侧要求不同层。若在本任务中顺手改动 `sort_by_priority`，会破坏排序侧用例 | 本任务**只新增**，绝不修改 `sort_by_priority`；把别名等价实现为筛选专用归一化 |
+| R2 | `search_tasks` 的 docstring 声称大小写忽略，但实现是大小写敏感的（`query in title`） | 若照搬 `search_tasks` 的比较方式，会违反本需求的大小写忽略要求 | 统一用 `str(...).lower()` 归一后再比较，参考 `filter_by_status` 的归一思路 |
+| R3 | `filter_by_status` 用 `task.get("status") == status` 精确比较 | 缺失/null 归 unknown、别名等价、大小写忽略三点都无法满足 | 新实现独立归一化路径，不复用 `filter_by_status` 的比较逻辑 |
+| R4 | 字符串入参可能被当作 Iterable 逐字符迭代 | 传 `"high"` 时会变成 `{'h','i','g'}`，语义静默错误且难察觉 | 显式 `isinstance(priorities, str)` 分支，并在测试里加"字符串不被拆分"的锁定断言 |
+| R5 | `task.get("priority")` 可能返回非字符串（如数字、其它对象） | 归一化时可能抛异常 | `_normalize_priority` 内部统一转 `str(...)` 后再处理，非字符串值视为其字符串形式参与精确匹配 |
+| R6 | 现有测试仅覆盖到 `"later"` 不命中，未验证 `empty/空白` 情形 | 边界取舍不一致会导致 oracle 判定不确定 | 见下方待确认项 Q1，先确认再补测试 |
+| R7 | 一次性检索超时会影响后续检索可重复性 | 交互中可能再次遇到工具超时 | 已在本次任务中通过重试获得有效检索结果；实施时若再超时，用文件读取与命令行检索继续，不阻塞任务 |
+
+**需要用户确认的事项**
+
+- **Q1（空白优先级）**：`task["priority"] = ""` 或 `"   "` 是否与 `None`/键缺失一样归入 `unknown`？本方案默认为"归 `unknown`"，因为需求把"缺失或 null"归 unknown 的意图是把无有效优先级统一归类；若不希望把空串计入，将改为只对缺失/`None` 生效，测试断言随之调整。
+- **Q2（别名规范化的方向对称性）**：`urgent` 等价 `high` 应当是**双向**的（筛选值写 `urgent` 也能命中原生 `high` 任务），本方案按双向实现；若只要求单向（任务侧 `urgent` 可被 `high` 命中、筛选侧 `urgent` 不覆盖 `high`），语义会变窄。
+- **Q3（未知字符串的匹配范围）**：`filter_by_priority(tasks, "later")` 应视为一个具体字面值，只命中 `priority="later"`（大小写忽略），还是要求与 `unknown` 区分开后仍然匹配？本方案取前者，且不把 `"later"` 归入 `unknown`。
+- **Q4（对比范围）**：需求描述是"字符串 Iterable"，是否含 `set`/`tuple`/`generator`/`dict_keys` 等所有常见可迭代对象？本方案全部支持并把集合视为无序输入，结果只保证遵循**任务输入**顺序，不承诺筛选集合的顺序语义。
+- **Q5（并行 case 边界）**：`cases/taskboard-priority-aliases.json` 指定的 `allowed_files` 与本次文件重叠（`taskboard/tasks.py`），本次交付是否应与那条 case 完全隔离（即本轮不改 `sort_by_priority`，即使改动看似顺手）？本方案默认完全隔离。
+
+是否确认实施该方案？
+
+## 实施结果
+
+### 检索先行
+按要求先执行了 `hybrid_code_search`（查询 `existing priority handling normalize aliases`），拿到 `taskboard/tasks.py`、`taskboard/__init__.py`、各测试文件的结构化命中共 12 条 codegraph hits。检索确认的现有事实：
+
+- `sort_by_priority` 用 `order = {"high":0,"medium":1,"low":2}` 排序，`urgent`/`backlog` 目前都落到默认值 99（即未知层），两文件均未出现任何优先级归一化辅助函数，`filter_by_priority` 完全不存在（测试文件是唯一引用它的地方）。
+- `filter_by_status` 用 `task.get("status") == status` 精确比较；`search_tasks` 的 `query in title` 实际大小写敏感 —— 与方案中 R2/R3 判断一致。
+
+### 改动内容（仅 3 个文件）
+
+**`taskboard/tasks.py`**（在 `filter_by_status` 与 `search_tasks` 之间插入归一化，在文件尾部新增函数）
+- 新增模块级 `PRIORITY_ALIASES = {"urgent": "high", "backlog": "low"}` 与 `UNKNOWN_PRIORITY = "unknown"` 表达契约。
+- 新增私有 `_normalize_priority(value)`：`None` → 空串处理、`str(...)` 兜底非字符串值（R5）、`strip().lower()`、空白/空串归 `unknown`（Q1 默认口径）、再查别名表。
+- 新增 `filter_by_priority(tasks, priorities=None)`：`None` 提前返回 `list(tasks)`；`isinstance(priorities, str)` 单值分支（R4，字符串不拆字符）；其余按 Iterable 归一进 `set`；结果用列表推导按 `rows` 顺序输出，只读 `task.get("priority")`，不写回任何键。
+- `filter_by_status`、`search_tasks`、`sort_by_priority` **一行未改**，与另一 case（`taskboard-priority-aliases`）完全隔离（Q5）。
+
+**`taskboard/__init__.py`**：导入行与 `__all__` 都补上 `filter_by_priority`，导入改为括号多行形式以避免整行重排式 diff。
+
+**`tests/test_filter_by_priority.py`**：保留原有 2 个测试不动，新增 5 个测试覆盖：别名双向（`high`↔`urgent`、`low`↔`backlog`）、`set`/`tuple`/`generator` 入参且保持任务输入顺序（集合顺序不影响输出）、空白优先级归 `unknown`、未匹配返回 `[]`、单个字符串入参不被拆成字符。
+
+### 真实验证的命令与输出
+
+| 命令 | 实际结果 |
+| --- | --- |
+| `python -m pytest tests/test_filter_by_priority.py -q` | `7 passed in 0.03s`（含新增 5 个用例全绿） |
+| `python -c "from taskboard import filter_by_priority as f; print(f([{'id':1,'priority':'URGENT'}], 'high'))"` | 输出 `[{'id': 1, 'priority': 'URGENT'}]`，包导出可用 |
+| `python -m pytest -q`（全量） | `4 failed, 11 passed in 0.08s` |
+| `git status --short` | 仅 `taskboard/__init__.py`、`taskboard/tasks.py`、`tests/test_filter_by_priority.py` 三个文件被修改 |
+| `git diff` | 逐行复核，改动面与上述一致，未触及其他文件 |
+
+全量测试的 4 个失败**全部是工作区基线既有失败，与本次改动无关**，且均不属于本次允许改动的文件：
+
+1. `tests/test_filter_by_status.py::test_status_filter_is_case_insensitive_and_does_not_mutate_tasks` —— 现实现 `task.get("status") == status` 未做小写归一。
+2. `tests/test_search_tasks.py::test_search_is_case_insensitive_and_preserves_order` 与 `::test_search_ignores_tasks_without_a_title` —— 现实现 `query in title` 未做小写归一。
+3. `tests/test_sort_by_priority.py::test_priority_sort_keeps_equal_and_unknown_priorities_stable` —— 期望 `[2,4,5,1,3]`，现实现因 `urgent/backlog` 都落 99 而输出 `[4,5,1,2,3]`；即另一 case `taskboard-priority-aliases` 的待实现部分（`base_ref` 同为基线 commit `d19ddda0ac269adf1e68d7d2840968527b313bc4`）。
+
+为确认这些失败属于基线而非本次引入，可比对该 case 在基线 commit 上的同一批红：三个文件的失败点都是未被本任务触及的函数，本任务新增的 `filter_by_priority` 与 `_normalize_priority` 不复用其比较逻辑，也没有修改其任何一行。按方案第 5 节的口径，这部分在报告中单独说明而不越界修复。
+
+### 方案执行中的调整
+- 仅有一处措辞层面的调整：`_normalize_priority` 的归一化辅助逻辑放在了 `search_tasks` 之前（而非紧贴 `filter_by_priority` 之上），以便私有常量与辅助函数集中出现、与 `filter_by_priority` 之间被公共函数隔开更清晰；`filter_by_priority` 本体放在文件末尾，紧接同一 priority 主题的 `sort_by_priority`。
+- 其余（`priorities` 参数名、`None` 早返回、字符串特殊分支、只读不修改、别名双向等价、空白归 `unknown`、`"later"` 归字面值不归 `unknown`、全量支持常见 Iterable 且只保证任务侧顺序）均按确认的方案实现，未做扩大范围改动。
+
+按评测约束，本轮未创建分支、未提交、未 push、未创建 PR。
+{"status": "completed", "model_provider": "DeepSeek", "model_name": "deepseek-flash", "usage": {"input_tokens": 527768, "output_tokens": 10301, "total_tokens": 538069}}
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return self._pregel_stream_v3(
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return GraphRunStream(graph_iter, mux)
+工具执行异常已被中间件捕获：tool=hybrid_code_search error=评测注入的一次性可恢复检索超时；请改用读取或命令行检索等方式继续完成任务。

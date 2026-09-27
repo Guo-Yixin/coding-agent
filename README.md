@@ -2,354 +2,141 @@
 
 # CODING
 
-### 一个把“读懂仓库、编写代码、验证结果、提交交付”串成完整流程的 AI 编程 Agent
+### A repository-aware coding agent with a reviewable engineering loop.
 
-基于 DeepAgents 与 LangGraph 构建，提供本地 Web 工作台、实时运行轨迹、人工审批、可恢复会话，以及 GitHub / Gitee 仓库协作。
+Plan, search, implement, test, review, and deliver changes through a streaming workspace—with persistent sessions and reproducible agent evaluations.
 
-[快速开始](#快速开始) · [功能演示](#功能演示) · [Agent Eval](#agent-eval) · [系统架构](#系统架构) · [配置说明](#配置说明) · [项目文档](#项目文档)
+[English](README.md) · [简体中文](README.zh-CN.md) · [Quick start](#quick-start) · [Architecture](#architecture) · [Agent Eval](#agent-eval)
 
 [![Python](https://img.shields.io/badge/Python-3.14%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Vue](https://img.shields.io/badge/Vue-3-42B883?logo=vuedotjs&logoColor=white)](https://vuejs.org/)
-[![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-5b7fff.svg)](LICENSE)
 
 </div>
 
----
+<p align="center">
+  <a href="assets/demo/coding-agent-demo.mp4">
+    <img src="assets/demo/completed-github-pr-task.png" alt="Watch CODING complete a repository task and prepare a pull request" width="92%">
+  </a>
+</p>
+<p align="center"><a href="assets/demo/coding-agent-demo.mp4">▶ Watch the 89-second coding workflow demo</a></p>
 
-## CODING 是什么
+## What is CODING?
 
-CODING 是一个面向真实 Git 仓库的 AI Coding Agent。你可以在浏览器工作台里选择 GitHub 或 Gitee 仓库，用自然语言描述分析或编码任务；Agent 会读取仓库、制定计划、执行工具、展示过程，并在需要时等待人工确认。
+CODING is a web-based AI coding agent for real Git repositories. It turns a request into a traceable workflow: understand the task, inspect the code, propose a plan, wait for approval when needed, edit and test in a repository workspace, then present the diff and delivery status.
 
-它把任务执行过程做成可追踪、可恢复的会话：计划和工具调用以实时事件呈现，运行状态与对话可持久化；编码任务在独立分支上完成，并可继续创建 Pull Request。
+## Highlights
 
-```text
-提出需求 → 分析仓库 → 展示计划 → 人工审批 → 分支开发 → 测试验证 → 查看变更 → 创建 PR
-```
-
-## 功能演示
-
-下面的截图来自 CODING 实际工作台和 GitHub / Gitee 仓库示例。截图展示了运行状态、审批、代码输出及交付结果。
-
-### 运行轨迹与任务进度
-
-任务期间可以查看已完成步骤、当前步骤和工具执行记录，完成后回看 Agent 如何从仓库分析推进到最终交付。
-
-![CODING 任务运行轨迹与步骤进度](assets/demo/run-trace.png)
-
-### 实施计划与人工审批
-
-遇到需要明确范围的改动时，Agent 展示实施方案，并等待用户选择确认、调整方案或拒绝。审批前，分析和计划阶段不会代替用户启动编码实施。
-
-![实施方案审批卡片](assets/demo/approval-plan.png)
-
-### 长会话上下文与压缩
-
-会话可以从持久化状态中恢复；长任务可调用 `compact_conversation` 整理对话上下文，降低历史膨胀对后续推理的影响。
-
-![长会话中的上下文整理与分析记录](assets/demo/context-and-compaction.png)
-
-### 代码块、验证输出与完成结果
-
-工作台会格式化展示 Markdown、代码块与验证结果。任务完成消息可以包含变更摘要、测试状态和 Pull Request 链接，方便直接检查交付。
-
-![代码块与测试验证记录](assets/demo/code-block-and-tests.png)
-
-![编码任务完成及 GitHub Pull Request 结果](assets/demo/completed-github-pr-task.png)
-
-### GitHub 仓库协作
-
-通过仓库选择器绑定 GitHub 仓库。Agent 可读取仓库与 PR 上下文，在任务分支提交变更，并调用 GitHub API 创建或复用 PR。
-
-![GitHub 示例仓库](assets/demo/github-repository.png)
-
-### Gitee 仓库协作
-
-同一工作流支持 Gitee 仓库，包括仓库读取、分支开发和 Pull Request 交付。
-
-![Gitee 示例仓库](assets/demo/gitee-repository.png)
-
-### Gitee Coding Agent 项目示例
-
-![Gitee Coding Agent 仓库读取演示](assets/demo/coding-agent-demo.png)
-
-## 能力一览
-
-| 能力 | 实现方式 |
+| Capability | What it does |
 | --- | --- |
-| 仓库分析与编码 | DeepAgents 工具调用，结合本地受控工作区、仓库文件与 Git 状态完成任务 |
-| GitHub / Gitee | 解析两种仓库地址，读取仓库、Issue 和 PR 上下文，并支持评论、Issue 和 PR 等协作操作 |
-| 运行轨迹与流式消息 | 后端将 Agent 事件转换为前端可消费的实时事件，展示计划、工具运行和任务状态 |
-| 人工介入 | LangGraph interrupt 暂停当前任务，收到用户答复后从 checkpoint 恢复执行 |
-| 会话恢复 | LangGraph checkpoint 保存对话和图状态；业务 Store 保存任务、运行和界面所需状态 |
-| 上下文管理 | 仓库长期记忆注入、消息清理和 `compact_conversation` 上下文整理工具 |
-| 安全执行 | 工作区边界、命令守卫、输入清理和只读任务写操作拦截 |
-| 代码审查 | Reviewer 子 Agent、评审规则与 finding 工具，辅助检查变更并记录审查发现 |
-| 持久化后端 | 本地默认 SQLite；可配置 PostgreSQL 保存 checkpoint、LangGraph Store 和业务数据 |
-| Agent Eval | 固定 Agent 与目标仓库版本，隔离运行真实编码任务，执行目标/回归/独立验收，并记录检索、工具、Token、耗时、补丁和报告 |
+| **Multi-agent workflow** | A primary agent coordinates work and can delegate analysis or read-only code review to specialist subagents. The review-to-fix loop keeps implementation and review responsibilities distinct. |
+| **Multi-layer intent routing** | Structured LLM classification with a keyword-rule fallback routes planning, coding, review, QA, and related tasks; execution can then delegate subagents and choose tools for the next action. |
+| **Repository intelligence** | Hybrid CodeGraph and text search, GitHub/Gitee context tools, and repository-scoped memory help the agent reuse project structure and decisions across sessions. |
+| **Guarded execution** | A controlled file backend, path validation, tool-input checks, normalized tool errors, and run limits constrain agent actions. OpenSandbox is available for isolated Eval execution. |
+| **Streaming and recovery** | FastAPI streams a stable event protocol to the Vue workspace; LangGraph checkpoints and persistent task state support session recovery. |
+| **SQLite and PostgreSQL** | SQLite is the local default. PostgreSQL can persist application state and checkpoints for shared deployments. |
+| **Agent Eval** | Fixed agent and target revisions, isolated candidate workspaces, target/regression/oracle checks, retrieval and tool traces, token/latency metrics, patches, and HTML reports. |
 
-## 系统架构
+## Architecture
 
-```mermaid
-flowchart LR
-    U[用户] --> UI[Vue 3 工作台]
-    UI -->|HTTP / SSE| API[FastAPI API]
-    API --> RT[任务运行时]
-    RT --> AG[DeepAgents + LangGraph]
-    AG --> MW[中间件 / 工具 / Reviewer 子 Agent]
-    MW --> WS[受控本地仓库工作区]
-    MW --> SCM[GitHub / Gitee API]
-    RT --> CP[(LangGraph Checkpoint)]
-    RT --> ST[(LangGraph Store 与业务 Store)]
-    CP --> DB[(SQLite 默认 / PostgreSQL 可选)]
-    ST --> DB
-```
+Solid borders show the current application and Eval paths. The dashed area is the documented scale-out target; it is not the default runtime topology.
 
-### 技术栈与依赖
+<p align="center"><img src="assets/architecture-en.svg" alt="CODING architecture" width="100%"></p>
 
-| 层次 | 主要依赖 |
-| --- | --- |
-| 后端 API | Python、FastAPI、Uvicorn |
-| Agent 与编排 | DeepAgents `0.6.11`、LangChain、LangGraph |
-| 模型接入 | `langchain-openai`，通过 DeepSeek 的 OpenAI 兼容 API 调用模型 |
-| 会话与业务数据 | SQLite 默认；可选 PostgreSQL、LangGraph checkpoint/store 适配器与 Psycopg |
-| 前端 | Vue 3、Vite、Pinia、Axios、Markdown-It、DOMPurify |
-| 可选沙箱 | OpenSandbox Python SDK（仅 sandbox 评测/执行需要） |
-
-后端依赖及版本范围以 [`pyproject.toml`](pyproject.toml) 为准，前端版本由 [`ui/package.json`](ui/package.json) 与 [`ui/yarn.lock`](ui/yarn.lock) 管理。
-
-### 代码目录
-
-| 路径 | 职责 |
-| --- | --- |
-| `agent/app.py` | FastAPI 服务入口与 API 路由注册 |
-| `agent/api/` | 对话任务、Dashboard、历史和状态等 HTTP API |
-| `agent/core/` | Agent 组装、任务调度、流式事件、checkpoint、持久化与工作区准备 |
-| `agent/backends/` | 本地 Shell、工作区和命令权限控制 |
-| `agent/tools/` | GitHub、Gitee、代码检索、人工介入、网页读取等 Agent 工具 |
-| `agent/store/` | SQLite / PostgreSQL 业务状态存储与迁移支持 |
-| `agent/evals/`、`evals/` | Eval 执行逻辑与评测案例 |
-| `ui/src/` | Vue 3 + Vite 前端工作台、会话状态和界面组件 |
-| `scripts/` | 启动、数据迁移、评测、部署检查和验证脚本 |
-| `docs/` | 架构、运行时、前端、部署与项目学习文档 |
-
-## 快速开始
-
-### 环境要求
-
-- Python 3.14 或更高版本（见 [`pyproject.toml`](pyproject.toml)）
-- Node.js 与 Yarn Classic（前端依赖由 `ui/yarn.lock` 锁定）
-- DeepSeek API Key
-- GitHub 或 Gitee Token：需要读取私有仓库或进行对应平台写操作时配置
-
-当前 Agent 的 DeepAgents 运行时代码适配 `deepagents==0.6.11`。安装时请固定此版本；升级到 0.7 或更高版本前，需要先完成 backend 与 permission API 兼容改造。
-
-### 1. 克隆并安装后端
-
-```bash
-git clone https://github.com/Guo-Yixin/coding-agent.git
-cd coding-agent
-
-python -m venv .venv
-```
-
-Windows PowerShell：
-
-```powershell
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -e . "deepagents==0.6.11"
-```
-
-macOS / Linux：
-
-```bash
-source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -e . "deepagents==0.6.11"
-```
-
-### 2. 配置模型、仓库与工作区
-
-复制环境模板：
-
-```powershell
-Copy-Item .env.example .env
-```
-
-macOS / Linux：
-
-```bash
-cp .env.example .env
-```
-
-编辑 `.env`，至少填入模型密钥，并设置 Agent 使用的工作区目录：
-
-```dotenv
-DEEPSEEK_API_KEY=你的密钥
-DEEPSEEK_BASE_URL=https://api.deepseek.com
-MAIN_MODEL=deepseek-flash
-
-# Agent 拉取和操作的仓库位于该目录下的 projects/ 子目录
-AI_WORKSPACE_ROOT=./workspace
-
-# 根据实际使用的平台填写；没有配置 Token 时只可访问公开且无需认证的内容
-GITHUB_TOKEN=你的GitHub令牌
-GITEE_TOKEN=你的Gitee令牌
-```
-
-`.env.example` 还包含 API 地址、默认仓库、日志、Dashboard 和 PostgreSQL 等选项。请勿将真实密钥提交到 Git。
-
-### 3. 启动后端
-
-在仓库根目录运行：
-
-```bash
-python -m uvicorn agent.app:app --host 127.0.0.1 --port 2024
-```
-
-API 文档地址：<http://127.0.0.1:2024/docs>。
-
-Windows 也可以运行 `scripts/start_backend.cmd`；Linux 可运行 `scripts/start_backend.sh`。脚本默认监听 `0.0.0.0`，用于远程访问前应先按部署环境配置网络访问控制。
-
-### 4. 启动前端
-
-新开一个终端：
-
-```bash
-cd ui
-yarn install --frozen-lockfile
-yarn dev
-```
-
-如果尚未安装 Yarn Classic，可先运行 `npm install --global yarn`。
-
-打开 <http://127.0.0.1:3000>。Vite 会将 `/dashboard/api` 请求代理到 `http://127.0.0.1:2024`；如后端使用其他地址，可通过 `VITE_DASHBOARD_API_BASE_URL` 指定代理目标。
-
-## 配置说明
-
-### 必要配置
-
-| 变量 | 用途 |
-| --- | --- |
-| `DEEPSEEK_API_KEY` | 调用 DeepSeek 模型的凭证 |
-| `DEEPSEEK_BASE_URL` | 模型 API 地址 |
-| `MAIN_MODEL` | Agent 使用的主模型名称 |
-| `AI_WORKSPACE_ROOT` | 隔离项目源码的 Agent 工作区根目录；仓库克隆到其 `projects/` 下 |
-
-### 可选配置
-
-| 变量 | 用途 |
-| --- | --- |
-| `GITHUB_TOKEN` | GitHub 仓库、Issue、PR 等 API 操作 |
-| `GITEE_TOKEN` | Gitee 仓库、Issue、PR 等 API 操作 |
-| `DEFAULT_REPO_PROVIDER`、`DEFAULT_REPO_URL` | 新会话的初始仓库平台与仓库地址 |
-| `PERSISTENCE_BACKEND` | 选择 `sqlite` 或 `postgres`；默认根据 `POSTGRES_DSN` 自动选择 |
-| `POSTGRES_DSN` | PostgreSQL 连接串；配置后可用于共享持久化 |
-| `CHECKPOINT_DB_PATH` | SQLite checkpoint 文件位置 |
-| `STORE_DB_PATH` | SQLite 业务 Store 文件位置 |
-| `LANGGRAPH_STORE_DB_PATH` | SQLite LangGraph Store 文件位置 |
-| `LOCAL_SHELL_ALLOW_NETWORK` | 控制本地 Shell 命令是否允许网络访问 |
-| `AGENT_MAX_TOOL_CALLS`、`AGENT_MAX_SECONDS` | 每次运行的工具调用数与时长上限 |
-
-完整配置项及示例值见 [`.env.example`](.env.example)。没有 PostgreSQL DSN 时，应用默认使用本地 SQLite。
-
-## 开发与验证
-
-安装测试工具并运行单元测试：
-
-```bash
-pip install pytest
-python -m pytest tests/unit -q
-```
-
-前端生产构建：
-
-```bash
-cd ui
-yarn build
-```
-
-项目还提供以下验证入口：
-
-```bash
-python scripts/run_eval.py --mode fake --case-dir evals/smoke
-python scripts/verify_backend.py
-python scripts/verify_streaming_runtime.py
-```
-
-`fake` Eval 使用确定性模拟运行，不依赖真实模型；`real` 模式需要可用的模型配置；`sandbox` 模式还需要额外安装并启动 OpenSandbox。
+The deployment design describes **3 Agent Workers and 2 ASGI nodes**, with estimates of about **170 peak concurrent requests** and **20–30 concurrent coding/review tasks**. Treat these as design capacity estimates: this repository does not include a load-test report validating those figures. The Redis queue, repository lock, and event stream are shown as target components, not current application services.
 
 ## Agent Eval
 
-CODING 提供可复跑的 Agent Eval：每道题从固定目标提交创建独立项目副本，启动固定版本的真实 Agent，采集检索、工具、Token、耗时和补丁，并执行目标测试、回归测试与独立隐藏验收。框架还提供应用 HTTP/SSE 路径、SQLite 隔离、自包含 HTML 报告、脱敏导出和多轮对比。
+The latest fixed suite evaluated CODING against the independent [`test-coding-eval`](https://github.com/Guo-Yixin/test-coding-eval) task repository. Agent revisions are recorded per case; the report uses DeepSeek `deepseek-flash` and runner v4.
 
-评测框架版本与被测 Agent 版本分别记录。当前能力报告把 Agent 固定在 `710862e`，目标仓库为独立的 [`test-coding-eval`](https://github.com/Guo-Yixin/test-coding-eval)；fake 运行不会作为真实 Agent 成绩。
+<p align="center">
+  <a href="docs/agent-eval/evidence/2026-09-27-final-suite/report.html">
+    <img src="assets/eval/final-suite-summary.png" alt="Agent Eval report: 10 of 10 cases passed and both end-to-end gates passed" width="100%">
+  </a>
+</p>
 
-### 首批真实评测结果
+| Fixed-suite measure | Result |
+| --- | ---: |
+| Coding cases | **10 / 10 passed** |
+| Target, regression, and oracle tests | **10 / 10 passed each** |
+| Patch application / retrieval hit@k / tool recovery | **100% / 1.0 / 100%** |
+| Provider tokens / summed agent latency | **6,963,895 / 10.2 min** |
+| Application and sandbox end-to-end gates | **2 / 2 passed** |
 
-| 评测集 | 结果 | Agent 耗时 | Provider Token | 报告 |
-| --- | --- | ---: | ---: | --- |
-| 5 道独立编码题 | 1/5 通过；5/5 回归通过；检索命中 1.0 | 279.9 秒 | 3,511,041 | [中文 HTML](docs/agent-eval/evidence/agent-capability-5case/report.html) · [JSON](docs/agent-eval/evidence/agent-capability-5case/report.json) |
-| 应用 API 端到端 | HTTP/SSE、计划审批恢复、隔离 SQLite、补丁及三类测试通过 | 69.1 秒 | 675,853 | [中文 HTML](docs/agent-eval/evidence/application-api-e2e/report.html) · [JSON](docs/agent-eval/evidence/application-api-e2e/report.json) |
-| 应用浏览器端到端 | 浏览器提交、计划审批、Agent 编码、页面完成状态、隔离 SQLite 和三类测试通过 | 98.7 秒 | 1,813,740 | [中文 HTML](docs/agent-eval/evidence/application-browser-e2e/report.html) · [JSON](docs/agent-eval/evidence/application-browser-e2e/report.json) |
-| 应用 API 计划拒绝 | 计划内容 5/5、pending → rejected、拒绝后工作区无改动、target/regression 通过 | 33.2 秒 | 163,761 | [中文 HTML](docs/agent-eval/evidence/application-plan-rejection-e2e/report.html) · [JSON](docs/agent-eval/evidence/application-plan-rejection-e2e/report.json) |
-| PostgreSQL 持久化专项 | 一次性本地容器；三类持久层、幂等 schema、回滚、重连、审计与清理通过 | 6.5 秒 | 不适用 | [中文 HTML](docs/agent-eval/evidence/postgres-persistence-e2e/report.html) · [JSON](docs/agent-eval/evidence/postgres-persistence-e2e/report.json) |
-| OpenSandbox 隔离冒烟 | 真实容器；凭证/SQLite 过滤、路径穿越拒绝、超时、补丁、三类验收和清理均通过 | 15.6 秒 | 不适用 | [中文 HTML](docs/agent-eval/evidence/opensandbox-isolation-smoke/report.html) · [JSON](docs/agent-eval/evidence/opensandbox-isolation-smoke/report.json) |
+Open the [full coding-suite report](docs/agent-eval/evidence/2026-09-27-final-suite/report.html), [per-case Agent and target SHAs](docs/agent-eval/evidence/2026-09-27-final-suite/provenance.md), [OpenSandbox real-agent report](docs/agent-eval/evidence/2026-09-27-final-suite/opensandbox-agent/report.html), or [PostgreSQL application E2E report](docs/agent-eval/evidence/2026-09-27-final-suite/application-postgres-e2e/report.html). The score describes this fixed benchmark, agent revisions, model, and run configuration; it is not a universal coding-success guarantee.
 
-五题 suite 的失败结果也完整保留；这组测量显示 Agent 在该固定小型题库中通过 1/5，不能解读为通用编程成功率。应用 API 和浏览器结果分别衡量后端 API 链路与前后端交互链路，不能与五题直接 Agent suite 混成一个成功率。可在[应用链路对比页](docs/agent-eval/evidence/application-e2e-comparison.html)对照 API 与浏览器运行，也可在[首轮 suite 对比页](docs/agent-eval/evidence/first-full-suite-comparison.html)查看早期编码题运行。
+## Quick start
 
-每次运行都会在外部输出目录生成机器可读 `report.json`、Markdown `report.md` 和自包含 `report.html`。导出公开证据包时：
+### Requirements
+
+- Python **3.14+**
+- Node.js and Corepack (Yarn Classic 1.22)
+- A DeepSeek API key
+
+### Install and configure
 
 ```powershell
-python scripts/export_eval_report.py `
-  'A:\gyx_cv\coding-agent-eval-runs\runs\<run_id>' `
-  'docs\agent-eval\evidence\<evidence-name>'
+git clone https://github.com/Guo-Yixin/coding-agent.git
+cd coding-agent
+py -3.14 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e . "deepagents==0.6.11"
+corepack prepare yarn@1.22.22 --activate
+Set-Location ui
+yarn install --frozen-lockfile
+Set-Location ..
+Copy-Item .env.example .env
 ```
 
-导出器按 allowlist 收录报告与文本证据，排除项目副本和 SQLite，并脱敏本机路径及常见密钥格式。公开前仍应人工检查证据包。
+Edit `.env` and set at least:
 
-### Run the real benchmark
+```dotenv
+DEEPSEEK_API_KEY=your-deepseek-api-key
+MAIN_MODEL=deepseek-flash
+AI_WORKSPACE_ROOT=C:\coding-agent-workspace
+DASHBOARD_JWT_SECRET=replace-with-a-long-random-secret
+```
+
+Keep `.env` local. Add `GITHUB_TOKEN` or `GITEE_TOKEN` only if you need authenticated access or write operations on those providers. Never commit real keys.
+
+### Start the app
+
+From the repository root, run:
 
 ```powershell
-python scripts/run_eval.py `
-  --dataset 'A:\gyx_cv\test-coding-eval\cases' `
-  --repo 'A:\gyx_cv\test-coding-eval' `
-  --mode real `
-  --env-file 'A:\gyx_cv\coding_agent\.env' `
-  --agent-ref 710862e51e382762de1b3cccf63fdf965d369f4e
+python scripts/start_all.py
 ```
 
-命令要求本地目标仓库包含案例锁定的完整提交。模型配置只读自指定 `.env` 并传给隔离子进程，不会写入报告。每次运行使用 `A:\gyx_cv\coding-agent-eval-runs\runs\` 下的新目录。多份 `report.json` 可用 `python scripts/compare_eval_reports.py --reports <报告1> <报告2> --output <对比.html>` 生成离线对比页。
+Open <http://127.0.0.1:3000>. The API is at <http://127.0.0.1:2024/docs>. Press `Ctrl+C` to stop both services.
 
-### What the first suite proves
+## Database and sandbox
 
-当前已覆盖 Runner 隔离、真实 Agent 编码题、计划审批/拒绝、工具恢复计分、API/SSE 和浏览器应用路径、独立 SQLite、一次性 PostgreSQL 组件集成、真实 OpenSandbox 执行、脱敏可视化和跨报告比较。五题编码 suite 的 Agent 通过率是 1/5，注入工具错误后的恢复率为 0.0；计划拒绝案例为 1/1，通过 API 提交拒绝并验证计划状态与工作区未改动。这些是被测 Agent 在固定案例与配置下的实际成绩。PostgreSQL 专项只证明三个持久化组件可连接一次性本地容器，不等于整个应用的 PostgreSQL 部署验收；OpenSandbox 冒烟题证明了文件过滤、命令执行、补丁采集和容器清理，不等于完整 Agent 在沙箱内编码。完整覆盖边界、运行步骤和阶段状态见 [Agent Eval 设计](docs/AGENT_EVAL.md)、[Runner 可靠性契约](docs/AGENT_EVAL_RELIABILITY.md)与[实施计划](docs/CODING_AGENT_EVAL_COMPLETE_IMPLEMENTATION_PLAN.md)。
+- **SQLite (default):** no extra service is needed for local development; project data is stored under `data/`.
+- **PostgreSQL (optional):** provision a dedicated database and add this to `.env`:
 
-## 持久化与部署
+  ```dotenv
+  PERSISTENCE_BACKEND=postgres
+  POSTGRES_DSN=postgresql://user:password@127.0.0.1:5432/coding_agent_db
+  ```
 
-- **本地开发：** 默认 SQLite，将 checkpoint、LangGraph Store 与业务状态保存在 `data/`。
-- **共享部署：** 设置 `POSTGRES_DSN` 和 `PERSISTENCE_BACKEND=postgres`，由 PostgreSQL 提供共享持久化。
-- **隔离执行：** OpenSandbox 为可选适配器，安装额外依赖 `pip install -e ".[sandbox]"`，并配置 OpenSandbox 服务。
-- **线上部署：** 需要单独配置密钥、数据库、工作区权限、监听地址、网络策略和资源限制。
+  Follow the [deployment guide](docs/CODING_CLOUD_DOCKER_DEPLOYMENT.md) for shared deployments.
+- **OpenSandbox (optional):** install `python -m pip install -e ".[sandbox]"`, start an OpenSandbox service, then configure:
 
-SQLite 到 PostgreSQL 的迁移、Linux 部署与 Docker 方案见下方文档索引。迁移前应备份数据库并检查迁移报告。
+  ```dotenv
+  OPEN_SANDBOX_DOMAIN=https://your-opensandbox-service
+  OPEN_SANDBOX_API_KEY=your-opensandbox-key
+  ```
 
-## 项目文档
+  The current OpenSandbox adapter is used by isolated Eval paths; the regular local app uses its controlled local workspace backend.
 
-- [CODING 核心架构](docs/CODING_AGENT_CORE.md)
-- [运行时与流式输出](docs/CODING_AGENT_RUNTIME_STREAMING.md)
-- [前端环境与 API 配置](docs/CODING_FRONTEND_ENV_SETUP.md)
-- [Linux 部署手册](docs/CODING_LINUX_DEPLOYMENT_RUNBOOK.md)
-- [Docker 云端部署方案](docs/CODING_CLOUD_DOCKER_DEPLOYMENT.md)
-- [GitHub Token 与仓库平台配置](docs/GITHUB_TOKEN_AND_PROVIDER.md)
-- [Agent Eval 与 Harness 说明](docs/CODING_HARNESS_AGENT_EVAL_INTERVIEW_QA.md)
-- [Agent Eval 案例说明](evals/README.md)
+See [`.env.example`](.env.example), [Linux deployment](docs/CODING_LINUX_DEPLOYMENT_RUNBOOK.md), [cloud deployment design](docs/CODING_CLOUD_DOCKER_DEPLOYMENT.md), and [Agent Eval guide](docs/AGENT_EVAL.md) for the complete configuration and operating boundaries.
 
-## 参与贡献
+## Contributing
 
-欢迎通过 Issue 反馈问题和建议，也欢迎提交 Pull Request。提交前请说明改动背景、验证方式和可能影响的模块；涉及 Agent 行为或工具权限的改动，请补充对应测试或 Eval 案例。
+Issues and pull requests are welcome. Describe the problem, the proposed change, and how you verified it. Changes to agent behavior, tools, permissions, persistence, or evaluation should include focused tests or an Eval case. Start with the [project docs](docs/) and open an Issue when the intended behavior needs discussion.
 
-## 许可证
+## License
 
-本项目基于 [MIT License](LICENSE) 发布。
+CODING is released under the [MIT License](LICENSE).
