@@ -101,12 +101,32 @@
 - [x] 建立独立 worktree 和开发分支 `codex/agent-eval-remediation-c69d7cd`。
 - [x] 盘点首轮结果、旧题固定基线和目前缺失的 PG/真实 sandbox 证据。
 - [x] 初步根因：旧 Agent 偶尔把明确实现任务路由到只读 analysis/planning；恢复失败率还有独立遥测与备用策略问题。
-- [ ] 阶段 0 完成：恢复完整配置和追踪根因；环境边界/运行器自检。
-- [ ] 阶段 1 完成：Runner/runtime 可靠性门禁。
-- [ ] 阶段 2 完成：旧五题 5/5 当前 Agent 通过。
-- [ ] 阶段 3 完成：新五题固定、不同且全部通过。
-- [ ] 阶段 4 完成：确定性工具恢复测试通过。
-- [ ] 阶段 5 完成：真实 coding-agent 在 OpenSandbox 中完成任务。
-- [ ] 阶段 6 完成：PostgreSQL 整应用 API/持久化 E2E 通过。
-- [ ] 阶段 7 完成：可视化报告、清理和最终验收。
+- [x] 阶段 0 完成：固定源/目标 SHA、DeepSeek 配置来源、独立运行目录，并确认 Docker、PostgreSQL 和 OpenSandbox 的真实可用性。
+- [x] 阶段 1 完成：Runner/runtime 隔离与失败归因测试；最终 `tests/unit` 为 140 passed、1 skipped。
+- [x] 阶段 2 完成：旧五题最终 5/5；四题来自五题运行，一题因 24 次模型调用上限单独以 32 次上限重跑通过。
+- [x] 阶段 3 完成：新五题最终 5/5；其中 priority 题原始补丁已通过目标/回归测试，发现隐藏验收器把 `urgent` 与 `high` 等价规则写反后，修正验收器并在干净固定目标副本上重放同一补丁，全部验收通过；原始失败报告保留。
+- [x] 阶段 4 完成：CodeGraph 检索错误和 OpenSandbox 命令错误分别做一次故障注入；Agent 看到错误并恢复，适用案例恢复率为 1.0。
+- [x] 阶段 5 完成：真实 DeepSeek coding-agent 在 OpenSandbox 中完成编码、运行测试、导出补丁；注入命令错误后恢复，沙箱资源销毁。
+- [x] 阶段 6 完成：完整应用通过真实 API/SSE 与计划审批，在一次性 PostgreSQL 中持久化；重启后端后恢复读取；Agent 编码使用真实 OpenSandbox；数据库和沙箱均已清理。
+- [x] 阶段 7 完成：合并 10 道题和两项系统门禁的 JSON、中文 Markdown 与 HTML 报告；单测、产物路径、脱敏与资源清理已复核。
+
+## 验收证据与解释
+
+以下运行产物保存在评测输出盘，不提交进源仓库；总报告会将必要的报告、补丁、trace 和门禁证据复制到它自己的相对目录。
+
+| 验收项 | 结果 | 可核验报告/说明 |
+| --- | --- | --- |
+| 旧五题 | 5/5；所有最终 case 的 patch、target、regression、oracle 均通过 | `A:\gyx_cv\coding-agent-eval-runs\runs\remediation-final-suite-<final-sha>\report.html`；输入运行：`remediation-old-five-a6941fb` 与 `remediation-old-status-filter-8c467aa` |
+| 新五题 | 5/5；同样四项验收均通过 | 总报告；新题原始 run：`remediation-new-five-139e970`；priority 题验收器修复后重放：`remediation-new-priority-oracle-rescore-9b07905` |
+| 工具错误恢复 | 适用案例恢复率 1.0；包括检索工具和沙箱命令故障注入 | 总报告每题的恢复字段；真实沙箱证据 `remediation-opensandbox-recovery-9b07905` |
+| OpenSandbox 真实 Agent | 真实模型/工具调用、文件修改、测试、补丁回传、清理通过 | 总报告 `real-opensandbox-agent` 门禁；独立输入报告 `remediation-opensandbox-recovery-9b07905` |
+| PostgreSQL 整应用 E2E | API/SSE、审批、真实 Agent 沙箱编码、一次性 PostgreSQL 写入和后端重启恢复通过 | 总报告 `application-postgres-e2e` 门禁；独立输入报告 `remediation-postgres-opensandbox-final-9b07905` |
+| Runner 单测 | 140 passed、1 skipped；唯一 warning 来自 `google.genai` 依赖弃用提示 | 在开发 worktree 执行 `python -m pytest tests/unit -q` |
+
+### 结果来源的边界
+
+- 10 道编码题由各自真实 DeepSeek 运行结果组成；由于每轮根因修复都要生成新的 Agent runtime 快照，报告逐题记录实际 Agent SHA，不把不同版本伪装成同一 SHA。它证明修复后的题目逐题通过，不代表 10 题均由完全相同二进制快照评测。
+- 旧题 `status-filter` 因第一次运行撞到模型调用上限而单题重跑；旧报告仍保留在运行目录，合并报告选择通过的受控重跑结果。
+- 新题 `filter-by-priority` 的模型原始修改没有因验收器修正而变化。修正的是一处与公开题意和 target test 冲突的 oracle；使用原 Agent 输出补丁，在干净固定目标副本重新应用并运行 target、regression、oracle 和文件范围检查。原始误判报告没有被覆盖。
+- PostgreSQL 与 OpenSandbox 门禁报告来自最新源码 SHA `9b07905ce3a07289d58b9ab0c9a56e2f93656042`。PostgreSQL 用独立随机容器/端口/库；不会把开发库或既有 Dify 容器作为评测目标。
 

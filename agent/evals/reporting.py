@@ -133,8 +133,18 @@ def _html(data: dict[str, Any]) -> str:
         ])
         foot = "本报告通过一次性 PostgreSQL 实例验证项目持久化组件；容器在评测后销毁，未使用开发数据库。"
     else:
+        source_revisions = {
+            str(case.get("metadata", {}).get("provenance", {}).get("agent_source_sha"))
+            for case in cases
+            if case.get("metadata", {}).get("provenance", {}).get("agent_source_sha")
+        }
+        source_value = (
+            next(iter(source_revisions))
+            if len(source_revisions) == 1
+            else "逐题固定版本，见每题来源信息" if source_revisions else config.get("agent_source_sha")
+        )
         identity_meta = (
-            f"<span>Agent 提交：{html.escape(str(config.get('agent_source_sha') or 'unknown'))}</span>"
+            f"<span>Agent 提交：{html.escape(str(source_value or 'unknown'))}</span>"
             f"<span>目标仓库：{html.escape(repo_label)}</span><span>Runner：{html.escape(str(config.get('runner_version', 'unknown')))}</span>"
             f"<span>模型：{html.escape(_model_label(cases))}</span>"
         )
@@ -146,8 +156,13 @@ def _html(data: dict[str, Any]) -> str:
             _metric('总 Token', _number(summary.get('total_tokens'))),
             _metric('总耗时', _duration(summary.get('total_latency_ms'))),
         ])
+        gates = config.get("system_gates", [])
+        if gates:
+            gate_passed = sum(gate.get("status") == "passed" for gate in gates)
+            metrics += _metric("端到端门禁", f"{gate_passed} / {len(gates)}")
         foot = "本页面由 report.json 生成。Token 使用模型服务返回的用量；没有证据时显示为不适用，不会估算。"
     rows = "\n".join(_case_card(case, database_mode=database_mode) for case in cases) or '<p class="empty">No cases were recorded.</p>'
+    system_gates_html = _system_gates(config.get("system_gates", []))
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -162,7 +177,8 @@ def _html(data: dict[str, Any]) -> str:
     .eyebrow {{ color:#c6d1ff; font-size:12px; font-weight:750; letter-spacing:.14em; text-transform:uppercase }} h1 {{ margin:8px 0 6px; font-size:clamp(28px,4vw,42px); line-height:1.1 }}
     .hero p {{ margin:0; color:#e0e7ff }} .meta {{ display:flex; gap:12px 26px; flex-wrap:wrap; margin-top:22px; color:#d1daf9; font-size:13px }}
     .badge {{ display:inline-flex; align-items:center; gap:7px; padding:6px 11px; border:1px solid #ffffff45; border-radius:999px; font-size:12px; font-weight:750; text-transform:uppercase; letter-spacing:.06em }} .badge.good {{ background:#16845b30 }} .badge.bad {{ background:#bd3f4530 }}
-    .grid {{ display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:14px; margin:18px 0 28px }} .metric {{ background:var(--paper); border:1px solid var(--line); border-radius:14px; padding:17px 18px; box-shadow:0 3px 10px #1b2b4a08 }} .metric span {{ display:block; color:var(--muted); font-size:12px; font-weight:650 }} .metric strong {{ display:block; margin-top:5px; font-size:24px; letter-spacing:-.03em }}
+    .grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:14px; margin:18px 0 28px }} .metric {{ background:var(--paper); border:1px solid var(--line); border-radius:14px; padding:17px 18px; box-shadow:0 3px 10px #1b2b4a08 }} .metric span {{ display:block; color:var(--muted); font-size:12px; font-weight:650 }} .metric strong {{ display:block; margin-top:5px; font-size:24px; letter-spacing:-.03em }}
+    .gate-grid {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px }} .gate {{ background:var(--paper); border:1px solid var(--line); border-radius:14px; padding:17px 19px; box-shadow:0 3px 10px #1b2b4a08 }} .gate-head {{ display:flex; align-items:center; justify-content:space-between; gap:10px; font-weight:760 }} .gate-checks {{ margin:9px 0; color:#34415b; font-size:13px }}
     h2 {{ margin:28px 0 12px; font-size:21px }} .case {{ margin:12px 0; overflow:hidden; background:var(--paper); border:1px solid var(--line); border-radius:15px; box-shadow:0 3px 10px #1b2b4a08 }} .case-head {{ display:flex; align-items:center; justify-content:space-between; gap:14px; padding:17px 20px; border-bottom:1px solid var(--line) }} .case-title {{ font-weight:760; overflow-wrap:anywhere }} .status {{ padding:4px 10px; border-radius:999px; font-size:12px; font-weight:750; text-transform:uppercase }} .status.passed {{ color:#106b49; background:#e4f6ed }} .status.failed {{ color:#a52d35; background:#fdebed }}
     .checks {{ display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:9px; padding:16px 20px }} .check {{ border:1px solid var(--line); border-radius:10px; padding:10px 12px }} .check span {{ display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em }} .check strong {{ display:block; margin-top:3px; font-size:14px }} .yes {{ color:var(--green) }} .no {{ color:var(--red) }} .na {{ color:var(--muted) }}
     details {{ border-top:1px solid var(--line); padding:12px 20px }} summary {{ color:var(--blue); cursor:pointer; font-weight:650 }} .details {{ padding-top:8px; color:#34415b }} ul {{ padding-left:20px }} li {{ margin:4px 0 }} code {{ overflow-wrap:anywhere; color:#273c82; background:#eef2ff; padding:2px 5px; border-radius:5px }} a {{ color:var(--blue); text-decoration:none }} a:hover {{ text-decoration:underline }} .empty {{ padding:20px; color:var(--muted) }} .foot {{ margin-top:26px; color:var(--muted); font-size:12px }}
@@ -182,6 +198,7 @@ def _html(data: dict[str, Any]) -> str:
   <section class="grid" aria-label="Run summary">
     {metrics}
   </section>
+  {system_gates_html}
   <h2>案例结果</h2>
   {rows}
   <p class="foot">{html.escape(foot)}</p>
@@ -232,6 +249,29 @@ def _case_card(case: dict[str, Any], *, database_mode: bool = False) -> str:
         details.append(
             "<p><strong>模型</strong>："
             + html.escape(" ".join(str(value) for value in (metadata.get("model_provider"), metadata.get("model_name")) if value))
+            + "</p>"
+        )
+    provenance = metadata.get("provenance", {})
+    if provenance:
+        details.append(
+            "<p><strong>版本来源</strong>："
+            + html.escape(
+                f"Agent {provenance.get('agent_source_sha', 'unknown')} · "
+                f"目标 {provenance.get('target_repo_sha', 'unknown')} · "
+                f"运行 {provenance.get('source_report_id', 'unknown')}"
+            )
+            + "</p>"
+        )
+    oracle_rescore = metadata.get("oracle_rescore", {})
+    if oracle_rescore:
+        details.append(
+            "<p><strong>验收器复核</strong>："
+            + html.escape(
+                f"使用干净目标副本重放补丁；目标测试 {_check(oracle_rescore.get('target_tests_passed'))}，"
+                f"回归测试 {_check(oracle_rescore.get('regression_tests_passed'))}，"
+                f"修正后的隐藏验收 {_check(oracle_rescore.get('hidden_oracle_passed'))}。"
+                f"原始报告 {oracle_rescore.get('source_report_id', 'unknown')} 保留未改。"
+            )
             + "</p>"
         )
     test_behavior = metadata.get("test_behavior", {})
@@ -342,6 +382,31 @@ def _case_card(case: dict[str, Any], *, database_mode: bool = False) -> str:
 
 def _metric(label: str, value: str) -> str:
     return f'<div class="metric"><span>{html.escape(label)}</span><strong>{html.escape(value)}</strong></div>'
+
+
+def _system_gates(gates: list[dict[str, Any]]) -> str:
+    if not gates:
+        return ""
+    cards = []
+    for gate in gates:
+        status = str(gate.get("status", "unknown"))
+        checks = gate.get("checks", {})
+        check_text = " · ".join(
+            f"{label}: {_check(value)}" for label, value in checks.items()
+        )
+        report_path = str(gate.get("report_path", ""))
+        link = (
+            f'<a href="{html.escape(report_path, quote=True)}">查看专项报告</a>'
+            if report_path else ""
+        )
+        cards.append(
+            '<article class="gate"><div class="gate-head">'
+            f"<span>{html.escape(str(gate.get('title', gate.get('id', '系统门禁'))))}</span>"
+            f'<span class="status {html.escape(status)}">{"通过" if status == "passed" else "未通过"}</span>'
+            f"</div><p class=\"gate-checks\">{html.escape(check_text)}</p>"
+            f"<p>{html.escape(str(gate.get('description', '')))}</p>{link}</article>"
+        )
+    return '<section><h2>端到端能力门禁</h2><div class="gate-grid">' + "".join(cards) + "</div></section>"
 
 
 def _relative_href(value: str) -> str:
