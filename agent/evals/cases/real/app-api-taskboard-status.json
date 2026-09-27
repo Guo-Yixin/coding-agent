@@ -1,0 +1,25 @@
+{
+  "case_id": "app-api-taskboard-status",
+  "prompt": "请先使用 hybrid_code_search 检索 filter_by_status 的实现，再修复它：status 比较忽略大小写；status 为 null 时返回所有任务；不能修改输入。请补充 tests/test_filter_by_status.py。只修改 taskboard/tasks.py 和 tests/test_filter_by_status.py。在答题副本中直接修改并运行测试，不创建分支、不提交、不推送、不创建 PR。",
+  "base_ref": "d19ddda0ac269adf1e68d7d2840968527b313bc4",
+  "gold_files": ["taskboard/tasks.py"],
+  "target_tests": [["python", "-m", "pytest", "tests/test_filter_by_status.py", "-q"]],
+  "regression_tests": [["python", "-m", "pytest", "tests/test_baseline.py", "-q"]],
+  "oracle_tests": [["python", "{oracle_scripts}/test_taskboard_status_filter.py", "{target_repo}"]],
+  "allowed_files": ["taskboard/tasks.py", "tests/test_filter_by_status.py"],
+  "requires_patch": true,
+  "expected_status": "completed",
+  "timeout_seconds": 600,
+  "metadata": {
+    "adapter": "app",
+    "browser_e2e": true,
+    "repo_url": "https://github.com/Guo-Yixin/test-coding-eval.git",
+    "purpose": "API end-to-end: HTTP request, SSE events, plan approval, Agent edits, isolated SQLite persistence",
+    "required_changed_files": ["taskboard/tasks.py", "tests/test_filter_by_status.py"],
+    "model_call_limit": 24,
+    "tool_call_limit": 64,
+    "auto_approve_plan": true,
+    "require_plan_approval": true,
+    "plan_rubric_any_terms": [["需求理解", "需求拆解", "目标"], ["涉及文件", "相关文件", "改动文件", "taskboard/tasks.py", "tests/"], ["验证方案", "测试方案", "pytest", "测试命令"]]
+  }
+}

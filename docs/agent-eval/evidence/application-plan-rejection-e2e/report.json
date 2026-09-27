@@ -1,0 +1,166 @@
+{
+  "cases": [
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 33172,
+      "artifacts": {
+        "agent_output": "cases/app-api-plan-rejection/artifacts/agent-output.txt",
+        "manual_review": "cases/app-api-plan-rejection/artifacts/manual-review.md",
+        "patch": "cases/app-api-plan-rejection/artifacts/patch.diff",
+        "tests": "cases/app-api-plan-rejection/artifacts/tests.log",
+        "trace": "cases/app-api-plan-rejection/traces/agent-events.jsonl"
+      },
+      "case_id": "app-api-plan-rejection",
+      "changed_files": [],
+      "errors": [],
+      "input_tokens": 158873,
+      "metadata": {
+        "model_provider": "DeepSeek",
+        "model_name": "deepseek-flash",
+        "model_usage": {
+          "input_tokens": 158873,
+          "output_tokens": 4888,
+          "total_tokens": 163761
+        },
+        "retrieval_call_count": 0,
+        "tool_usage": {
+          "call_count": 22,
+          "calls_by_tool": {
+            "edit_file": 1,
+            "execute": 3,
+            "ls": 4,
+            "read_file": 9,
+            "write_file": 1,
+            "write_todos": 4
+          },
+          "failure_count": 0,
+          "result_count": 22,
+          "success_count": 22
+        },
+        "test_behavior": {
+          "required_test_files": [],
+          "required_test_files_modified": true
+        },
+        "target_repo_sha": "d19ddda0ac269adf1e68d7d2840968527b313bc4",
+        "expected_status": "completed",
+        "model_call_limit": "16",
+        "tool_call_limit": "24",
+        "codegraph_index": {
+          "available": true,
+          "exit_code": 0,
+          "latency_ms": 1167,
+          "output_tail": "T  Initializing CodeGraph\n|\n*  Initialized in [LOCAL_PATH]\n|\nScanning files...\nParsing code...\nResolving refs...\nLinking dynamic dispatch...\n|\n*  Indexed 6 files\n|\n•  27 nodes, 50 edges in 447ms\n|\n—  Done\n\n",
+          "succeeded": true
+        },
+        "agent_adapter_sha256": "1559b837ac41a8ead6cef81287dfe7eb753c77ef9f1543b0693f1f0c53b05346",
+        "selected_adapter_sha256": "00add93e19198be477b90badf30e20c1b5c878d3288d909a27d50fa5ba95f3ef",
+        "agent_runtime_snapshot_sha256": "e75d2a55f3edc4ba9aef093f1253aeefb4f94ef9082b0d04efd57ad8bc825834",
+        "plan_rejection_ok": true,
+        "plan_rubric": [
+          {
+            "accepted_terms": [
+              "需求拆解",
+              "需求理解",
+              "目标"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "涉及文件",
+              "相关文件",
+              "改动文件",
+              "涉及模块",
+              "需要阅读的文件"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "taskboard/tasks.py"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "test_count_by_status.py"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "验证命令",
+              "测试命令",
+              "pytest"
+            ],
+            "passed": true
+          }
+        ],
+        "api_e2e": {
+          "health_passed": true,
+          "thread_created": true,
+          "sse_received": true,
+          "approval_posted": false,
+          "rejection_posted": true,
+          "workspace_clean_after_rejection": true,
+          "final_plan_status": "rejected",
+          "sqlite_isolated": true,
+          "final_status": "finished",
+          "initial_event_count": 498,
+          "approval_event_count": 0
+        }
+      },
+      "oracle_tests_passed": null,
+      "output_tokens": 4888,
+      "patch": "",
+      "patch_apply": true,
+      "regression_test_latency_ms": 925,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": null,
+      "status": "passed",
+      "target_test_latency_ms": 943,
+      "target_tests_passed": true,
+      "tool_recovery_rate": null,
+      "total_tokens": 163761
+    }
+  ],
+  "config": {
+    "agent_source_sha": "710862e51e382762de1b3cccf63fdf965d369f4e",
+    "agent_source_dirty_patch_sha256": null,
+    "agent_adapter_sha256": "1559b837ac41a8ead6cef81287dfe7eb753c77ef9f1543b0693f1f0c53b05346",
+    "agent_runtime_snapshot_sha256": "e75d2a55f3edc4ba9aef093f1253aeefb4f94ef9082b0d04efd57ad8bc825834",
+    "agent_runtime_overlay_files": {
+      "agent/evals/telemetry.py": "fbf4b96d0336123335653a59a67da91f6484cc196e4bd291307741539c492ce7",
+      "scripts/run_eval_agent.py": "1559b837ac41a8ead6cef81287dfe7eb753c77ef9f1543b0693f1f0c53b05346",
+      "scripts/run_eval_app.py": "00add93e19198be477b90badf30e20c1b5c878d3288d909a27d50fa5ba95f3ef"
+    },
+    "framework_source_sha": "440e70da350820d5988d2c7361d22348ddf40909",
+    "framework_source_dirty_patch_sha256": "87a2afd702f44445118433d4e1930b98da508b8deb4d34691ef772f7caafef68",
+    "case_manifest_sha256": "845f5b4b8a849a69691d8425dbade6addf904c08e6da2f4fc4d2013e266cd803",
+    "runner_version": "3"
+  },
+  "created_at": "2026-09-27T03:16:39.274488+00:00",
+  "mode": "real",
+  "report_id": "845f5b4b8a849a69",
+  "repository": "test-coding-eval",
+  "summary": {
+    "case_count": 1,
+    "failed_count": 0,
+    "oracle_test_case_count": 0,
+    "oracle_test_pass_rate": null,
+    "oracle_test_passed_case_count": 0,
+    "passed_count": 1,
+    "patch_apply_rate": 1.0,
+    "regression_test_case_count": 1,
+    "regression_test_pass_rate": 1.0,
+    "regression_test_passed_case_count": 1,
+    "retrieval_hit_at_k": null,
+    "target_test_case_count": 1,
+    "target_test_pass_rate": 1.0,
+    "target_test_passed_case_count": 1,
+    "token_usage_case_count": 1,
+    "tool_recovery_rate": null,
+    "total_latency_ms": 33172,
+    "total_tokens": 163761
+  }
+}

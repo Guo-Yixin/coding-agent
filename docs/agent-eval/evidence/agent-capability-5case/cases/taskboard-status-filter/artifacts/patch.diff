@@ -1,0 +1,152 @@
+diff --git a/taskboard/tasks.py b/taskboard/tasks.py
+index 24f522b..9c85dcb 100644
+--- a/taskboard/tasks.py
++++ b/taskboard/tasks.py
+@@ -8,12 +8,24 @@ Task = dict[str, Any]
+ 
+ 
+ def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]:
+-    """Return tasks matching status; no filter returns every task."""
++    """Return tasks matching status, comparing case-insensitively.
++
++    ``status`` of ``None`` means "no filter" and returns every task in input
++    order. Tasks whose own ``status`` is missing or not a string never match.
++    The input list (or iterable) and the task objects inside it are left
++    untouched: the container is copied and task statuses are normalised for
++    comparison only, never written back.
++    """
+ 
+     rows = list(tasks)
+     if status is None:
+         return rows
+-    return [task for task in rows if task.get("status") == status]
++    wanted = status.casefold()
++    return [
++        task
++        for task in rows
++        if isinstance(task.get("status"), str) and task["status"].casefold() == wanted
++    ]
+ 
+ 
+ def search_tasks(tasks: Iterable[Task], query: str) -> list[Task]:
+diff --git a/tests/test_filter_by_status.py b/tests/test_filter_by_status.py
+index 1197689..6acc441 100644
+--- a/tests/test_filter_by_status.py
++++ b/tests/test_filter_by_status.py
+@@ -1,17 +1,114 @@
++from copy import deepcopy
++
+ from taskboard.tasks import filter_by_status
+ 
+ 
++MIXED_CASE_TASKS = [
++    {"id": 1, "status": "open"},
++    {"id": 2, "status": "done"},
++    {"id": 3, "status": "OPEN"},
++    {"id": 4, "status": "DoNe"},
++]
++
++
+ def test_status_filter_is_case_insensitive_and_does_not_mutate_tasks():
+     tasks = [
+         {"id": 1, "status": "open"},
+         {"id": 2, "status": "done"},
+         {"id": 3, "status": "OPEN"},
+     ]
+-    original = [dict(task) for task in tasks]
++    original = deepcopy(tasks)
+ 
+     assert [task["id"] for task in filter_by_status(tasks, "Open")] == [1, 3]
++    assert [task["id"] for task in filter_by_status(tasks, "dOnE")] == [2]
+     assert tasks == original
+ 
+ 
++def test_status_filter_matches_status_argument_case_variants():
++    tasks = [
++        {"id": 1, "status": "open"},
++        {"id": 2, "status": "OPEN"},
++        {"id": 3, "status": "Open"},
++        {"id": 4, "status": "done"},
++    ]
++
++    for query in ("open", "OPEN", "oPeN"):
++        assert [task["id"] for task in filter_by_status(tasks, query)] == [1, 2, 3]
++
++    for query in ("done", "DONE", "Done"):
++        assert [task["id"] for task in filter_by_status(tasks, query)] == [4]
++
++
++def test_status_filter_preserves_input_order():
++    assert [task["id"] for task in filter_by_status(MIXED_CASE_TASKS, "open")] == [1, 3]
++
++
+ def test_status_filter_returns_empty_list_when_no_task_matches():
+-    assert filter_by_status([{"status": "open"}], "blocked") == []
++    result = filter_by_status([{"status": "open"}], "blocked")
++
++    assert result == []
++    assert isinstance(result, list)
++
++
++def test_status_filter_with_no_match_leaves_input_untouched():
++    tasks = [{"id": 1, "status": "open"}, {"id": 2, "status": "done"}]
++    original = deepcopy(tasks)
++
++    assert filter_by_status(tasks, "blocked") == []
++    assert tasks == original
++
++
++def test_status_filter_returns_new_list_and_keeps_task_objects():
++    tasks = [{"id": 1, "status": "open"}, {"id": 2, "status": "OPEN"}]
++    original = deepcopy(tasks)
++
++    result = filter_by_status(tasks, "open")
++
++    assert result is not tasks
++    assert len(result) == 2
++    assert all(returned is stored for returned, stored in zip(result, tasks))
++
++    result.append({"id": 99, "status": "open"})
++    result.sort(key=lambda task: task["id"], reverse=True)
++
++    assert tasks == original
++
++
++def test_status_filter_with_none_status_returns_all_tasks_in_order():
++    tasks = [
++        {"id": 1, "status": "open"},
++        {"id": 2},
++        {"id": 3, "status": None},
++        {"id": 4, "status": "DONE"},
++    ]
++    original = deepcopy(tasks)
++
++    assert filter_by_status(tasks) == tasks
++    assert filter_by_status(tasks, None) == tasks
++    assert [task["id"] for task in filter_by_status(tasks, None)] == [1, 2, 3, 4]
++    assert tasks == original
++
++
++def test_status_filter_skips_tasks_without_status_key():
++    tasks = [{"id": 1}, {"id": 2, "status": None}, {"id": 3, "status": "open"}]
++    original = deepcopy(tasks)
++
++    result = filter_by_status(tasks, "open")
++
++    assert [task["id"] for task in result] == [3]
++    assert tasks == original
++
++
++def test_status_filter_accepts_any_iterable_without_mutating_it():
++    tasks = [
++        {"id": 1, "status": "open"},
++        {"id": 2, "status": "DONE"},
++        {"id": 3, "status": "OPEN"},
++    ]
++    original = deepcopy(tasks)
++
++    assert [task["id"] for task in filter_by_status(iter(tasks), "Open")] == [1, 3]
++
++    snapshot = tuple(tasks)
++    assert [task["id"] for task in filter_by_status(snapshot, "open")] == [1, 3]
++    assert tasks == original

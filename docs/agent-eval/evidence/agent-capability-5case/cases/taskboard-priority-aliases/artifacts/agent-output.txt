@@ -1,0 +1,169 @@
+I'll start by planning this task and exploring the repository.
+
+# sort_by_priority 优先级别名支持 — 技术方案
+
+## 1. 需求理解
+
+在不改变现有 API 形状的前提下，扩展 `taskboard.tasks.sort_by_priority` 的优先级识别能力：
+
+| 需求点 | 含义 | 期望行为 |
+| --- | --- | --- |
+| 别名 | `urgent` 等价 `high`，`backlog` 等价 `low` | `urgent` 与 `high` 排在同一档，`backlog` 与 `low` 排在同一档 |
+| 大小写不敏感 | `HIGH` / `Urgent` / `Backlog` 均视为已知级别 | 与全小写走同一映射 |
+| 相同级别稳定 | 同一档内保持输入相对顺序 | 需要排序稳定，`sorted` 本身稳定，关键字不得引入额外次序扰动 |
+| 未知级别规整 | 未知优先级排在所有已知级别之后 | 未知档位键值大于任何已知档位；未知项之间也保持输入相对顺序 |
+| 缺失 priority | 缺少 `priority` 字段视作未知 | 排在末尾，不抛异常 |
+
+现状实现（`taskboard/tasks.py` 第 28–32 行）已有 `order = {"high": 0, "medium": 1, "low": 2}` 且已做 `str(...).lower()` 与默认值 `99`，即大小写与未知兜底逻辑已具备，仅缺 `urgent` / `backlog` 别名；对应测试 `tests/test_sort_by_priority.py` 期望 `[2, 4, 5, 1, 3]`，当前实际输出 `[4, 5, 1, 2, 3]`，失败点正是别名未生效。
+
+本次范围严格限定为两个文件：`taskboard/tasks.py`、`tests/test_sort_by_priority.py`。
+
+## 2. 涉及模块和需要阅读的文件
+
+| 文件 | 角色 | 关注点 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | 唯一需要改动的实现文件 | `Task` 类型别名、`sort_by_priority` 的映射表与 `key` 表达式 |
+| `tests/test_sort_by_priority.py` | 唯一需要扩展的测试文件 | 现有稳定性用例，需保留并补充别名/大小写/缺失字段用例 |
+| `taskboard/__init__.py` | 导出层 | `sort_by_priority` 已导出，无需改动（确认不回退） |
+| `tests/test_baseline.py` | 回归基线 | `test_priority_sort_orders_known_priorities` 断言 `[2, 1]`，改动后必须仍通过 |
+| `pyproject.toml` | 运行配置 | `testpaths = ["tests"]`，pytest 直接在仓库根执行 |
+| `cases/README.md` | 用例说明 | 此仓库对应 `taskboard-priority-aliases` 用例，验收标准与本需求一致 |
+
+已通过 `hybrid_code_search` 确认调用点：`taskboard/tasks.py:28`（定义）、`taskboard/__init__.py`（导入导出）、`tests/test_sort_by_priority.py` 与 `tests/test_baseline.py`（调用）。无其他调用方，改动面可控。
+
+补充说明：当前仓库基线状态本身存在失败用例（`test_filter_by_status.py` 2 处、`test_search_tasks.py` 2 处与优先级用例 1 处共 4 个失败），这些属于其他独立用例的既有缺口，本方案不触碰，验证时以“相关用例通过 + 失败集合不扩大”为准。
+
+## 3. 数据结构、接口或页面变化
+
+无对外结构变化：
+
+- 函数签名保持 `sort_by_priority(tasks: Iterable[Task]) -> list[Task]`。
+- `Task = dict[str, Any]` 保持，不新增字段、不要求调用方补充 `priority`。
+- 无新增依赖、无配置项、无导出变化。
+- 唯一变化是函数体内部的“优先级名 → 排序档位”映射表内容（新增两个别名键）与键值取值，属于纯内部实现细节。
+
+排序档位设计如下（内部约定，不对外暴露）：
+
+| 归一化后的优先级 | 档位键 | 备注 |
+| --- | --- | --- |
+| `high` / `urgent` | 0 | 别名共档 |
+| `medium` | 1 | 保持既有语义 |
+| `low` / `backlog` | 2 | 别名共档 |
+| 其他 / 缺失 / 非字符串 | 统一兜底值（建议 99） | 恒大于全部已知档位 |
+
+## 4. 具体实施步骤
+
+**步骤 1：扩展映射表（`taskboard/tasks.py`）**
+
+在 `sort_by_priority` 内把 `order` 由 3 项扩展为 5 项：保留 `high`/`medium`/`low`，额外加入 `urgent → 0` 与 `backlog → 2`，使别名与主名同档。档位数字保持不变，避免影响 `medium` 的相对位置和未知兜底比较关系。
+
+**步骤 2：保持归一化与兜底逻辑**
+
+保留当前 `str(task.get("priority", "")).lower()` 的取值方式与 `order.get(..., 99)` 的兜底写法，不引入新分支。核心逻辑可概括为（4 行伪代码）：
+
+```
+order = {"high": 0, "urgent": 0, "medium": 1, "low": 2, "backlog": 2}
+def rank(task):
+    name = str(task.get("priority", "")).lower()
+    return order.get(name, 99)
+return sorted(tasks, key=rank)
+```
+
+要点：兜底值必须严格大于 2，保证未知档位排在已知之后；使用内置 `sorted`（稳定排序）且 `key` 只返回档位、不混入索引或原值，保证同档与未知项的相对顺序不被破坏；不修改入参、不复制或改写任务字典（与 `filter_by_status`/`search_tasks` 的既有约定一致）。
+
+**步骤 3：更新函数文档字符串**
+
+把 `docstring` 从“ordered by priority while preserving equal-priority order”补充为同时说明别名、大小写不敏感与未知级别后置，便于后续维护者理解契约。
+
+**步骤 4：扩展测试（`tests/test_sort_by_priority.py`）**
+
+保留现有用例 `test_priority_sort_keeps_equal_and_unknown_priorities_stable`（它同时覆盖了别名、缺失字段与未知值），并按需求补充独立用例：
+
+| 建议用例 | 目的 | 断言要点 |
+| --- | --- | --- |
+| 别名等价性 | `urgent` 与 `high`、`backlog` 与 `low` 同档 | 混排后输出顺序等价于把别名替换为主名后的结果 |
+| 大小写不敏感 | `HIGH` / `Urgent` / `Backlog` / `MEDIUM` | 与全小写输入产生相同顺序 |
+| 同档稳定性 | 多个 `high` 与多个 `urgent` 交错的输入 | 输出 id 顺序与输入出现顺序一致（用计数器而非集合比较） |
+| 未知级别与缺失 priority | 含未知值（如 `"p1"`）与整条缺失 `priority` 的记录 | 未知/缺失项全部排在已知项之后，且它们内部保持输入相对顺序 |
+| 不修改入参 | 传入列表与字典内容不变 | 调用后 `tasks == original` 快照比较 |
+| 非字符串健壮性（可选） | `priority=None` 或数字 | 不抛异常，视为未知并后置 |
+
+测试组织建议：沿用当前“扁平模块级函数 + 直接断言”的风格，不引入 fixture 与参数化基础设施，避免与基线测试风格分叉；每个用例只验证一个失败含义，便于评测时定位。
+
+**步骤 5：本地验证**
+
+在仓库根执行 `python -m pytest tests -ra -q`，确认优先级相关用例全部通过，且总失败数不超过基线（当前 4 个既有失败）。
+
+## 5. 验证方案
+
+| 验证层次 | 命令 / 方式 | 通过标准 |
+| --- | --- | --- |
+| 目标文件单测 | `python -m pytest tests/test_sort_by_priority.py -ra -q` | 全部通过，包含新增用例 |
+| 导出层不回归 | `python -m pytest tests/test_baseline.py -ra -q` | `test_priority_sort_orders_known_priorities` 仍返回 `[2, 1]` |
+| 全量单测对比基线 | `python -m pytest tests -ra -q` | 优先级用例通过；失败集合与基线一致（既有 4 个失败中的优先级失败项消除，其余 4 项不变） |
+| 不改工作区其他内容 | `git -C <repo> status --short` | 只出现 `taskboard/tasks.py` 与 `tests/test_sort_by_priority.py` 两个改动文件 |
+| 人工语义核对 | 用一条含 `urgent/high/backlog/low/未知/缺失` 的样例对照需求逐条勾选 | 别名共档、大小写等价、同档稳定、未知后置四项全部满足 |
+
+## 6. 风险点和需要用户确认的事项
+
+| 风险 / 待确认点 | 说明与建议 |
+| --- | --- |
+| 未知档位是否统一为同一档 | 现方案让所有未知值（含缺失、`None`、数字）落到同一兜底档并保持输入相对顺序，即“未知之间不再按字符串比较”。若期望未知值之间另有排序规则，需要新增约定 |
+| 大小写归一化是否覆盖异常输入 | 采用 `str(...)` 兜底可避免 `None`/数字导致 `AttributeError`，但也会把 `None` 变成字符串 `"none"`；语义上仍归为未知，通常符合预期，需确认不要求抛错 |
+| 是否允许新增 `critical` 等更多别名 | 需求只给了 `urgent`/`backlog`。若评测 oracle 含其他别名或同义词，需明确扩展列表 |
+| 空白字符处理 | 当前不做 `strip()`。若输入可能带首尾空格（如 `" high"`），是否也应视为已知级别需要确认 |
+| 是否有隐藏 oracle 比对顺序 | `cases/README.md` 说明评测方另有独立 oracle。若其期望未知值之间也有确定次序，本方案的“统一兜底档”可能出现偏差 |
+| 基线本身已有失败用例 | `test_filter_by_status.py` 与 `test_search_tasks.py` 现存 4 个失败与本任务无关，不在本次修改范围。确认是否要求顺带修复（本方案默认不修） |
+| 修改范围约束 | 严格只改 `taskboard/tasks.py` 与 `tests/test_sort_by_priority.py`，不触碰 `__init__.py`、`pyproject.toml` 等文件 |
+
+是否确认实施该方案？
+
+I'll start by setting up the task list and confirming the branch state.
+
+Now I'll modify the implementation file.
+
+Now extending the test file.
+
+Diff 符合方案范围。现在提交并推送。
+
+## 实施结果
+
+### 修改内容
+
+**`taskboard/tasks.py`**（`sort_by_priority`，原第 28–32 行）
+- 映射表由 3 项扩展为 5 项：`{"high": 0, "urgent": 0, "medium": 1, "low": 2, "backlog": 2}`，让 `urgent` 与 `high` 同档、`backlog` 与 `low` 同档。
+- 保留原有 `str(task.get("priority", "")).lower()` 归一化与 `order.get(..., 99)` 兜底，兜底值 99 仍严格大于已知档位最大值 2，保证未知/缺失级别排在已知级别之后。
+- 继续使用内置 `sorted`（稳定排序），`key` 只返回档位，因此同档与未知项都保持输入相对顺序，且不修改入参。
+- 补充 `docstring`，说明别名、大小写不敏感、未知级别后置和稳定性契约。
+
+**`tests/test_sort_by_priority.py`**（12 行 → 85 行，新文件共 6 个用例）
+| 用例 | 覆盖点 |
+| --- | --- |
+| `test_priority_sort_keeps_equal_and_unknown_priorities_stable`（保留原用例） | 别名 + 同档稳定 + 未知后置 |
+| `test_priority_sort_treats_aliases_as_their_canonical_level` | `urgent`→`high`、`backlog`→`low` 与主名结果等价 |
+| `test_priority_sort_compares_priorities_case_insensitively` | `URGENT`/`hIgH`/`Backlog`/`Medium` 与全小写顺序一致 |
+| `test_priority_sort_keeps_same_level_order_including_aliases` | `high`/`urgent` 交错时同档顺序即输入顺序 |
+| `test_priority_sort_places_unknown_and_missing_priorities_last` | 缺失 `priority`、未知值 `"p1"`、`priority=None` 全部后置且内部顺序稳定 |
+| `test_priority_sort_does_not_mutate_input` | 调用后入参列表与字典内容不变 |
+
+只改动了这两个文件，`taskboard/__init__.py`、`pyproject.toml`、`tests/test_baseline.py` 等未触碰。
+
+### 验证结果
+- `python -m pytest tests/test_sort_by_priority.py tests/test_baseline.py -ra -q` → **9 passed**。
+- `python -m pytest tests -ra -q` → **10 passed, 3 failed**。全量失败数由基线 4 个降为 3 个，消除的正是优先级排序失败；剩余 3 个失败（`test_filter_by_status.py` 1 个、`test_search_tasks.py` 2 个）为基线既有的、与本任务无关的其他用例缺口，按方案未做修改。失败集合未扩大。
+- 方案执行期间做了一处调整：大小写用例中的显式期望顺序初稿写成 `[4, 2, 3, 1]`，与“同档保持输入顺序”的真实语义（`URGENT` 在 `hIgH` 之前 → `[2, 4, 3, 1]`）不符，已按实现语义修正断言；实现本身未变。
+
+### 分支、提交与 PR 状态
+- 工作分支：`codex/task-eval-taskboard-priority`（从 `origin/main` = `d650477` 新建，保持在该分支，未切回 `main`）。
+- 本地提交：`31dd1f4` — `feat(taskboard): support priority aliases in sort_by_priority`（2 files changed, 81 insertions, 2 deletions）。
+- **push 未成功，PR 未创建**。两次执行 `git push -u origin codex/task-eval-taskboard-priority` 均返回 `remote: No anonymous write access. / fatal: Authentication failed`，说明该运行环境未注入可用的 GitHub 写凭据；随后一次 `git config` 查询被 Eval 环境以“Agent Eval blocks Git write and remote-sync commands”拒绝。因此无法推送分支，也无法调用 PR 工具创建 Pull Request，改动目前仅存在于本地工作区。
+
+### 需要你注意的两点环境异常
+1. 本轮上下文声明“当前任务分支为 `codex/task-eval-taskboard-priority`”，但工作目录实际处于 `main`，且远端与该分支命名空间下均无该分支。为避免在过期基线上开发，我基于 `origin/main`（`d650477`，比本地 `main` 的 `f46554c` 更新）新建了同名分支，未做任何破坏性删除。
+2. 由于 push 被凭据/环境策略拦截，如需产出 PR，需要平台侧补齐写权限后重试推送，或由评测流程直接采集本地提交。
+{"status": "completed", "model_provider": "DeepSeek", "model_name": "deepseek-flash", "usage": {"input_tokens": 975918, "output_tokens": 11079, "total_tokens": 986997}}
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return self._pregel_stream_v3(
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return GraphRunStream(graph_iter, mux)
+工具执行异常已被中间件捕获：tool=execute error=Agent Eval blocks Git write and remote-sync commands

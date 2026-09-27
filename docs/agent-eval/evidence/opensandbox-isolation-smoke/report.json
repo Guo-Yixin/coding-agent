@@ -1,0 +1,85 @@
+{
+  "cases": [
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 10717,
+      "artifacts": {
+        "agent_output": "cases/opensandbox-isolation-smoke/agent-output.txt",
+        "patch": "cases/opensandbox-isolation-smoke/patch.diff"
+      },
+      "case_id": "opensandbox-isolation-smoke",
+      "changed_files": [
+        "result.txt"
+      ],
+      "errors": [],
+      "input_tokens": null,
+      "metadata": {
+        "sandbox": {
+          "image": "coding-agent-eval-alpine-git:3.20",
+          "uploaded_file_count": 1,
+          "uploaded_paths": [
+            "repo/baseline.txt"
+          ],
+          "use_server_proxy": true,
+          "cleanup_succeeded": true,
+          "command_latency_ms": 1012,
+          "oracle_test_latency_ms": 1012,
+          "safety_probes": {
+            "path_traversal_rejected": true,
+            "timeout_enforced": true,
+            "cleanup_succeeded": true,
+            "timeout_latency_ms": 2028,
+            "probe_latency_ms": 4926
+          }
+        }
+      },
+      "oracle_tests_passed": true,
+      "output_tokens": null,
+      "patch": "diff --git a/result.txt b/result.txt\nnew file mode 100644\nindex 0000000..b099d3d\n--- /dev/null\n+++ b/result.txt\n@@ -0,0 +1 @@\n+sandbox-eval-ok",
+      "patch_apply": true,
+      "regression_test_latency_ms": 1012,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": null,
+      "status": "passed",
+      "target_test_latency_ms": 1019,
+      "target_tests_passed": true,
+      "tool_recovery_rate": null,
+      "total_tokens": null
+    }
+  ],
+  "config": {
+    "agent_source_sha": "440e70da350820d5988d2c7361d22348ddf40909",
+    "agent_source_dirty_patch_sha256": "129ec14b7470347ec561eb3b6c8eed5491e34c340172954f5361c5c103ef1955",
+    "agent_adapter_sha256": null,
+    "agent_runtime_snapshot_sha256": null,
+    "agent_runtime_overlay_files": {},
+    "framework_source_sha": "440e70da350820d5988d2c7361d22348ddf40909",
+    "framework_source_dirty_patch_sha256": "129ec14b7470347ec561eb3b6c8eed5491e34c340172954f5361c5c103ef1955",
+    "case_manifest_sha256": "155995b841cf53c92c319c2329d19df91d84acbbd3ce44ee3b3b18c8e5c5208d",
+    "runner_version": "3"
+  },
+  "created_at": "2026-09-27T02:48:34.491475+00:00",
+  "mode": "sandbox",
+  "report_id": "155995b841cf53c9",
+  "repository": "fixture-repository",
+  "summary": {
+    "case_count": 1,
+    "failed_count": 0,
+    "oracle_test_case_count": 1,
+    "oracle_test_pass_rate": 1.0,
+    "oracle_test_passed_case_count": 1,
+    "passed_count": 1,
+    "patch_apply_rate": 1.0,
+    "regression_test_case_count": 1,
+    "regression_test_pass_rate": 1.0,
+    "regression_test_passed_case_count": 1,
+    "retrieval_hit_at_k": null,
+    "target_test_case_count": 1,
+    "target_test_pass_rate": 1.0,
+    "target_test_passed_case_count": 1,
+    "token_usage_case_count": 0,
+    "tool_recovery_rate": null,
+    "total_latency_ms": 15643,
+    "total_tokens": null
+  }
+}

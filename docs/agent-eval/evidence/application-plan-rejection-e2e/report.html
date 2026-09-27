@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Eval · 845f5b4b8a849a69</title>
+  <style>
+    :root { color-scheme: light; --ink:#172033; --muted:#65718a; --line:#e3e8f0; --paper:#fff; --bg:#f4f7fb; --blue:#3157d5; --green:#16845b; --red:#bd3f45; --amber:#9a6500; }
+    * { box-sizing:border-box } body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif }
+    .shell { max-width:1120px; margin:36px auto; padding:0 20px 48px }
+    .hero { padding:30px 34px; border-radius:20px; color:white; background:radial-gradient(circle at 90% 0%,#6c85f4 0,transparent 36%),linear-gradient(125deg,#17264d,#314fc1); box-shadow:0 18px 44px #253b7526 }
+    .eyebrow { color:#c6d1ff; font-size:12px; font-weight:750; letter-spacing:.14em; text-transform:uppercase } h1 { margin:8px 0 6px; font-size:clamp(28px,4vw,42px); line-height:1.1 }
+    .hero p { margin:0; color:#e0e7ff } .meta { display:flex; gap:12px 26px; flex-wrap:wrap; margin-top:22px; color:#d1daf9; font-size:13px }
+    .badge { display:inline-flex; align-items:center; gap:7px; padding:6px 11px; border:1px solid #ffffff45; border-radius:999px; font-size:12px; font-weight:750; text-transform:uppercase; letter-spacing:.06em } .badge.good { background:#16845b30 } .badge.bad { background:#bd3f4530 }
+    .grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:14px; margin:18px 0 28px } .metric { background:var(--paper); border:1px solid var(--line); border-radius:14px; padding:17px 18px; box-shadow:0 3px 10px #1b2b4a08 } .metric span { display:block; color:var(--muted); font-size:12px; font-weight:650 } .metric strong { display:block; margin-top:5px; font-size:24px; letter-spacing:-.03em }
+    h2 { margin:28px 0 12px; font-size:21px } .case { margin:12px 0; overflow:hidden; background:var(--paper); border:1px solid var(--line); border-radius:15px; box-shadow:0 3px 10px #1b2b4a08 } .case-head { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:17px 20px; border-bottom:1px solid var(--line) } .case-title { font-weight:760; overflow-wrap:anywhere } .status { padding:4px 10px; border-radius:999px; font-size:12px; font-weight:750; text-transform:uppercase } .status.passed { color:#106b49; background:#e4f6ed } .status.failed { color:#a52d35; background:#fdebed }
+    .checks { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:9px; padding:16px 20px } .check { border:1px solid var(--line); border-radius:10px; padding:10px 12px } .check span { display:block; color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.04em } .check strong { display:block; margin-top:3px; font-size:14px } .yes { color:var(--green) } .no { color:var(--red) } .na { color:var(--muted) }
+    details { border-top:1px solid var(--line); padding:12px 20px } summary { color:var(--blue); cursor:pointer; font-weight:650 } .details { padding-top:8px; color:#34415b } ul { padding-left:20px } li { margin:4px 0 } code { overflow-wrap:anywhere; color:#273c82; background:#eef2ff; padding:2px 5px; border-radius:5px } a { color:var(--blue); text-decoration:none } a:hover { text-decoration:underline } .empty { padding:20px; color:var(--muted) } .foot { margin-top:26px; color:var(--muted); font-size:12px }
+    @media(max-width:850px) { .grid { grid-template-columns:repeat(2,minmax(0,1fr)) } .checks { grid-template-columns:repeat(3,minmax(0,1fr)) } }
+    @media(max-width:520px) { .shell { margin:16px auto; padding:0 12px 30px } .hero { padding:23px 20px } .grid { gap:8px } .metric { padding:13px } .metric strong { font-size:19px } .checks { grid-template-columns:repeat(2,minmax(0,1fr)); padding:12px } .case-head { padding:14px } }
+    @media print { body { background:#fff } .shell { margin:0 auto } .hero { box-shadow:none; print-color-adjust:exact } .metric,.case { box-shadow:none; break-inside:avoid } details { break-inside:avoid } }
+  </style>
+</head>
+<body><main class="shell">
+  <header class="hero">
+    <div class="eyebrow">CODING Agent · 评测报告</div>
+    <h1>845f5b4b8a849a69</h1>
+    <p>每道题都关联明确的验收结果、版本信息和可打开的运行产物。</p>
+    <div class="meta"><span class="badge good">全部通过 · 1/1</span><span>模式：real</span><span>生成时间：2026-09-27T03:16:39.274488+00:00</span></div>
+    <div class="meta"><span>Agent 提交：710862e51e382762de1b3cccf63fdf965d369f4e</span><span>目标仓库：test-coding-eval</span><span>Runner：3</span><span>模型：DeepSeek deepseek-flash</span><div class="meta"><span>Agent SHA：710862e51e382762de1b3cccf63fdf965d369f4e</span><span>适配器 SHA：1559b837ac41</span></div></div>
+  </header>
+  <section class="grid" aria-label="Run summary">
+    <div class="metric"><span>通过案例</span><strong>1 / 1</strong></div>
+<div class="metric"><span>未通过案例</span><strong>0</strong></div>
+<div class="metric"><span>补丁应用率</span><strong>100%</strong></div>
+<div class="metric"><span>总 Token</span><strong>163,761</strong></div>
+<div class="metric"><span>总耗时</span><strong>33.2s</strong></div>
+  </section>
+  <h2>案例结果</h2>
+  <article class="case">
+    <div class="case-head"><div class="case-title">app-api-plan-rejection</div><span class="status passed">通过</span></div>
+    <div class="checks"><div class="check"><span>Agent 退出码</span><strong class="na">0</strong></div><div class="check"><span>补丁应用</span><strong class="yes">通过</strong></div><div class="check"><span>目标测试</span><strong class="yes">通过</strong></div><div class="check"><span>回归测试</span><strong class="yes">通过</strong></div><div class="check"><span>隐藏验收</span><strong class="na">不适用</strong></div><div class="check"><span>检索命中@5</span><strong class="na">N/A</strong></div><div class="check"><span>工具调用数</span><strong class="na">22</strong></div></div>
+    <details><summary>详细信息 · Agent 33.2s · 163,761 Token</summary><div class="details"><p><strong>模型</strong>：DeepSeek deepseek-flash</p><p><strong>要求修改的测试文件</strong>：通过</p><p><strong>工具结果</strong>：22 成功，0 失败；edit_file: 1, execute: 3, ls: 4, read_file: 9, write_file: 1, write_todos: 4</p><p><strong>应用端到端</strong>：服务健康：通过，线程持久化：通过，SSE 消息流：通过，拒绝计划：通过，拒绝后无改动：通过，计划状态 rejected：通过，SQLite 隔离：通过</p><p><strong>计划质量</strong>：5/5 项通过；需求拆解 / 需求理解 / 目标：通过；涉及文件 / 相关文件 / 改动文件 / 涉及模块 / 需要阅读的文件：通过；taskboard/tasks.py：通过；test_count_by_status.py：通过；验证命令 / 测试命令 / pytest：通过</p><strong>运行产物</strong><ul><li><a href="cases/app-api-plan-rejection/artifacts/agent-output.txt">agent_output</a></li><li><a href="cases/app-api-plan-rejection/artifacts/manual-review.md">manual_review</a></li><li><a href="cases/app-api-plan-rejection/artifacts/patch.diff">patch</a></li><li><a href="cases/app-api-plan-rejection/artifacts/tests.log">tests</a></li><li><a href="cases/app-api-plan-rejection/traces/agent-events.jsonl">trace</a></li></ul></div></details>
+  </article>
+  <p class="foot">本页面由 report.json 生成。Token 使用模型服务返回的用量；没有证据时显示为不适用，不会估算。</p>
+</main></body></html>

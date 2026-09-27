@@ -8,10 +8,10 @@ from typing import Any
 from agent.evals.reporting import write_report_data
 
 
-_ARTIFACT_ALLOWLIST = {"agent-output.txt", "patch.diff", "tests.log", "agent-events.jsonl"}
+_ARTIFACT_ALLOWLIST = {"agent-output.txt", "patch.diff", "tests.log", "agent-events.jsonl", "manual-review.md"}
 _SECRET_PATTERNS = (
     re.compile(r"(?i)(\b(?:api[_-]?key|token|password|secret)\b[\"']?\s*[:=]\s*[\"']?)([^\s,;\"'}]+)"),
-    re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
+    re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{16,}(?![A-Za-z0-9_-])"),
 )
 _WINDOWS_ABSOLUTE = re.compile(r"(?i)\b[A-Z]:\\(?:[^\s\"'<>|]+)")
 _UNIX_HOME = re.compile(r"(?<![\w.])/(?:home|Users|mnt|tmp|private)/[^\s\"'<>|]+")
@@ -34,7 +34,11 @@ def export_public_report(run_dir: Path, output_dir: Path) -> dict[str, Any]:
     config = data.get("config", {})
     data["config"] = {
         key: config[key]
-        for key in ("agent_source_sha", "agent_source_dirty_patch_sha256", "runner_version")
+        for key in (
+            "agent_source_sha", "agent_source_dirty_patch_sha256", "agent_adapter_sha256",
+            "agent_runtime_snapshot_sha256", "agent_runtime_overlay_files", "framework_source_sha",
+            "framework_source_dirty_patch_sha256", "case_manifest_sha256", "runner_version",
+        )
         if key in config
     }
 
@@ -46,9 +50,43 @@ def export_public_report(run_dir: Path, output_dir: Path) -> dict[str, Any]:
                 "model_provider", "model_name", "model_usage", "retrieval_call_count",
                 "tool_usage", "test_behavior", "target_repo_sha", "expected_status",
                 "model_call_limit", "tool_call_limit", "codegraph_index",
+                "agent_adapter_sha256", "selected_adapter_sha256", "agent_runtime_snapshot_sha256",
+                "database_evaluation", "plan_rejection_ok", "plan_rubric",
             )
             if key in metadata
         }
+        api_e2e = metadata.get("api_e2e")
+        if isinstance(api_e2e, dict):
+            safe_api_fields = (
+                "health_passed", "thread_created", "sse_received", "approval_posted",
+                "rejection_posted", "workspace_clean_after_rejection", "final_plan_status",
+                "sqlite_isolated", "final_status", "initial_event_count", "approval_event_count",
+            )
+            case["metadata"]["api_e2e"] = {key: api_e2e[key] for key in safe_api_fields if key in api_e2e}
+            browser = api_e2e.get("browser")
+            if isinstance(browser, dict):
+                browser_fields = (
+                    "browser_started", "page_loaded", "repo_and_prompt_entered", "task_submitted",
+                    "pending_plan_displayed", "workspace_clean_before_approval", "approval_clicked",
+                    "completion_displayed", "initial_event_count", "approval_event_count", "final_status_label",
+                )
+                case["metadata"]["api_e2e"]["browser"] = {key: browser[key] for key in browser_fields if key in browser}
+        sandbox = metadata.get("sandbox")
+        if isinstance(sandbox, dict):
+            sandbox_fields = (
+                "image", "uploaded_file_count", "uploaded_paths", "use_server_proxy",
+                "cleanup_succeeded", "command_latency_ms", "oracle_test_latency_ms",
+            )
+            case["metadata"]["sandbox"] = {key: sandbox[key] for key in sandbox_fields if key in sandbox}
+            safety = sandbox.get("safety_probes")
+            if isinstance(safety, dict):
+                safe_probe_fields = (
+                    "path_traversal_rejected", "timeout_enforced", "cleanup_succeeded",
+                    "timeout_latency_ms", "probe_latency_ms", "timeout_error",
+                )
+                case["metadata"]["sandbox"]["safety_probes"] = {
+                    key: safety[key] for key in safe_probe_fields if key in safety
+                }
         artifacts = {}
         for label, relative in case.get("artifacts", {}).items():
             safe_relative = _safe_run_relative(relative)

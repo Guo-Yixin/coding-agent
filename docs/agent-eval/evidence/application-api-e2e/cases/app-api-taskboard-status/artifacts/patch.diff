@@ -1,0 +1,120 @@
+diff --git a/taskboard/tasks.py b/taskboard/tasks.py
+index 24f522b..78bb707 100644
+--- a/taskboard/tasks.py
++++ b/taskboard/tasks.py
+@@ -8,12 +8,28 @@ Task = dict[str, Any]
+ 
+ 
+ def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]:
+-    """Return tasks matching status; no filter returns every task."""
++    """Return tasks matching status; no filter returns every task.
++
++    Status comparison ignores letter case. Tasks whose status is missing or is
++    not a string never match, and the input tasks are never modified.
++    """
+ 
+     rows = list(tasks)
+     if status is None:
+         return rows
+-    return [task for task in rows if task.get("status") == status]
++
++    # Only strings get case-folded: task status ``None`` or numbers stay intact
++    # so they are compared literally and cannot match by accident.
++    key = status.casefold() if isinstance(status, str) else status
++    matched: list[Task] = []
++    for task in rows:
++        value = task.get("status")
++        if isinstance(value, str) and isinstance(key, str):
++            if value.casefold() == key:
++                matched.append(task)
++        elif value == key:
++            matched.append(task)
++    return matched
+ 
+ 
+ def search_tasks(tasks: Iterable[Task], query: str) -> list[Task]:
+diff --git a/tests/test_filter_by_status.py b/tests/test_filter_by_status.py
+index 1197689..f3e21bf 100644
+--- a/tests/test_filter_by_status.py
++++ b/tests/test_filter_by_status.py
+@@ -15,3 +15,80 @@ def test_status_filter_is_case_insensitive_and_does_not_mutate_tasks():
+ 
+ def test_status_filter_returns_empty_list_when_no_task_matches():
+     assert filter_by_status([{"status": "open"}], "blocked") == []
++
++
++def test_status_filter_returns_all_tasks_when_status_is_none():
++    tasks = [
++        {"id": 1, "status": "open"},
++        {"id": 2, "status": "done"},
++        {"id": 3},
++    ]
++
++    result = filter_by_status(tasks)
++
++    assert result == tasks
++    assert [task["id"] for task in result] == [1, 2, 3]
++
++
++def test_status_filter_matches_pure_case_variants():
++    tasks = [
++        {"id": 1, "status": "open"},
++        {"id": 2, "status": "done"},
++        {"id": 3, "status": "Open"},
++    ]
++
++    assert [task["id"] for task in filter_by_status(tasks, "OPEN")] == [1, 3]
++    assert [task["id"] for task in filter_by_status(tasks, "oPeN")] == [1, 3]
++
++
++def test_status_filter_ignores_missing_and_none_status():
++    tasks = [
++        {"id": 1},
++        {"id": 2, "status": None},
++        {"id": 3, "status": "none"},
++    ]
++
++    # A query for the literal "none" matches only the real "none" status: a
++    # missing key or a ``None`` value must never be stringified into a match.
++    assert [task["id"] for task in filter_by_status(tasks, "none")] == [3]
++    assert filter_by_status(tasks, "None") == [{"id": 3, "status": "none"}]
++
++
++def test_status_filter_handles_unknown_input_types_without_error():
++    tasks = [
++        {"id": 1, "status": 123},
++        {"id": 2, "status": "123"},
++        {"id": 3, "status": "open"},
++    ]
++
++    assert [task["id"] for task in filter_by_status(tasks, 123)] == [1]
++    assert [task["id"] for task in filter_by_status(tasks, "123")] == [2]
++    assert [task["id"] for task in filter_by_status(tasks, "Open")] == [3]
++
++
++def test_status_filter_accepts_iterable_and_preserves_input_order():
++    tasks = [
++        {"id": 1, "status": "open"},
++        {"id": 2, "status": "done"},
++        {"id": 3, "status": "OPEN"},
++        {"id": 4, "status": "open"},
++    ]
++
++    assert [task["id"] for task in filter_by_status(iter(tasks), "open")] == [1, 3, 4]
++
++
++def test_status_filter_does_not_mutate_nested_input():
++    nested_tags = ["api", "docs"]
++    tasks = [
++        {"id": 1, "status": "open", "tags": nested_tags},
++        {"id": 2, "status": "done", "tags": ["ui"]},
++    ]
++    original = [dict(task) for task in tasks]
++    tags_snapshot = list(nested_tags)
++
++    result = filter_by_status(tasks, "OPEN")
++
++    assert [task["id"] for task in result] == [1]
++    assert tasks == original
++    assert nested_tags == tags_snapshot
++    assert [sorted(task) for task in tasks] == [sorted(task) for task in original]

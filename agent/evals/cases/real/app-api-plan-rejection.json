@@ -1,0 +1,23 @@
+{
+  "case_id": "app-api-plan-rejection",
+  "prompt": "请为 Taskboard 增加一个按状态统计任务数量的 count_by_status 功能，并补充测试。开始修改前先向我提交一份包含需求拆解、涉及文件和验证命令的实施计划，等我确认后再改代码。只允许修改 taskboard/tasks.py 和新增 tests/test_count_by_status.py。",
+  "base_ref": "d19ddda0ac269adf1e68d7d2840968527b313bc4",
+  "gold_files": [],
+  "target_tests": [["python", "-m", "pytest", "tests/test_baseline.py", "-q"]],
+  "regression_tests": [["python", "-m", "pytest", "tests/test_baseline.py", "-q"]],
+  "oracle_tests": [],
+  "allowed_files": ["taskboard/tasks.py", "tests/test_count_by_status.py"],
+  "requires_patch": false,
+  "expected_status": "completed",
+  "timeout_seconds": 300,
+  "metadata": {
+    "adapter": "app",
+    "repo_url": "https://github.com/Guo-Yixin/test-coding-eval.git",
+    "purpose": "API end-to-end: reject a pending plan and prove no source file was changed",
+    "require_plan_rejection": true,
+    "plan_decision": "reject",
+    "plan_rubric_any_terms": [["需求拆解", "需求理解", "目标"], ["涉及文件", "相关文件", "改动文件", "涉及模块", "需要阅读的文件"], ["taskboard/tasks.py"], ["test_count_by_status.py"], ["验证命令", "测试命令", "pytest"]],
+    "model_call_limit": 16,
+    "tool_call_limit": 24
+  }
+}

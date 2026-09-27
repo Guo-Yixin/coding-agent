@@ -1,0 +1,7 @@
+diff --git a/result.txt b/result.txt
+new file mode 100644
+index 0000000..b099d3d
+--- /dev/null
++++ b/result.txt
+@@ -0,0 +1 @@
++sandbox-eval-ok

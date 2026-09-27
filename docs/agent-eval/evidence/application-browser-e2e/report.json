@@ -1,0 +1,142 @@
+{
+  "cases": [
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 98709,
+      "artifacts": {
+        "agent_output": "cases/app-api-taskboard-status/artifacts/agent-output.txt",
+        "patch": "cases/app-api-taskboard-status/artifacts/patch.diff",
+        "tests": "cases/app-api-taskboard-status/artifacts/tests.log",
+        "trace": "cases/app-api-taskboard-status/traces/agent-events.jsonl"
+      },
+      "case_id": "app-api-taskboard-status",
+      "changed_files": [
+        "taskboard/tasks.py",
+        "tests/test_filter_by_status.py"
+      ],
+      "errors": [],
+      "input_tokens": 1800447,
+      "metadata": {
+        "model_provider": "DeepSeek",
+        "model_name": "deepseek-flash",
+        "model_usage": {
+          "input_tokens": 1800447,
+          "output_tokens": 13293,
+          "total_tokens": 1813740
+        },
+        "retrieval_call_count": 1,
+        "tool_usage": {
+          "call_count": 68,
+          "calls_by_tool": {
+            "edit_file": 9,
+            "execute": 19,
+            "glob": 1,
+            "grep": 1,
+            "hybrid_code_search": 1,
+            "ls": 5,
+            "read_file": 18,
+            "write_file": 1,
+            "write_todos": 13
+          },
+          "failure_count": 0,
+          "result_count": 68,
+          "success_count": 68
+        },
+        "test_behavior": {
+          "required_test_files": [
+            "tests/test_filter_by_status.py"
+          ],
+          "required_test_files_modified": true
+        },
+        "target_repo_sha": "d19ddda0ac269adf1e68d7d2840968527b313bc4",
+        "expected_status": "completed",
+        "model_call_limit": "24",
+        "tool_call_limit": "64",
+        "codegraph_index": {
+          "available": true,
+          "exit_code": 0,
+          "latency_ms": 993,
+          "output_tail": "T  Initializing CodeGraph\n|\n*  Initialized in [LOCAL_PATH]\n|\nScanning files...\nParsing code...\nResolving refs...\nLinking dynamic dispatch...\n|\n*  Indexed 6 files\n|\n•  27 nodes, 50 edges in 403ms\n|\n—  Done\n\n",
+          "succeeded": true
+        },
+        "agent_adapter_sha256": "1559b837ac41a8ead6cef81287dfe7eb753c77ef9f1543b0693f1f0c53b05346",
+        "selected_adapter_sha256": "e3fadc943a9d1a571d267f5e3ccce93558ce7419b958f60cd742c81bb9ba1a64",
+        "agent_runtime_snapshot_sha256": "6252f20419439444bba11195ce3eb827292b9f428589273f3d31077c968e624d",
+        "api_e2e": {
+          "health_passed": true,
+          "thread_created": true,
+          "sse_received": true,
+          "approval_posted": true,
+          "sqlite_isolated": true,
+          "final_status": "finished",
+          "initial_event_count": 552,
+          "approval_event_count": 281,
+          "browser": {
+            "browser_started": true,
+            "page_loaded": true,
+            "repo_and_prompt_entered": true,
+            "task_submitted": true,
+            "pending_plan_displayed": true,
+            "workspace_clean_before_approval": true,
+            "approval_clicked": true,
+            "completion_displayed": true,
+            "initial_event_count": 552,
+            "approval_event_count": 281,
+            "final_status_label": "已完成"
+          }
+        }
+      },
+      "oracle_tests_passed": true,
+      "output_tokens": 13293,
+      "patch": "diff --git a/taskboard/tasks.py b/taskboard/tasks.py\nindex 24f522b..0c7584b 100644\n--- a/taskboard/tasks.py\n+++ b/taskboard/tasks.py\n@@ -13,7 +13,12 @@ def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[T\n     rows = list(tasks)\n     if status is None:\n         return rows\n-    return [task for task in rows if task.get(\"status\") == status]\n+    target = status.lower() if isinstance(status, str) else status\n+    return [\n+        task\n+        for task in rows\n+        if isinstance(task.get(\"status\"), str) and task[\"status\"].lower() == target\n+    ]\n \n \n def search_tasks(tasks: Iterable[Task], query: str) -> list[Task]:\ndiff --git a/tests/test_filter_by_status.py b/tests/test_filter_by_status.py\nindex 1197689..d7d0367 100644\n--- a/tests/test_filter_by_status.py\n+++ b/tests/test_filter_by_status.py\n@@ -15,3 +15,82 @@ def test_status_filter_is_case_insensitive_and_does_not_mutate_tasks():\n \n def test_status_filter_returns_empty_list_when_no_task_matches():\n     assert filter_by_status([{\"status\": \"open\"}], \"blocked\") == []\n+\n+\n+def test_status_filter_is_case_insensitive_in_both_query_and_data():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"open\"},\n+        {\"id\": 2, \"status\": \"OPEN\"},\n+        {\"id\": 3, \"status\": \"Open\"},\n+        {\"id\": 4, \"status\": \"done\"},\n+    ]\n+\n+    for query in (\"open\", \"OPEN\", \"Open\", \"oPeN\"):\n+        assert [task[\"id\"] for task in filter_by_status(tasks, query)] == [1, 2, 3]\n+\n+\n+def test_status_filter_with_none_returns_all_tasks_in_input_order():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"open\"},\n+        {\"id\": 2, \"status\": \"done\"},\n+        {\"id\": 3},\n+    ]\n+\n+    assert filter_by_status(tasks) == tasks\n+    assert filter_by_status(tasks, None) == tasks\n+    assert filter_by_status(tasks) is not tasks\n+\n+\n+def test_status_filter_on_empty_input_returns_empty_list():\n+    assert filter_by_status([], \"open\") == []\n+    assert filter_by_status([]) == []\n+\n+\n+def test_status_filter_does_not_mutate_tasks_or_result_elements():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"open\", \"title\": \"Write docs\"},\n+        {\"id\": 2, \"status\": \"done\", \"title\": \"Fix API\"},\n+    ]\n+    original = [dict(task) for task in tasks]\n+\n+    result = filter_by_status(tasks, \"open\")\n+\n+    assert tasks == original\n+    assert [task[\"id\"] for task in result] == [1]\n+    assert result[0] is tasks[0]\n+    assert result == [{\"id\": 1, \"status\": \"open\", \"title\": \"Write docs\"}]\n+\n+\n+def test_status_filter_ignores_tasks_without_a_status_key():\n+    tasks = [{\"id\": 1}, {\"id\": 2, \"status\": \"open\"}]\n+\n+    assert filter_by_status(tasks, \"open\") == [{\"id\": 2, \"status\": \"open\"}]\n+    assert filter_by_status(tasks, \"done\") == []\n+\n+\n+def test_status_filter_accepts_any_iterable_and_preserves_input_order():\n+    tasks = (\n+        {\"id\": 1, \"status\": \"OPEN\"},\n+        {\"id\": 2, \"status\": \"done\"},\n+        {\"id\": 3, \"status\": \"open\"},\n+    )\n+\n+    assert [task[\"id\"] for task in filter_by_status(tasks, \"Open\")] == [1, 3]\n+    assert [task[\"id\"] for task in filter_by_status(iter(tasks), \"Open\")] == [1, 3]\n+\n+\n+def test_status_filter_does_not_match_tasks_without_a_usable_status():\n+    tasks = [\n+        {\"id\": 1, \"status\": \"\"},\n+        {\"id\": 2, \"status\": None},\n+        {\"id\": 3},\n+        {\"id\": 4, \"status\": 42},\n+        {\"id\": 5, \"status\": \"open\"},\n+    ]\n+    original = [dict(task) for task in tasks]\n+\n+    assert [task[\"id\"] for task in filter_by_status(tasks, \"open\")] == [5]\n+    assert [task[\"id\"] for task in filter_by_status(tasks, \"\")] == [1]\n+    assert filter_by_status(tasks, \"None\") == []\n+    assert filter_by_status(tasks, \"42\") == []\n+    assert tasks == original\n",
+      "patch_apply": true,
+      "regression_test_latency_ms": 792,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": 1.0,
+      "status": "passed",
+      "target_test_latency_ms": 880,
+      "target_tests_passed": true,
+      "tool_recovery_rate": null,
+      "total_tokens": 1813740
+    }
+  ],
+  "config": {
+    "agent_source_sha": "710862e51e382762de1b3cccf63fdf965d369f4e",
+    "agent_source_dirty_patch_sha256": null,
+    "agent_adapter_sha256": "1559b837ac41a8ead6cef81287dfe7eb753c77ef9f1543b0693f1f0c53b05346",
+    "agent_runtime_snapshot_sha256": "6252f20419439444bba11195ce3eb827292b9f428589273f3d31077c968e624d",
+    "agent_runtime_overlay_files": {
+      "agent/evals/telemetry.py": "fbf4b96d0336123335653a59a67da91f6484cc196e4bd291307741539c492ce7",
+      "scripts/run_eval_agent.py": "1559b837ac41a8ead6cef81287dfe7eb753c77ef9f1543b0693f1f0c53b05346",
+      "scripts/run_eval_app.py": "e3fadc943a9d1a571d267f5e3ccce93558ce7419b958f60cd742c81bb9ba1a64"
+    },
+    "framework_source_sha": "440e70da350820d5988d2c7361d22348ddf40909",
+    "framework_source_dirty_patch_sha256": "b5f60b9f423b14493242f83596ae0a1a0f9285e284e9ffe859712294178670fb",
+    "case_manifest_sha256": "f495c092cb01157810b8b1afa4b8a449077ecee212389138fab3e06d42855965",
+    "runner_version": "3"
+  },
+  "created_at": "2026-09-26T13:47:53.147967+00:00",
+  "mode": "real",
+  "report_id": "f495c092cb011578",
+  "repository": "test-coding-eval",
+  "summary": {
+    "case_count": 1,
+    "failed_count": 0,
+    "oracle_test_case_count": 1,
+    "oracle_test_pass_rate": 1.0,
+    "oracle_test_passed_case_count": 1,
+    "passed_count": 1,
+    "patch_apply_rate": 1.0,
+    "regression_test_case_count": 1,
+    "regression_test_pass_rate": 1.0,
+    "regression_test_passed_case_count": 1,
+    "retrieval_hit_at_k": 1.0,
+    "target_test_case_count": 1,
+    "target_test_pass_rate": 1.0,
+    "target_test_passed_case_count": 1,
+    "token_usage_case_count": 1,
+    "tool_recovery_rate": null,
+    "total_latency_ms": 98709,
+    "total_tokens": 1813740
+  }
+}
