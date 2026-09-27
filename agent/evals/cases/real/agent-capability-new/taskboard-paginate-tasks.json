@@ -1,0 +1,85 @@
+{
+  "case_id": "taskboard-paginate-tasks",
+  "prompt": "请先用 hybrid_code_search 定位 taskboard 的函数和导出方式，再新增公开函数 paginate_tasks(tasks, *, page, page_size)：页码从 1 开始；page/page_size 必须是正整数（bool 不算整数），否则抛 ValueError；超出末页返回空列表；接受一次性 Iterable，保留顺序且不修改输入。通过 taskboard 包导出，并扩展 tests/test_paginate_tasks.py。只修改 taskboard/tasks.py、taskboard/__init__.py 和该测试文件。",
+  "repo_path": ".",
+  "base_ref": "d65047705e6e947bcd33e193ab4c8fdfeb8956c8",
+  "gold_files": [
+    "taskboard/tasks.py",
+    "taskboard/__init__.py"
+  ],
+  "fixture_files": [
+    "tests/test_paginate_tasks.py"
+  ],
+  "target_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/test_paginate_tasks.py",
+      "-q"
+    ]
+  ],
+  "regression_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/test_baseline.py",
+      "-q"
+    ]
+  ],
+  "oracle_tests": [
+    [
+      "python",
+      "{oracle_scripts}/test_taskboard_paginate_tasks.py",
+      "{target_repo}"
+    ]
+  ],
+  "requires_patch": true,
+  "timeout_seconds": 480,
+  "allowed_files": [
+    "taskboard/tasks.py",
+    "taskboard/__init__.py",
+    "tests/test_paginate_tasks.py"
+  ],
+  "expected_status": "completed",
+  "metadata": {
+    "adapter": "agent",
+    "repo_url": "https://github.com/Guo-Yixin/test-coding-eval.git",
+    "purpose": "分页功能、输入校验、一次性 Iterable 与边界测试",
+    "required_changed_files": [
+      "taskboard/tasks.py",
+      "taskboard/__init__.py",
+      "tests/test_paginate_tasks.py"
+    ],
+    "expected_task_kind": "coding",
+    "agent_tools": [
+      "hybrid_code_search"
+    ],
+    "model_call_limit": 24,
+    "tool_call_limit": 48,
+    "auto_approve_plan": true,
+    "require_plan_approval": true,
+    "plan_rubric_any_terms": [
+      [
+        "需求理解",
+        "需求拆解",
+        "目标"
+      ],
+      [
+        "涉及文件",
+        "相关文件",
+        "改动文件",
+        "taskboard/tasks.py",
+        "taskboard/__init__.py",
+        "tests/"
+      ],
+      [
+        "验证方案",
+        "测试方案",
+        "pytest",
+        "测试命令"
+      ]
+    ]
+  }
+}

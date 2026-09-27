@@ -1,0 +1,84 @@
+{
+  "case_id": "taskboard-group-by-status",
+  "prompt": "请先使用 hybrid_code_search 定位 taskboard 中的公开 API，再实现 group_tasks_by_status(tasks)：按 status 忽略大小写分组，缺失或 null 状态归入 unknown；分组顺序按每个状态首次出现的顺序，组内保留输入顺序。通过 taskboard 包导出该函数，并补充 tests/test_group_tasks_by_status.py。不要修改其他文件。",
+  "repo_path": ".",
+  "base_ref": "eb344e9e566f3c68176f0fc57d53686e47caedbf",
+  "gold_files": [
+    "taskboard/tasks.py",
+    "taskboard/__init__.py"
+  ],
+  "gold_symbols": [],
+  "target_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/test_group_tasks_by_status.py",
+      "-q"
+    ]
+  ],
+  "regression_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/test_baseline.py",
+      "-q"
+    ]
+  ],
+  "oracle_tests": [
+    [
+      "python",
+      "{oracle_scripts}/test_taskboard_group_by_status.py",
+      "{target_repo}"
+    ]
+  ],
+  "agent_command": null,
+  "fake_command": null,
+  "requires_patch": true,
+  "timeout_seconds": 480,
+  "allowed_files": [
+    "taskboard/tasks.py",
+    "taskboard/__init__.py",
+    "tests/test_group_tasks_by_status.py"
+  ],
+  "expected_status": "completed",
+  "metadata": {
+    "repo_url": "https://github.com/Guo-Yixin/test-coding-eval.git",
+    "purpose": "cross-file API feature with stable ordered grouping",
+    "required_changed_files": [
+      "taskboard/tasks.py",
+      "taskboard/__init__.py",
+      "tests/test_group_tasks_by_status.py"
+    ],
+    "model_call_limit": 18,
+    "tool_call_limit": 30,
+    "auto_approve_plan": true,
+    "require_plan_approval": true,
+    "plan_rubric_any_terms": [
+      [
+        "需求理解",
+        "需求拆解",
+        "目标"
+      ],
+      [
+        "涉及文件",
+        "相关文件",
+        "改动文件",
+        "taskboard/tasks.py",
+        "taskboard/__init__.py",
+        "tests/"
+      ],
+      [
+        "验证方案",
+        "测试方案",
+        "pytest",
+        "测试命令"
+      ]
+    ],
+    "expected_task_kind": "coding",
+    "agent_tools": [
+      "hybrid_code_search"
+    ]
+  }
+}

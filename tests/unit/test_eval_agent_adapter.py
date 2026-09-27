@@ -46,3 +46,21 @@ def test_tool_trace_joins_names_and_marks_later_success_as_recovery(tmp_path: Pa
     assert actual[1]["payload"]["tool_name"] == "hybrid_code_search"
     assert actual[1]["payload"]["recovered"] is True
     assert actual[3]["payload"]["tool_name"] == "hybrid_code_search"
+
+
+def test_injected_retrieval_error_can_recover_through_a_successful_fallback_tool(tmp_path: Path):
+    trace = tmp_path / "events.jsonl"
+    events = [
+        {"type": "tool_error", "payload": {"probe_id": "probe-1", "tool_name": "hybrid_code_search", "injected": True}},
+        {"type": "tool_call", "payload": {"tool_call_id": "call-2", "tool_name": "read_file"}},
+        {"type": "tool_result", "payload": {"tool_call_id": "call-2", "tool_name": "read_file", "status": "success"}},
+    ]
+    trace.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
+
+    _finalize_tool_trace(trace)
+
+    actual = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+    assert actual[0]["payload"]["recovered"] is True
+    assert actual[0]["payload"]["recovery_strategy"] == "fallback_read_file"
+    assert actual[-1]["type"] == "tool_recovery"
+    assert actual[-1]["payload"]["probe_id"] == "probe-1"

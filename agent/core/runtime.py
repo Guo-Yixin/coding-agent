@@ -1037,6 +1037,17 @@ def run_agent_task(
         if interaction_action in {"resume_intervention", "approve_plan"}
         else classify_task_kind(prompt)
     )
+    if get_env("CODING_AGENT_EVAL_MODE", "").strip() == "1":
+        from agent.evals.telemetry import record_eval_event
+
+        record_eval_event(
+            "task_intent",
+            {
+                "task_kind": task_kind,
+                "interaction_action": interaction_action,
+                "prompt_length": len(prompt or ""),
+            },
+        )
     approved_plan_text: str | None = None
     explicit_plan: dict[str, Any] | None = None
     # display_prompt 是本轮用户真实输入，用于前端展示；coding_prompt 是传给 Agent 的执行目标。

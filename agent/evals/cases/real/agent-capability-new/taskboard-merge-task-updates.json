@@ -1,0 +1,85 @@
+{
+  "case_id": "taskboard-merge-task-updates",
+  "prompt": "请使用 hybrid_code_search 找到 taskboard 的数据类型和导出点，然后新增 merge_task_updates(tasks, task_id, updates)：返回新的列表，只合并匹配 id 的一条任务；目标任务字典需复制，不能改动输入列表或原任务；禁止把 id 改成不同值（抛 ValueError）；找不到 task_id 时抛 KeyError；其余任务顺序不变。通过 taskboard 包导出，并扩展 tests/test_merge_task_updates.py。只修改 taskboard/tasks.py、taskboard/__init__.py 和该测试文件。",
+  "repo_path": ".",
+  "base_ref": "d65047705e6e947bcd33e193ab4c8fdfeb8956c8",
+  "gold_files": [
+    "taskboard/tasks.py",
+    "taskboard/__init__.py"
+  ],
+  "fixture_files": [
+    "tests/test_merge_task_updates.py"
+  ],
+  "target_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/test_merge_task_updates.py",
+      "-q"
+    ]
+  ],
+  "regression_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/test_baseline.py",
+      "-q"
+    ]
+  ],
+  "oracle_tests": [
+    [
+      "python",
+      "{oracle_scripts}/test_taskboard_merge_task_updates.py",
+      "{target_repo}"
+    ]
+  ],
+  "requires_patch": true,
+  "timeout_seconds": 480,
+  "allowed_files": [
+    "taskboard/tasks.py",
+    "taskboard/__init__.py",
+    "tests/test_merge_task_updates.py"
+  ],
+  "expected_status": "completed",
+  "metadata": {
+    "adapter": "agent",
+    "repo_url": "https://github.com/Guo-Yixin/test-coding-eval.git",
+    "purpose": "按 ID 更新、不可变语义、异常和引用行为",
+    "required_changed_files": [
+      "taskboard/tasks.py",
+      "taskboard/__init__.py",
+      "tests/test_merge_task_updates.py"
+    ],
+    "expected_task_kind": "coding",
+    "agent_tools": [
+      "hybrid_code_search"
+    ],
+    "model_call_limit": 24,
+    "tool_call_limit": 48,
+    "auto_approve_plan": true,
+    "require_plan_approval": true,
+    "plan_rubric_any_terms": [
+      [
+        "需求理解",
+        "需求拆解",
+        "目标"
+      ],
+      [
+        "涉及文件",
+        "相关文件",
+        "改动文件",
+        "taskboard/tasks.py",
+        "taskboard/__init__.py",
+        "tests/"
+      ],
+      [
+        "验证方案",
+        "测试方案",
+        "pytest",
+        "测试命令"
+      ]
+    ]
+  }
+}

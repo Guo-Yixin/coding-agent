@@ -6,6 +6,7 @@ import sys
 import traceback
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 
 def _write_json(path_value: str, payload: Any) -> None:
@@ -212,7 +213,15 @@ def _instrument_retrieval(record_eval_event, injection: dict[str, Any] | None = 
         query = kwargs.get("query", args[0] if args else "")
         if inject_remaining and inject_tool == "hybrid_code_search":
             inject_remaining -= 1
-            pending_recovery.append({"tool_name": inject_tool, "query": str(query)[:300], "recovered": False})
+            failure = {
+                "probe_id": uuid4().hex,
+                "tool_name": inject_tool,
+                "query": str(query)[:300],
+                "recovered": False,
+                "injected": True,
+            }
+            pending_recovery.append(failure)
+            record_eval_event("tool_error", {**failure, "error_type": "TimeoutError"})
             raise TimeoutError(str(injection.get("message") or "Injected one-shot Eval timeout for tool recovery"))
         result = original(*args, **kwargs)
         payload = result if isinstance(result, dict) else {}
@@ -229,7 +238,12 @@ def _instrument_retrieval(record_eval_event, injection: dict[str, Any] | None = 
                 if not failed["recovered"]:
                     failed["recovered"] = True
                     failed["recovery"] = "success"
-                    record_eval_event("tool_error", {**failed, "error_type": "TimeoutError", "injected": True})
+                    failed["recovery_strategy"] = "retry_hybrid_code_search"
+                    record_eval_event(
+                        "tool_recovery",
+                        {"probe_id": failed["probe_id"], "tool_name": failed["tool_name"],
+                         "strategy": failed["recovery_strategy"], "success": True},
+                    )
         return result
 
     traced._eval_instrumented = True
@@ -265,6 +279,46 @@ def _finalize_tool_trace(trace_path: Path) -> None:
         call_id = str(payload.get("tool_call_id") or "")
         if call_id and not payload.get("tool_name") and names.get(call_id):
             payload["tool_name"] = names[call_id]
+    successful_recoveries = {
+        str((event.get("payload") or {}).get("probe_id"))
+        for event in events
+        if event.get("type") == "tool_recovery"
+        and (event.get("payload") or {}).get("success") is True
+    }
+    recoveries: list[dict[str, Any]] = []
+    fallback_tools = {"hybrid_code_search", "read_file", "execute", "grep", "ls", "glob"}
+    for index, event in enumerate(events):
+        payload = event.get("payload", {})
+        probe_id = str(payload.get("probe_id") or "")
+        if event.get("type") != "tool_error" or payload.get("injected") is not True or not probe_id:
+            continue
+        if probe_id in successful_recoveries:
+            payload["recovered"] = True
+            payload["recovery"] = "success"
+            continue
+        for later in events[index + 1:]:
+            later_payload = later.get("payload", {})
+            if (
+                later.get("type") == "tool_result"
+                and later_payload.get("tool_name") in fallback_tools
+                and later_payload.get("status") != "error"
+                and later_payload.get("failed") is not True
+            ):
+                payload["recovered"] = True
+                payload["recovery"] = "success"
+                payload["recovery_strategy"] = f"fallback_{later_payload.get('tool_name')}"
+                recoveries.append({
+                    "timestamp": later.get("timestamp"),
+                    "type": "tool_recovery",
+                    "payload": {
+                        "probe_id": probe_id,
+                        "tool_name": payload.get("tool_name"),
+                        "strategy": payload["recovery_strategy"],
+                        "success": True,
+                    },
+                })
+                break
+    events.extend(recoveries)
     for index, event in enumerate(events):
         payload = event.get("payload", {})
         if event.get("type") not in {"tool_error", "tool_failed"} or not payload.get("tool_name"):
@@ -302,7 +356,11 @@ def _record_tool_messages(messages: list[Any], record_eval_event) -> None:
             name = message.get("name") if isinstance(message, dict) else getattr(message, "name", None)
             content = message.get("content") if isinstance(message, dict) else getattr(message, "content", None)
             kind = "tool_error" if status == "error" else "tool_result"
-            record_eval_event(kind, {"tool_call_id": call_id, "tool_name": name, "content": str(content or "")[:1000]})
+            record_eval_event(
+                kind,
+                {"tool_call_id": call_id, "tool_name": name, "status": status,
+                 "content": str(content or "")[:1000]},
+            )
 
 
 def _instrument_runtime_events(record_eval_event) -> None:
@@ -523,9 +581,6 @@ def main() -> int:
     messages = [message for item in results for message in (item.get("messages", []) if isinstance(item, dict) else [])]
     _record_tool_messages(messages, record_eval_event)
     trace_path = Path(os.environ["EVAL_EVENT_FILE"]).expanduser().resolve()
-    for failure in injected_tool_failures:
-        if not failure.get("recovered"):
-            record_eval_event("tool_error", {**failure, "error_type": "TimeoutError", "injected": True})
     _finalize_tool_trace(trace_path)
     trace_events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines() if line.strip()] if trace_path.exists() else []
     intent_usage = [event.get("payload", {}) for event in trace_events if event.get("type") == "intent_model_usage"]

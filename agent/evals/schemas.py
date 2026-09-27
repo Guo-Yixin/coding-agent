@@ -15,6 +15,7 @@ class EvalCase:
     target_tests: list[list[str] | str] = field(default_factory=list)
     regression_tests: list[list[str] | str] = field(default_factory=list)
     oracle_tests: list[list[str] | str] = field(default_factory=list)
+    fixture_files: list[str] = field(default_factory=list)
     agent_command: list[str] | None = None
     fake_command: list[str] | None = None
     requires_patch: bool = False
@@ -35,6 +36,7 @@ class EvalCase:
             target_tests=list(data.get("target_tests", [])),
             regression_tests=list(data.get("regression_tests", [])),
             oracle_tests=list(data.get("oracle_tests", [])),
+            fixture_files=[str(item) for item in data.get("fixture_files", [])],
             agent_command=list(data["agent_command"]) if data.get("agent_command") else None,
             fake_command=list(data["fake_command"]) if data.get("fake_command") else None,
             requires_patch=bool(data.get("requires_patch", False)),
