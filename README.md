@@ -17,10 +17,10 @@ Plan, search, implement, test, review, and deliver changes through a streaming w
 
 <p align="center">
   <a href="assets/demo/coding-agent-demo.mp4">
-    <img src="assets/demo/completed-github-pr-task.png" alt="Watch CODING complete a repository task and prepare a pull request" width="92%">
+    <img src="assets/demo/coding-agent-demo-preview.gif" alt="Preview: CODING searches a repository, edits code, runs checks, and prepares a pull request" width="92%">
   </a>
 </p>
-<p align="center"><a href="assets/demo/coding-agent-demo.mp4">▶ Watch the 89-second coding workflow demo</a></p>
+<p align="center">▶ Animated preview · <a href="assets/demo/coding-agent-demo.mp4">Open the full 89-second video</a></p>
 
 ## What is CODING?
 
@@ -42,7 +42,8 @@ CODING is a web-based AI coding agent for real Git repositories. It turns a requ
 
 Solid borders show the current application and Eval paths. The dashed area is the documented scale-out target; it is not the default runtime topology.
 
-<p align="center"><img src="assets/architecture-en.svg" alt="CODING architecture" width="100%"></p>
+<p align="center"><a href="assets/architecture-en.svg"><img src="assets/architecture-flow-en.gif" alt="Animated CODING architecture: request routing, agent execution, isolated evaluation, and evidence flow" width="100%"></a></p>
+<p align="center">Animated flow · <a href="assets/architecture-en.svg">Open the scalable SVG diagram</a></p>
 
 The deployment design describes **3 Agent Workers and 2 ASGI nodes**, with estimates of about **170 peak concurrent requests** and **20–30 concurrent coding/review tasks**. Treat these as design capacity estimates: this repository does not include a load-test report validating those figures. The Redis queue, repository lock, and event stream are shown as target components, not current application services.
 

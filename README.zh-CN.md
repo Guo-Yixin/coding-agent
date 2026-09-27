@@ -17,10 +17,10 @@
 
 <p align="center">
   <a href="assets/demo/coding-agent-demo.mp4">
-    <img src="assets/demo/completed-github-pr-task.png" alt="点击观看 CODING 完成仓库任务并准备 Pull Request 的演示" width="92%">
+    <img src="assets/demo/coding-agent-demo-preview.gif" alt="预览：CODING 检索仓库、修改代码、运行检查并准备 Pull Request" width="92%">
   </a>
 </p>
-<p align="center"><a href="assets/demo/coding-agent-demo.mp4">▶ 观看 89 秒编码工作流演示</a></p>
+<p align="center">▶ 动态预览 · <a href="assets/demo/coding-agent-demo.mp4">打开 89 秒完整演示视频</a></p>
 
 ## CODING 是什么
 
@@ -42,7 +42,8 @@ CODING 是一个面向真实 Git 仓库的 AI 编码工作台。它把用户需�
 
 实线表示当前应用和 Eval 的运行路径；虚线区域表示文档中的横向扩容目标，并非默认运行拓扑。
 
-<p align="center"><img src="assets/architecture-zh.svg" alt="CODING 项目架构图" width="100%"></p>
+<p align="center"><a href="assets/architecture-zh.svg"><img src="assets/architecture-flow-zh.gif" alt="CODING 动态架构图：需求路由、Agent 执行、隔离评测与报告反馈" width="100%"></a></p>
+<p align="center">动态流程图 · <a href="assets/architecture-zh.svg">打开可缩放 SVG 源图</a></p>
 
 部署设计描述了 **3 个 Agent Worker 和 2 个 ASGI 节点**，并给出约 **170 峰值并发请求、20–30 个 coding/review 并发任务**的容量估算。仓库目前没有包含验证这些数字的压测报告，因此应视为设计容量估算。图中的 Redis 队列、仓库锁和事件流是目标组件，不是当前应用服务。
 
