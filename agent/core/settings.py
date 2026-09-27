@@ -31,7 +31,15 @@ PERSISTENCE_BACKEND = get_env(
     "PERSISTENCE_BACKEND", "postgres" if POSTGRES_DSN else "sqlite"
 ).strip().lower()
 if os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() == "1" and PERSISTENCE_BACKEND != "sqlite":
-    raise RuntimeError("Agent Eval requires PERSISTENCE_BACKEND=sqlite; PostgreSQL is blocked")
+    allow_isolated_postgres = (
+        PERSISTENCE_BACKEND == "postgres"
+        and os.environ.get("CODING_AGENT_EVAL_ALLOW_POSTGRES", "").strip() == "1"
+        and bool(POSTGRES_DSN)
+    )
+    if not allow_isolated_postgres:
+        raise RuntimeError(
+            "Agent Eval blocks PostgreSQL unless an isolated app-E2E runner explicitly enables it"
+        )
 POSTGRES_POOL_MIN_SIZE = int(get_env("POSTGRES_POOL_MIN_SIZE", "1"))
 POSTGRES_POOL_MAX_SIZE = int(get_env("POSTGRES_POOL_MAX_SIZE", "8"))
 DEFAULT_TENANT_ID = get_env("CODING_DEFAULT_TENANT_ID", "default")

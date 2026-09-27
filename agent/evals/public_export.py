@@ -60,9 +60,22 @@ def export_public_report(run_dir: Path, output_dir: Path) -> dict[str, Any]:
             safe_api_fields = (
                 "health_passed", "thread_created", "sse_received", "approval_posted",
                 "rejection_posted", "workspace_clean_after_rejection", "final_plan_status",
-                "sqlite_isolated", "final_status", "initial_event_count", "approval_event_count",
+                "sqlite_isolated", "persistence_backend", "persistence_isolated",
+                "final_status", "initial_event_count", "approval_event_count",
             )
             case["metadata"]["api_e2e"] = {key: api_e2e[key] for key in safe_api_fields if key in api_e2e}
+            postgres = api_e2e.get("postgres_e2e")
+            if isinstance(postgres, dict):
+                case["metadata"]["api_e2e"]["postgres_e2e"] = {
+                    key: postgres[key]
+                    for key in (
+                        "identity_verified", "records_persisted", "reconnect_verified",
+                        "backend_restarted", "record_counts", "checkpoint_count",
+                        "record_counts_after_restart", "api_thread_restored",
+                        "api_message_count_after_restart", "status_after_restart",
+                    )
+                    if key in postgres
+                }
             browser = api_e2e.get("browser")
             if isinstance(browser, dict):
                 browser_fields = (

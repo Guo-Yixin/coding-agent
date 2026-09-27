@@ -97,3 +97,51 @@ def test_public_export_redacts_local_paths_and_copies_only_text_artifacts(tmp_pa
     html = (output / "report.html").read_text(encoding="utf-8")
     assert "cases/case-a/artifacts/agent-output.txt" in html
     assert "cases/case-a/artifacts/manual-review.md" in html
+
+
+def test_public_export_keeps_safe_postgres_e2e_evidence(tmp_path: Path):
+    run_dir = tmp_path / "pg-run"
+    run_dir.mkdir()
+    (run_dir / "report.json").write_text(
+        json.dumps({
+            "report_id": "pg-run",
+            "mode": "real",
+            "created_at": "2026-09-27T00:00:00Z",
+            "repository": "coding-agent",
+            "config": {"agent_source_sha": "abc123"},
+            "summary": {"case_count": 1, "passed_count": 1, "failed_count": 0},
+            "cases": [{
+                "case_id": "postgres-app",
+                "status": "passed",
+                "artifacts": {},
+                "metadata": {"api_e2e": {
+                    "persistence_backend": "postgres",
+                    "persistence_isolated": True,
+                    "postgres_e2e": {
+                        "identity_verified": True,
+                        "records_persisted": True,
+                        "reconnect_verified": True,
+                        "backend_restarted": True,
+                        "database_name": "coding_agent_eval_private",
+                        "host": "127.0.0.1",
+                        "record_counts": {"threads": 1, "runs": 1},
+                        "checkpoint_count": 2,
+                        "api_thread_restored": True,
+                    },
+                    "database_paths": ["C:\\\\private\\\\dsn"],
+                }},
+                "errors": [],
+            }],
+        }),
+        encoding="utf-8",
+    )
+
+    output = tmp_path / "public-pg"
+    export_public_report(run_dir, output)
+    data = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    evidence = data["cases"][0]["metadata"]["api_e2e"]["postgres_e2e"]
+    assert evidence["identity_verified"] is True
+    assert evidence["checkpoint_count"] == 2
+    assert evidence["record_counts"] == {"threads": 1, "runs": 1}
+    assert "database_name" not in evidence and "host" not in evidence
+    assert "database_paths" not in data["cases"][0]["metadata"]["api_e2e"]
