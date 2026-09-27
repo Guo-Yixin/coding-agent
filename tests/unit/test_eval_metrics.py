@@ -16,6 +16,16 @@ def test_tool_recovery_rate_counts_recovered_failures() -> None:
     assert tool_recovery_rate(events) == 0.5
 
 
+def test_tool_recovery_rate_deduplicates_probe_and_joins_alternative_recovery_event() -> None:
+    events = [
+        {"type": "tool_error", "payload": {"probe_id": "p1", "tool_name": "hybrid_code_search", "injected": True}},
+        {"type": "tool_error", "payload": {"probe_id": "p1", "tool_name": "hybrid_code_search", "injected": True}},
+        {"type": "tool_recovery", "payload": {"probe_id": "p1", "strategy": "fallback_read_file", "success": True}},
+        {"type": "tool_error", "payload": {"probe_id": "p2", "tool_name": "hybrid_code_search", "injected": True}},
+    ]
+    assert tool_recovery_rate(events) == 0.5
+
+
 def test_calculate_metrics_adds_token_fields() -> None:
     result = calculate_metrics(
         retrieval=[{"path": "agent/core/runtime.py"}],

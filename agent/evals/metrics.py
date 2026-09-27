@@ -18,19 +18,46 @@ def retrieval_hit_at_k(retrieval: list[dict[str, Any]], gold_files: list[str], k
 
 def tool_recovery_rate(events: list[dict[str, Any]]) -> float | None:
     failures = [event for event in events if event.get("type") in {"tool_error", "tool_failed"}]
+    seen_failures: dict[str, dict[str, Any]] = {}
+    for index, event in enumerate(failures):
+        payload = event.get("payload") or event
+        key = str(payload.get("probe_id") or payload.get("tool_call_id") or f"anonymous:{index}")
+        seen_failures.setdefault(key, payload)
+    recoveries = {
+        str((event.get("payload") or {}).get("probe_id"))
+        for event in events
+        if event.get("type") == "tool_recovery"
+        and (event.get("payload") or {}).get("success") is True
+        and (event.get("payload") or {}).get("probe_id")
+    }
+    if recoveries:
+        relevant = {
+            key: payload for key, payload in seen_failures.items()
+            if payload.get("injected") is True and payload.get("probe_id")
+        }
+        if relevant:
+            return round(sum(key in recoveries for key in relevant) / len(relevant), 4)
     identified = [
-        event for event in failures
-        if (event.get("payload") or {}).get("tool_name") or event.get("tool_name")
+        payload for payload in seen_failures.values()
+        if payload.get("tool_name")
     ]
     # Unknown raw-stream errors cannot be paired with a concrete retry. Exclude them
     # whenever the adapter has supplied identified tool failures; keep compatibility
     # with older traces whose error events had no tool name at all.
     if identified:
-        failures = identified
-    if not failures:
+        seen_failures = {
+            str(payload.get("probe_id") or payload.get("tool_call_id") or index): payload
+            for index, payload in enumerate(identified)
+        }
+    else:
+        seen_failures = {str(index): payload for index, payload in enumerate(seen_failures.values())}
+    if not seen_failures:
         return None
-    recovered = sum(1 for event in failures if event.get("recovered") is True or event.get("recovery") in {"success", "recovered"})
-    return round(recovered / len(failures), 4)
+    recovered = sum(
+        key in recoveries or payload.get("recovered") is True or payload.get("recovery") in {"success", "recovered"}
+        for key, payload in seen_failures.items()
+    )
+    return round(recovered / len(seen_failures), 4)
 
 
 def tool_usage_metrics(events: list[dict[str, Any]]) -> dict[str, Any]:

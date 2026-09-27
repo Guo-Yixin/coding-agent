@@ -13,7 +13,7 @@ import tempfile
 import time
 from io import BytesIO
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from agent.evals.metrics import calculate_metrics
@@ -107,6 +107,7 @@ class EvalRunner:
                             json.dumps(case.to_dict(), sort_keys=True, ensure_ascii=False).encode("utf-8")
                         ).hexdigest(),
                         "target_repo_sha": self._target_commits[case.case_id],
+                        "fixture_files": self._fixture_hashes(case),
                     }
                     for case in cases
                 ],
@@ -163,7 +164,7 @@ class EvalRunner:
             cases=results,
             config={
                 "python": self.python_executable,
-                "runner_version": "3",
+                "runner_version": "4",
                 "agent_source_sha": source_sha,
                 "agent_source_dirty_patch_sha256": source_patch_sha,
                 "agent_source_root": str(self.agent_source_root),
@@ -201,6 +202,7 @@ class EvalRunner:
         with tempfile.TemporaryDirectory(prefix=f"eval-{case.case_id}-") as temp:
             workspace = Path(temp) / "repo"
             self._copy_repository(repository, workspace)
+            self._materialize_case_fixtures(case, workspace)
             self._init_git_baseline(workspace)
             eval_dir = workspace / ".eval"
             eval_dir.mkdir()
@@ -287,6 +289,8 @@ class EvalRunner:
 
         self._extract_git_archive(repository, target_sha, repo_path)
         self._extract_git_archive(repository, target_sha, oracle_repo)
+        fixture_hashes = self._materialize_case_fixtures(case, repo_path)
+        self._materialize_case_fixtures(case, oracle_repo)
         self._init_git_baseline(repo_path)
         self._init_git_baseline(oracle_repo)
         remote_added = subprocess.run(
@@ -347,6 +351,9 @@ class EvalRunner:
             "EVAL_REPO_URL": repo_url,
             "EVAL_MODEL_CALL_LIMIT": str(min(max(int(case.metadata.get("model_call_limit", 24)), 1), 40)),
             "EVAL_TOOL_CALL_LIMIT": str(min(max(int(case.metadata.get("tool_call_limit", 24)), 1), 100)),
+            "CODING_AGENT_EVAL_ALLOWED_TOOLS": ",".join(
+                str(name) for name in case.metadata.get("agent_tools", []) if str(name).strip()
+            ),
             "AGENT_CODING_MAX_TOOL_CALLS": str(min(max(int(case.metadata.get("tool_call_limit", 24)), 1), 100)),
             "AGENT_CODING_MAX_SECONDS": str(max(1, case.timeout_seconds)),
             "AI_WORKSPACE_ROOT": str(workspace_root),
@@ -429,6 +436,11 @@ class EvalRunner:
         ]
         oracle_pass, oracle_latency = self._run_tests(oracle_commands, oracle_repo, case.timeout_seconds, errors, env=scorer_env)
         trace_events = self._read_jsonl(trace_file)
+        observed_task_kinds = [
+            str((event.get("payload") or {}).get("task_kind"))
+            for event in trace_events
+            if event.get("type") == "task_intent" and (event.get("payload") or {}).get("task_kind")
+        ]
         retrieval_events = [event.get("payload", {}) for event in trace_events if event.get("type") == "retrieval"]
         retrieval = [hit for event in retrieval_events for hit in event.get("hits", [])]
         usage = self._read_json(usage_file, {})
@@ -436,6 +448,12 @@ class EvalRunner:
         runtime_result = self._read_json(result_file, {})
         expected_status = case.expected_status
         runtime_status = runtime_result.get("status")
+        expected_task_kind = case.metadata.get("expected_task_kind")
+        task_kind_ok = expected_task_kind is None or expected_task_kind in observed_task_kinds
+        if not task_kind_ok:
+            errors.append(
+                f"Agent task intent mismatch: expected {expected_task_kind!r}, observed {observed_task_kinds or 'no task_intent event'}"
+            )
         model_limit_exceeded = bool(re.search(r"model call limits exceeded|run limit \(\d+/\d+\)|达到模型调用限制", agent_output, re.IGNORECASE))
         if model_limit_exceeded:
             errors.append("Agent reached its configured model-call limit before completing the case")
@@ -498,6 +516,7 @@ class EvalRunner:
             and (case.requires_patch or not changed_files)
             and not model_limit_exceeded
             and not missing_output_terms
+            and task_kind_ok
             and plan_approval_ok
             and plan_rejection_ok
             and plan_rubric_ok
@@ -512,6 +531,7 @@ class EvalRunner:
             and oracle_pass is not False
             and not model_limit_exceeded
             and not missing_output_terms
+            and task_kind_ok
             and plan_approval_ok
             and plan_rejection_ok
             and plan_rubric_ok
@@ -592,6 +612,7 @@ class EvalRunner:
             },
             metadata={
                 "target_repo_sha": target_sha,
+                "fixture_files": fixture_hashes,
                 "adapter": adapter_kind,
                 "workspace_baseline_sha": workspace_baseline_sha,
                 "agent_source_sha": self._agent_runtime.commit,
@@ -603,6 +624,9 @@ class EvalRunner:
                 "state_files": [str(path) for path in db_paths if path.exists()],
                 "codegraph_index": index_result,
                 "runtime_status": runtime_status,
+                "observed_task_kinds": observed_task_kinds,
+                "expected_task_kind": expected_task_kind,
+                "task_kind_matches_expectation": task_kind_ok,
                 "adapter": adapter_kind,
                 "plan_approval_performed": runtime_result.get("plan_approval_performed"),
                 "plan_pending_before_approval": runtime_result.get("plan_pending_before_approval"),
@@ -743,6 +767,42 @@ class EvalRunner:
     def _copy_repository(source: Path, destination: Path) -> None:
         ignored = shutil.ignore_patterns(".git", ".venv", ".codegraph", "__pycache__", ".pytest_cache", "*.sqlite", ".env")
         shutil.copytree(source, destination, ignore=ignored)
+
+    @staticmethod
+    def _fixture_hashes(case: EvalCase) -> dict[str, str]:
+        fixture_root = (Path(__file__).resolve().parent / "fixtures" / case.case_id).resolve()
+        hashes: dict[str, str] = {}
+        for value in case.fixture_files:
+            relative = PurePosixPath(str(value).replace("\\", "/"))
+            if (
+                relative.is_absolute()
+                or not relative.parts
+                or ".." in relative.parts
+                or re.match(r"^[A-Za-z]:", relative.parts[0])
+            ):
+                raise ValueError(f"Unsafe Eval fixture path for {case.case_id}: {value!r}")
+            source = (fixture_root / Path(*relative.parts)).resolve()
+            if fixture_root not in source.parents or not source.is_file():
+                raise FileNotFoundError(f"Eval fixture is missing or escapes its case directory: {value!r}")
+            hashes[relative.as_posix()] = hashlib.sha256(source.read_bytes()).hexdigest()
+        return hashes
+
+    @classmethod
+    def _materialize_case_fixtures(cls, case: EvalCase, workspace: Path) -> dict[str, str]:
+        hashes = cls._fixture_hashes(case)
+        fixture_root = (Path(__file__).resolve().parent / "fixtures" / case.case_id).resolve()
+        workspace_root = workspace.resolve()
+        for relative_text in hashes:
+            relative = PurePosixPath(relative_text)
+            source = (fixture_root / Path(*relative.parts)).resolve()
+            destination = (workspace_root / Path(*relative.parts)).resolve()
+            if workspace_root not in destination.parents:
+                raise ValueError(f"Eval fixture destination escapes the case workspace: {relative_text}")
+            if destination.exists():
+                raise FileExistsError(f"Eval fixture would overwrite target repository content: {relative_text}")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
+        return hashes
 
     @staticmethod
     def _init_git_baseline(workspace: Path) -> None:

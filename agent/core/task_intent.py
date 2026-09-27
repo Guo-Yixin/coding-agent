@@ -17,6 +17,7 @@ from __future__ import annotations
 """
 
 import logging
+import re
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -254,6 +255,26 @@ def _has_explicit_coding_marker(normalized: str) -> bool:
     )
 
 
+def _has_direct_coding_request(normalized: str) -> bool:
+    """Recognize direct implementation requests even when they mention retrieval first.
+
+    The model classifier sometimes labels prompts such as “先检索，再实现并补测试”
+    as analysis/planning. Those substeps do not change the user's requested outcome.
+    Explicit read-only wording is handled by the security guard before this predicate.
+    """
+
+    action = r"(?:修复|实现|新增|增加|修改|补充|开发|改造|重构|迁移|接入|升级)"
+    request_prefix = r"(?:请|帮我|麻烦|需要你|直接|再|并|然后|同时)"
+    if re.search(rf"{request_prefix}.{{0,120}}?{action}", normalized):
+        return True
+    return bool(
+        re.search(
+            r"\b(?:please\s+)?(?:implement|fix|add|modify|refactor|migrate|integrate|upgrade)\b",
+            normalized,
+        )
+    )
+
+
 def _has_review_marker(normalized: str) -> bool:
     """识别代码审查相关表达。"""
 
@@ -375,6 +396,12 @@ def _apply_security_guard(prompt: str, predicted: TaskKind) -> TaskKind:
         if has_planning:
             return "planning"
         return "analysis"
+
+    # A direct implementation request stays a coding task even when the model
+    # overweights words like “先检索” and predicts analysis/planning. Read-only
+    # instructions above remain authoritative.
+    if _has_direct_coding_request(normalized) and not has_negative:
+        return "coding"
 
     # “确认/开始/实施”这类短回复通常依赖上一轮方案。只要用户明确表达开始实施，
     # 就允许进入 coding，避免被模型误判成 qa 或 planning。

@@ -1,0 +1,90 @@
+{
+  "case_id": "taskboard-filter-by-priority",
+  "prompt": "请先使用 hybrid_code_search 检索 priority 的现有处理，再新增 filter_by_priority(tasks, priorities=None)。None 表示不过滤；字符串或字符串 Iterable 都可作为筛选集合；忽略大小写；urgent 等价 high、backlog 等价 low；缺失或 null 优先级归 unknown；结果保留原顺序且不修改输入。通过 taskboard 包导出，并扩展 tests/test_filter_by_priority.py。只修改 taskboard/tasks.py、taskboard/__init__.py 和该测试文件。",
+  "repo_path": ".",
+  "base_ref": "d65047705e6e947bcd33e193ab4c8fdfeb8956c8",
+  "gold_files": [
+    "taskboard/tasks.py",
+    "taskboard/__init__.py"
+  ],
+  "fixture_files": [
+    "tests/test_filter_by_priority.py"
+  ],
+  "target_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/test_filter_by_priority.py",
+      "-q"
+    ]
+  ],
+  "regression_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/test_baseline.py",
+      "-q"
+    ]
+  ],
+  "oracle_tests": [
+    [
+      "python",
+      "{oracle_scripts}/test_taskboard_filter_by_priority.py",
+      "{target_repo}"
+    ]
+  ],
+  "requires_patch": true,
+  "timeout_seconds": 480,
+  "allowed_files": [
+    "taskboard/tasks.py",
+    "taskboard/__init__.py",
+    "tests/test_filter_by_priority.py"
+  ],
+  "expected_status": "completed",
+  "metadata": {
+    "adapter": "agent",
+    "repo_url": "https://github.com/Guo-Yixin/test-coding-eval.git",
+    "purpose": "多值筛选、别名归一和空/未知状态边界",
+    "required_changed_files": [
+      "taskboard/tasks.py",
+      "taskboard/__init__.py",
+      "tests/test_filter_by_priority.py"
+    ],
+    "expected_task_kind": "coding",
+    "agent_tools": [
+      "hybrid_code_search"
+    ],
+    "model_call_limit": 24,
+    "tool_call_limit": 48,
+    "auto_approve_plan": true,
+    "require_plan_approval": true,
+    "plan_rubric_any_terms": [
+      [
+        "需求理解",
+        "需求拆解",
+        "目标"
+      ],
+      [
+        "涉及文件",
+        "相关文件",
+        "改动文件",
+        "taskboard/tasks.py",
+        "taskboard/__init__.py",
+        "tests/"
+      ],
+      [
+        "验证方案",
+        "测试方案",
+        "pytest",
+        "测试命令"
+      ]
+    ],
+    "require_tool_recovery": true,
+    "inject_tool_error_once": {
+      "tool": "hybrid_code_search",
+      "message": "评测注入的一次性可恢复检索超时；请改用读取或命令行检索等方式继续完成任务。"
+    }
+  }
+}

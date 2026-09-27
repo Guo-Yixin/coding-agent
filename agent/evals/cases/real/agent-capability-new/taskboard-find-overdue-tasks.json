@@ -1,0 +1,85 @@
+{
+  "case_id": "taskboard-find-overdue-tasks",
+  "prompt": "请先用 hybrid_code_search 检索 taskboard 的 API，再新增 find_overdue_tasks(tasks, *, today)：today 接受 datetime.date 或 ISO 日期字符串；返回 due_date 早于 today 且 status 不是 done/completed/cancelled 的任务；今天到期不算逾期；无效或缺失 due_date 跳过；保持原输入顺序且不修改输入；today 无法解析时抛 ValueError。通过 taskboard 包导出，并扩展 tests/test_find_overdue_tasks.py。只修改 taskboard/tasks.py、taskboard/__init__.py 和该测试文件。",
+  "repo_path": ".",
+  "base_ref": "d65047705e6e947bcd33e193ab4c8fdfeb8956c8",
+  "gold_files": [
+    "taskboard/tasks.py",
+    "taskboard/__init__.py"
+  ],
+  "fixture_files": [
+    "tests/test_find_overdue_tasks.py"
+  ],
+  "target_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/test_find_overdue_tasks.py",
+      "-q"
+    ]
+  ],
+  "regression_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/test_baseline.py",
+      "-q"
+    ]
+  ],
+  "oracle_tests": [
+    [
+      "python",
+      "{oracle_scripts}/test_taskboard_find_overdue_tasks.py",
+      "{target_repo}"
+    ]
+  ],
+  "requires_patch": true,
+  "timeout_seconds": 480,
+  "allowed_files": [
+    "taskboard/tasks.py",
+    "taskboard/__init__.py",
+    "tests/test_find_overdue_tasks.py"
+  ],
+  "expected_status": "completed",
+  "metadata": {
+    "adapter": "agent",
+    "repo_url": "https://github.com/Guo-Yixin/test-coding-eval.git",
+    "purpose": "日期边界、状态排除、多要求处理与导出",
+    "required_changed_files": [
+      "taskboard/tasks.py",
+      "taskboard/__init__.py",
+      "tests/test_find_overdue_tasks.py"
+    ],
+    "expected_task_kind": "coding",
+    "agent_tools": [
+      "hybrid_code_search"
+    ],
+    "model_call_limit": 24,
+    "tool_call_limit": 48,
+    "auto_approve_plan": true,
+    "require_plan_approval": true,
+    "plan_rubric_any_terms": [
+      [
+        "需求理解",
+        "需求拆解",
+        "目标"
+      ],
+      [
+        "涉及文件",
+        "相关文件",
+        "改动文件",
+        "taskboard/tasks.py",
+        "taskboard/__init__.py",
+        "tests/"
+      ],
+      [
+        "验证方案",
+        "测试方案",
+        "pytest",
+        "测试命令"
+      ]
+    ]
+  }
+}

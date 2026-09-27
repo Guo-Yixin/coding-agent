@@ -381,17 +381,34 @@ def get_agent(config: RunnableConfig):
         # Keep local repository work and read-only inspection; block operations
         # that could create or publish data outside the disposable checkout.
         eval_safe_tools = {
-            "web_search", "request_human_intervention", "fetch_url", "hybrid_code_search",
+            "request_human_intervention", "hybrid_code_search",
             "get_gitee_pull_request_context", "get_github_pull_request_context",
             "get_gitee_issue_context", "get_github_actions_status", "get_github_issue_context",
             "load_default_review_rules", "get_review_diff_summary",
             "validate_review_finding_location", "list_review_findings",
         }
+        configured_tools = {
+            item.strip()
+            for item in os.environ.get("CODING_AGENT_EVAL_ALLOWED_TOOLS", "").split(",")
+            if item.strip()
+        }
+        if configured_tools:
+            eval_safe_tools.intersection_update(configured_tools)
         tools = [tool for tool in tools if getattr(tool, "name", getattr(tool, "__name__", "")) in eval_safe_tools]
+    system_prompt = get_system_prompt(task_kind)
+    if eval_mode and task_kind == "coding":
+        system_prompt += (
+            "\n\n【固定题库评测执行约束】\n"
+            "你正在完成独立评测仓库中的一道编码题。应直接完成题目要求、修改当前工作区中的目标仓库文件并运行题目测试。"
+            "评测器会采集工作区补丁；不要创建分支、提交、push、同步远端或创建 PR，也不要因为这些收尾动作不可用而停止编码。"
+            "所有文件编辑和 execute 命令都必须针对当前绑定的目标仓库工作区。"
+            "CodeGraph 检索若出现一次超时等可恢复错误，请阅读错误后用 CodeGraph 重试或切换到 read_file/execute grep 等路径继续，"
+            "不要把单次工具故障当成需要用户介入的阻塞。先实现并验证；最终只报告实际完成的修改和测试结果。"
+        )
     return create_deep_agent(  # 创建一个Agent
         model=main_model,
         tools=tools,
-        system_prompt=get_system_prompt(task_kind),
+        system_prompt=system_prompt,
         subagents=[_general_purpose_subagent(subagent_model), _code_reviewer_subagent(subagent_model)],
         # DeepAgents 0.7+ 要求传入已初始化的 BackendProtocol 实例，不能再传
         # 0.6.x 时代的 backend factory。agent_backend 已经包含本地工作区和
