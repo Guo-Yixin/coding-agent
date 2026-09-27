@@ -99,6 +99,12 @@ def test_existing_thread_rejects_repository_switch(monkeypatch) -> None:
 
 def test_existing_thread_accepts_same_repo_shorthand(monkeypatch) -> None:
     expected = object()
+
+    class FakeStore:
+        def get_latest_active_thread_intervention(self, _thread_id):
+            return None
+
+    monkeypatch.setattr(dashboard_routes, "get_store", lambda: FakeStore())
     monkeypatch.setattr(
         dashboard_routes,
         "get_task",

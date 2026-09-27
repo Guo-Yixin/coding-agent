@@ -21,5 +21,11 @@ sandbox = [
   "opensandbox>=0.1.16",
 ]
 
+[tool.pytest.ini_options]
+addopts = "-m 'not integration'"
+markers = [
+  "integration: requires an explicitly configured external service",
+]
+
 [tool.setuptools.packages.find]
 include = ["agent*"]
