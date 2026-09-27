@@ -8,6 +8,14 @@ def test_retrieval_hit_at_k_normalizes_paths() -> None:
     assert retrieval_hit_at_k([{"path": "other.py"}], ["agent/core/runtime.py"]) == 0.0
 
 
+def test_retrieval_hit_at_k_scores_each_ranked_query_instead_of_flattened_results() -> None:
+    queries = [
+        {"hits": [{"path": f"tests/test_{index}.py"} for index in range(5)]},
+        {"hits": [{"path": "tests/test_runtime.py"}, {"path": "agent/core/runtime.py"}]},
+    ]
+    assert retrieval_hit_at_k(queries, ["agent/core/runtime.py"]) == 1.0
+
+
 def test_tool_recovery_rate_counts_recovered_failures() -> None:
     events = [
         {"type": "tool_error", "recovered": True},
