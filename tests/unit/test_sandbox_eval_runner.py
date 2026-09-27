@@ -10,8 +10,10 @@ from agent.sandbox import OpenSandboxConfig, SandboxExecution
 
 class FakeExecutor:
     def __init__(self, _: OpenSandboxConfig) -> None:
+        self.config = _
         self.files: dict[str, str] = {}
         self.commands: list[str] = []
+        self.closed = False
 
     def start(self) -> str:
         return "fake-sandbox"
@@ -38,7 +40,7 @@ class FakeExecutor:
         return values[path]
 
     def close(self) -> None:
-        pass
+        self.closed = True
 
 
 def test_sandbox_runner_produces_same_metrics_schema(tmp_path: Path) -> None:
@@ -48,14 +50,24 @@ def test_sandbox_runner_produces_same_metrics_schema(tmp_path: Path) -> None:
         prompt="修复 app.py",
         gold_files=["app.py"],
         target_tests=[["pytest", "-q"]],
+        regression_tests=[["pytest", "-q"]],
+        oracle_tests=[["pytest", "-q"]],
         requires_patch=True,
+        timeout_seconds=45,
         agent_command=["python", "agent.py"],
     )
     output = tmp_path / "out"
+    executors: list[FakeExecutor] = []
+
+    def executor_factory(config: OpenSandboxConfig) -> FakeExecutor:
+        executor = FakeExecutor(config)
+        executors.append(executor)
+        return executor
+
     runner = SandboxEvalRunner(
         output_dir=output,
         config=OpenSandboxConfig(domain="http://sandbox.test"),
-        executor_factory=FakeExecutor,
+        executor_factory=executor_factory,
     )
 
     report = runner.run([case], repository=tmp_path)
@@ -64,5 +76,15 @@ def test_sandbox_runner_produces_same_metrics_schema(tmp_path: Path) -> None:
     assert report.mode == "sandbox"
     assert result.patch_apply is True
     assert result.target_tests_passed is True
+    assert result.regression_tests_passed is True
+    assert result.oracle_tests_passed is True
     assert result.retrieval_hit_at_k == 1.0
+    assert result.metadata["sandbox"]["cleanup_succeeded"] is True
+    assert result.metadata["sandbox"]["uploaded_paths"] == ["repo/app.py"]
+    assert executors[0].config.command_timeout_seconds == 45
+    assert result.artifacts["patch"] == "cases/sandbox-smoke/patch.diff"
+    assert result.artifacts["agent_output"] == "cases/sandbox-smoke/agent-output.txt"
+    assert "mkdir -p repo/.eval" in executors[0].commands
+    assert "git add -N -- ." in executors[0].commands
+    assert executors[0].closed is True
     assert (output / "report.json").exists()

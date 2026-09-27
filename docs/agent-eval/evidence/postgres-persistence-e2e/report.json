@@ -1,0 +1,79 @@
+{
+  "report_id": "70aa97e37c6c4a72",
+  "mode": "database",
+  "repository": "coding-agent",
+  "config": {
+    "framework_source_sha": "440e70da350820d5988d2c7361d22348ddf40909",
+    "framework_source_dirty_patch_sha256": "76f59dfc2fda5713773833986ee7ea8ee7e7d939c01c274810710839850a2c80",
+    "runner_version": "postgres-1"
+  },
+  "created_at": "2026-09-27T03:02:44.982385+00:00",
+  "summary": {
+    "case_count": 1,
+    "passed_count": 1,
+    "failed_count": 0,
+    "patch_apply_rate": 1.0,
+    "target_test_pass_rate": 1.0,
+    "target_test_passed_case_count": 1,
+    "target_test_case_count": 1,
+    "regression_test_pass_rate": null,
+    "regression_test_passed_case_count": 0,
+    "regression_test_case_count": 0,
+    "oracle_test_pass_rate": null,
+    "oracle_test_passed_case_count": 0,
+    "oracle_test_case_count": 0,
+    "retrieval_hit_at_k": null,
+    "tool_recovery_rate": null,
+    "total_tokens": null,
+    "token_usage_case_count": 0,
+    "total_latency_ms": 6491
+  },
+  "cases": [
+    {
+      "case_id": "postgres-persistence-smoke",
+      "status": "passed",
+      "agent_exit_code": 0,
+      "patch_apply": true,
+      "target_tests_passed": true,
+      "regression_tests_passed": null,
+      "retrieval_hit_at_k": null,
+      "tool_recovery_rate": null,
+      "input_tokens": null,
+      "output_tokens": null,
+      "total_tokens": null,
+      "agent_latency_ms": 1698,
+      "target_test_latency_ms": 1698,
+      "regression_test_latency_ms": 0,
+      "changed_files": [],
+      "patch": "",
+      "errors": [],
+      "artifacts": {
+        "tests": "cases/postgres-persistence-smoke/tests.log"
+      },
+      "metadata": {
+        "database_evaluation": {
+          "backend": "PostgreSQL",
+          "image": "postgres:18",
+          "host_binding": "127.0.0.1 only",
+          "localhost_only": true,
+          "ephemeral_instance": true,
+          "database_name": "coding_agent_eval_8e02460391",
+          "database_version": "PostgreSQL 18.4 (Debian 18.4-1.pgdg13+1) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit",
+          "user": "eval_runner",
+          "persistence_components": [
+            "business_store",
+            "langgraph_store",
+            "checkpointer"
+          ],
+          "component_results": {
+            "business_store": true,
+            "langgraph_store": true,
+            "checkpointer": true
+          },
+          "cleanup_succeeded": true
+        }
+      },
+      "oracle_tests_passed": null
+    }
+  ]
+}

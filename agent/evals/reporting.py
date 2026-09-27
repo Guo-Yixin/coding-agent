@@ -27,29 +27,58 @@ def write_report_data(data: dict[str, Any], output_dir: Path) -> dict[str, str]:
 def _markdown(data: dict[str, Any]) -> str:
     summary = data.get("summary", {})
     cases = data.get("cases", [])
+    database_mode = data.get("mode") == "database"
+    source_label = "组件源码 SHA" if database_mode else "Agent 提交"
+    source_sha = data.get("config", {}).get("framework_source_sha") if database_mode else data.get("config", {}).get("agent_source_sha")
+    total_tokens = "不适用（未调用模型）" if database_mode else _number(summary.get("total_tokens"))
     lines = [
-        f"# Agent Eval report `{data.get('report_id', 'unknown')}`",
+        f"# Agent Eval 评测报告 `{data.get('report_id', 'unknown')}`",
         "",
-        f"- **Result:** {summary.get('passed_count', 0)}/{summary.get('case_count', len(cases))} cases passed",
-        f"- **Mode:** `{data.get('mode', 'unknown')}`",
-        f"- **Created:** `{data.get('created_at', 'unknown')}`",
-        f"- **Agent source:** `{data.get('config', {}).get('agent_source_sha', 'unknown')}`",
-        f"- **Target repository:** `{_repo_label(str(data.get('repository', 'unknown')))}`",
-        f"- **Model:** `{_model_label(cases)}`",
-        f"- **Eval source patch:** `{_short_hash(data.get('config', {}).get('agent_source_dirty_patch_sha256'))}`",
-        f"- **Total latency:** {_duration(summary.get('total_latency_ms'))}",
-        f"- **Total tokens:** {_number(summary.get('total_tokens'))}",
+        f"- **结果：** {summary.get('passed_count', 0)}/{summary.get('case_count', len(cases))} 道通过",
+        f"- **模式：** `{data.get('mode', 'unknown')}`",
+        f"- **生成时间：** `{data.get('created_at', 'unknown')}`",
+        f"- **{source_label}：** `{source_sha or 'unknown'}`",
+        f"- **目标仓库：** `{_repo_label(str(data.get('repository', 'unknown')))}`",
+        f"- **模型：** `{_model_label(cases)}`",
+        f"- **Agent 适配器：** `{_short_hash(data.get('config', {}).get('agent_adapter_sha256'))}`",
+        f"- **总耗时：** {_duration(summary.get('total_latency_ms'))}",
+        f"- **总 Token：** {total_tokens}",
         "",
-        "## Cases",
+        "## 案例结果",
         "",
-        "| Case | Result | Target | Regression | Oracle | Retrieval hit@5 | Tokens | Agent time |",
-        "| --- | --- | --- | --- | --- | ---: | ---: | ---: |",
     ]
+    if database_mode:
+        lines.extend([
+            "| 案例 | 结果 | 业务 Store | LangGraph Store | Checkpointer | 本机绑定 | 一次性实例 | 清理 | 测试耗时 |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | ---: |",
+        ])
+    else:
+        lines.extend([
+            "| 案例 | 结果 | 目标测试 | 回归测试 | 隐藏验收 | 检索命中@5 | Token | Agent 耗时 |",
+            "| --- | --- | --- | --- | --- | ---: | ---: | ---: |",
+        ])
     for case in cases:
+        if database_mode:
+            evaluation = case.get("metadata", {}).get("database_evaluation", {})
+            components = evaluation.get("component_results", {})
+            lines.append(
+                "| `{case_id}` | **{status}** | {business} | {store} | {checkpointer} | {localhost} | {ephemeral} | {cleanup} | {latency} |".format(
+                    case_id=case.get("case_id", "unknown"),
+                    status={"passed": "通过", "failed": "未通过"}.get(str(case.get("status", "unknown")), case.get("status", "unknown")),
+                    business=_check(components.get("business_store")),
+                    store=_check(components.get("langgraph_store")),
+                    checkpointer=_check(components.get("checkpointer")),
+                    localhost=_check(evaluation.get("localhost_only")),
+                    ephemeral=_check(evaluation.get("ephemeral_instance")),
+                    cleanup=_check(evaluation.get("cleanup_succeeded")),
+                    latency=_duration(case.get("agent_latency_ms")),
+                )
+            )
+            continue
         lines.append(
             "| `{case_id}` | **{status}** | {target} | {regression} | {oracle} | {retrieval} | {tokens} | {latency} |".format(
                 case_id=case.get("case_id", "unknown"),
-                status=case.get("status", "unknown"),
+                status={"passed": "通过", "failed": "未通过"}.get(str(case.get("status", "unknown")), case.get("status", "unknown")),
                 target=_check(case.get("target_tests_passed")),
                 regression=_check(case.get("regression_tests_passed")),
                 oracle=_check(case.get("oracle_tests_passed")),
@@ -58,17 +87,17 @@ def _markdown(data: dict[str, Any]) -> str:
                 latency=_duration(case.get("agent_latency_ms")),
             )
         )
-    lines.extend(["", "## Failure details", ""])
+    lines.extend(["", "## 未通过原因", ""])
     failures = [case for case in cases if case.get("status") != "passed"]
     if not failures:
-        lines.append("All cases passed.")
+        lines.append("所有案例均通过。")
     for case in failures:
         lines.append(f"### `{case.get('case_id', 'unknown')}`")
         lines.append("")
         for error in case.get("errors", []):
             lines.append(f"- {error}")
         lines.append("")
-    lines.extend(["## Artifacts", ""])
+    lines.extend(["## 运行产物", ""])
     for case in cases:
         for label, artifact in case.get("artifacts", {}).items():
             lines.append(f"- `{case.get('case_id', 'unknown')}` {label}: `{artifact}`")
@@ -83,11 +112,44 @@ def _html(data: dict[str, Any]) -> str:
     count = int(summary.get("case_count", len(cases)) or 0)
     failed = int(summary.get("failed_count", max(0, count - passed)) or 0)
     result_class = "good" if count > 0 and passed == count else "bad"
-    rows = "\n".join(_case_card(case) for case in cases) or '<p class="empty">No cases were recorded.</p>'
     config = data.get("config", {})
     repo_label = _repo_label(str(data.get("repository", "unknown")))
+    database_mode = data.get("mode") == "database"
+    if database_mode:
+        identity_meta = (
+            f"<span>持久化组件 SHA：{html.escape(str(config.get('framework_source_sha') or 'unknown'))}</span>"
+            f"<span>数据库镜像：{html.escape(str(config.get('database_image') or 'unknown'))}</span>"
+            f"<span>Runner：{html.escape(str(config.get('runner_version', 'unknown')))}</span>"
+        )
+        component_checks = [item for case in cases for item in case.get("metadata", {}).get("database_evaluation", {}).get("component_results", {}).values()]
+        checked = sum(value is True for value in component_checks)
+        component_summary = f"{checked}/{len(component_checks)}" if component_checks else "不适用"
+        metrics = "\n".join([
+            _metric("通过案例", f"{passed} / {count}"),
+            _metric("未通过案例", str(failed)),
+            _metric("持久化组件", component_summary),
+            _metric("总 Token", "不适用"),
+            _metric("总耗时", _duration(summary.get("total_latency_ms"))),
+        ])
+        foot = "本报告通过一次性 PostgreSQL 实例验证项目持久化组件；容器在评测后销毁，未使用开发数据库。"
+    else:
+        identity_meta = (
+            f"<span>Agent 提交：{html.escape(str(config.get('agent_source_sha') or 'unknown'))}</span>"
+            f"<span>目标仓库：{html.escape(repo_label)}</span><span>Runner：{html.escape(str(config.get('runner_version', 'unknown')))}</span>"
+            f"<span>模型：{html.escape(_model_label(cases))}</span>"
+        )
+        identity_meta += f"<div class=\"meta\"><span>Agent SHA：{html.escape(str(config.get('agent_source_sha') or 'unknown'))}</span><span>适配器 SHA：{html.escape(_short_hash(config.get('agent_adapter_sha256')))}</span></div>"
+        metrics = "\n".join([
+            _metric('通过案例', f'{passed} / {count}'),
+            _metric('未通过案例', str(failed)),
+            _metric('补丁应用率', _percent(summary.get('patch_apply_rate'))),
+            _metric('总 Token', _number(summary.get('total_tokens'))),
+            _metric('总耗时', _duration(summary.get('total_latency_ms'))),
+        ])
+        foot = "本页面由 report.json 生成。Token 使用模型服务返回的用量；没有证据时显示为不适用，不会估算。"
+    rows = "\n".join(_case_card(case, database_mode=database_mode) for case in cases) or '<p class="empty">No cases were recorded.</p>'
     return f"""<!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -111,38 +173,46 @@ def _html(data: dict[str, Any]) -> str:
 </head>
 <body><main class="shell">
   <header class="hero">
-    <div class="eyebrow">Coding Agent · Evaluation Report</div>
+    <div class="eyebrow">CODING Agent · 评测报告</div>
     <h1>{html.escape(str(data.get('report_id', 'Evaluation run')))}</h1>
-    <p>Reproducible task results with linked artifacts and explicit pass criteria.</p>
-    <div class="meta"><span class="badge {result_class}">{'Passed' if passed == count and count else 'Needs review'} · {passed}/{count}</span><span>Mode: {html.escape(str(data.get('mode', 'unknown')))}</span><span>Created: {html.escape(str(data.get('created_at', 'unknown')))}</span></div>
-    <div class="meta"><span>Agent SHA: {html.escape(str(config.get('agent_source_sha') or 'unknown'))}</span><span>Target: {html.escape(repo_label)}</span><span>Runner: {html.escape(str(config.get('runner_version', 'unknown')))}</span><span>Model: {html.escape(_model_label(cases))}</span></div>
-    <div class="meta"><span>Eval source patch: {html.escape(_short_hash(config.get('agent_source_dirty_patch_sha256')))}</span></div>
+    <p>每道题都关联明确的验收结果、版本信息和可打开的运行产物。</p>
+    <div class="meta"><span class="badge {result_class}">{'全部通过' if passed == count and count else '存在未通过项'} · {passed}/{count}</span><span>模式：{html.escape(str(data.get('mode', 'unknown')))}</span><span>生成时间：{html.escape(str(data.get('created_at', 'unknown')))}</span></div>
+    <div class="meta">{identity_meta}</div>
   </header>
   <section class="grid" aria-label="Run summary">
-    {_metric('Cases passed', f'{passed} / {count}')}
-    {_metric('Failed cases', str(failed))}
-    {_metric('Patch apply', _percent(summary.get('patch_apply_rate')))}
-    {_metric('Total tokens', _number(summary.get('total_tokens')))}
-    {_metric('Total run time', _duration(summary.get('total_latency_ms')))}
+    {metrics}
   </section>
-  <h2>Case results</h2>
+  <h2>案例结果</h2>
   {rows}
-  <p class="foot">Generated from report.json. Token values use provider-reported usage when available; missing values are shown as unavailable, never estimated.</p>
+  <p class="foot">{html.escape(foot)}</p>
 </main></body></html>
 """
 
 
-def _case_card(case: dict[str, Any]) -> str:
+def _case_card(case: dict[str, Any], *, database_mode: bool = False) -> str:
     status = str(case.get("status", "unknown"))
-    checks = [
-        ("Agent", "exit 0" if case.get("agent_exit_code") == 0 else _number(case.get("agent_exit_code"))),
-        ("Patch", _check(case.get("patch_apply"))),
-        ("Target tests", _check(case.get("target_tests_passed"))),
-        ("Regression", _check(case.get("regression_tests_passed"))),
-        ("Oracle", _check(case.get("oracle_tests_passed"))),
-        ("Retrieval hit@5", _number(case.get("retrieval_hit_at_k"))),
-        ("Tool calls", _number(case.get("metadata", {}).get("tool_usage", {}).get("call_count"))),
-    ]
+    database_evaluation = case.get("metadata", {}).get("database_evaluation", {})
+    if database_mode:
+        components = database_evaluation.get("component_results", {})
+        checks = [
+            ("业务 Store", _check(components.get("business_store"))),
+            ("LangGraph Store", _check(components.get("langgraph_store"))),
+            ("Checkpointer", _check(components.get("checkpointer"))),
+            ("本机绑定", _check(database_evaluation.get("localhost_only"))),
+            ("一次性数据库", _check(database_evaluation.get("ephemeral_instance"))),
+            ("实例清理", _check(database_evaluation.get("cleanup_succeeded"))),
+            ("测试进程", _number(case.get("agent_exit_code"))),
+        ]
+    else:
+        checks = [
+            ("Agent 退出码", "0" if case.get("agent_exit_code") == 0 else _number(case.get("agent_exit_code"))),
+            ("补丁应用", _check(case.get("patch_apply"))),
+            ("目标测试", _check(case.get("target_tests_passed"))),
+            ("回归测试", _check(case.get("regression_tests_passed"))),
+            ("隐藏验收", _check(case.get("oracle_tests_passed"))),
+            ("检索命中@5", _number(case.get("retrieval_hit_at_k"))),
+            ("工具调用数", _number(case.get("metadata", {}).get("tool_usage", {}).get("call_count"))),
+        ]
     check_html = "".join(
         f'<div class="check"><span>{html.escape(label)}</span><strong class="{_check_class(value)}">{html.escape(value)}</strong></div>'
         for label, value in checks
@@ -152,16 +222,22 @@ def _case_card(case: dict[str, Any]) -> str:
     artifacts = case.get("artifacts", {})
     metadata = case.get("metadata", {})
     details: list[str] = []
+    if database_mode and database_evaluation:
+        details.append(
+            "<p><strong>数据库</strong>："
+            + html.escape(f"{database_evaluation.get('image', 'unknown')} · {database_evaluation.get('database_version', 'unknown')} · {database_evaluation.get('database_name', 'unknown')} · {database_evaluation.get('user', 'unknown')}")
+            + "</p>"
+        )
     if metadata.get("model_provider") or metadata.get("model_name"):
         details.append(
-            "<p><strong>Model</strong>: "
+            "<p><strong>模型</strong>："
             + html.escape(" ".join(str(value) for value in (metadata.get("model_provider"), metadata.get("model_name")) if value))
             + "</p>"
         )
     test_behavior = metadata.get("test_behavior", {})
     if test_behavior:
         details.append(
-            "<p><strong>Required test files modified</strong>: "
+            "<p><strong>要求修改的测试文件</strong>："
             + html.escape(_check(test_behavior.get("required_test_files_modified")))
             + "</p>"
         )
@@ -170,25 +246,87 @@ def _case_card(case: dict[str, Any]) -> str:
         calls_by_tool = tool_usage.get("calls_by_tool", {})
         tools = ", ".join(f"{name}: {count}" for name, count in calls_by_tool.items()) or "none recorded"
         details.append(
-            "<p><strong>Tool results</strong>: "
-            + html.escape(f"{tool_usage.get('success_count', 0)} successful, {tool_usage.get('failure_count', 0)} failed; {tools}")
+            "<p><strong>工具结果</strong>："
+            + html.escape(f"{tool_usage.get('success_count', 0)} 成功，{tool_usage.get('failure_count', 0)} 失败；{tools}")
             + "</p>"
         )
+    api_e2e = metadata.get("api_e2e", {})
+    if api_e2e:
+        checks = [
+            ("服务健康", api_e2e.get("health_passed")),
+            ("线程持久化", api_e2e.get("thread_created")),
+            ("SSE 消息流", api_e2e.get("sse_received")),
+        ]
+        if api_e2e.get("rejection_posted") is not None:
+            checks.extend([
+                ("拒绝计划", api_e2e.get("rejection_posted")),
+                ("拒绝后无改动", api_e2e.get("workspace_clean_after_rejection")),
+                ("计划状态 rejected", api_e2e.get("final_plan_status") == "rejected"),
+            ])
+        else:
+            checks.append(("计划审批", api_e2e.get("approval_posted")))
+        checks.append(("SQLite 隔离", api_e2e.get("sqlite_isolated")))
+        browser = api_e2e.get("browser", {})
+        if browser:
+            checks.extend([
+                ("浏览器提交任务", browser.get("task_submitted")),
+                ("浏览器展示待批计划", browser.get("pending_plan_displayed")),
+                ("浏览器点击审批", browser.get("approval_clicked")),
+                ("浏览器展示完成状态", browser.get("completion_displayed")),
+            ])
+        summary = "，".join(f"{label}：{_check(value)}" for label, value in checks)
+        details.append("<p><strong>应用端到端</strong>：" + html.escape(summary) + "</p>")
+    plan_rubric = metadata.get("plan_rubric", [])
+    if plan_rubric:
+        passed = sum(bool(item.get("passed")) for item in plan_rubric if isinstance(item, dict))
+        total = sum(isinstance(item, dict) for item in plan_rubric)
+        detail = "；".join(
+            f"{' / '.join(map(str, item.get('accepted_terms', [])))}：{_check(item.get('passed'))}"
+            for item in plan_rubric
+            if isinstance(item, dict)
+        )
+        details.append(
+            "<p><strong>计划质量</strong>："
+            + html.escape(f"{passed}/{total} 项通过；{detail}")
+            + "</p>"
+        )
+    sandbox = metadata.get("sandbox", {})
+    if sandbox:
+        sandbox_text = (
+            f"镜像 {sandbox.get('image', 'unknown')}；上传 {sandbox.get('uploaded_file_count', 0)} 个文件；"
+            f"服务端代理 {'开启' if sandbox.get('use_server_proxy') else '关闭'}；"
+            f"资源清理 {_check(sandbox.get('cleanup_succeeded'))}"
+        )
+        details.append("<p><strong>OpenSandbox</strong>：" + html.escape(sandbox_text) + "</p>")
+        safety = sandbox.get("safety_probes", {})
+        if safety:
+            safety_text = "，".join(
+                f"{label}：{_check(safety.get(key))}"
+                for key, label in (
+                    ("path_traversal_rejected", "路径穿越拒绝"),
+                    ("timeout_enforced", "命令超时"),
+                    ("cleanup_succeeded", "探针资源清理"),
+                )
+            )
+            details.append("<p><strong>沙箱安全探针</strong>：" + html.escape(safety_text) + "</p>")
     if errors:
-        details.append("<strong>Issues</strong><ul>" + "".join(f"<li>{html.escape(str(error))}</li>" for error in errors) + "</ul>")
+        details.append("<strong>失败原因</strong><ul>" + "".join(f"<li>{html.escape(str(error))}</li>" for error in errors) + "</ul>")
     if changed:
-        details.append("<strong>Changed files</strong><ul>" + "".join(f"<li><code>{html.escape(str(path))}</code></li>" for path in changed) + "</ul>")
+        details.append("<strong>改动文件</strong><ul>" + "".join(f"<li><code>{html.escape(str(path))}</code></li>" for path in changed) + "</ul>")
     if artifacts:
         links = []
         for label, artifact in artifacts.items():
             href = _relative_href(str(artifact))
             links.append(f'<li><a href="{html.escape(href, quote=True)}">{html.escape(str(label))}</a></li>')
-        details.append("<strong>Artifacts</strong><ul>" + "".join(links) + "</ul>")
-    detail_html = "".join(details) or "<p>No failure details.</p>"
+        details.append("<strong>运行产物</strong><ul>" + "".join(links) + "</ul>")
+    detail_html = "".join(details) or "<p>没有额外说明。</p>"
+    status_label = {"passed": "通过", "failed": "未通过"}.get(status, status)
+    duration_label = "专项测试耗时" if database_mode else "Agent"
+    token_label = "Token 不适用" if database_mode else f"{_number(case.get('total_tokens'))} Token"
     return f"""<article class="case">
-    <div class="case-head"><div class="case-title">{html.escape(str(case.get('case_id', 'unknown')))}</div><span class="status {html.escape(status)}">{html.escape(status)}</span></div>
+    <div class="case-head"><div class="case-title">{html.escape(str(case.get('case_id', 'unknown')))}</div><span class="status {html.escape(status)}">{html.escape(status_label)}</span></div>
     <div class="checks">{check_html}</div>
-    <details><summary>Details · {_duration(case.get('agent_latency_ms'))} · {_number(case.get('total_tokens'))} tokens</summary><div class="details">{detail_html}</div></details>
+    <details><summary>详细信息 · {duration_label} {_duration(case.get('agent_latency_ms'))} · {token_label}</summary><div class="details">{detail_html}</div></details>
   </article>"""
 
 
@@ -231,14 +369,14 @@ def _short_hash(value: Any) -> str:
 
 def _check(value: Any) -> str:
     if value is True:
-        return "PASS"
+        return "通过"
     if value is False:
-        return "FAIL"
-    return "N/A"
+        return "未通过"
+    return "不适用"
 
 
 def _check_class(value: str) -> str:
-    return {"PASS": "yes", "FAIL": "no"}.get(value, "na")
+    return {"通过": "yes", "未通过": "no"}.get(value, "na")
 
 
 def _number(value: Any) -> str:

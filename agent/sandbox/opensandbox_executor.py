@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import os
+import re
 import time
 from dataclasses import dataclass
 from datetime import timedelta
@@ -59,6 +60,7 @@ class OpenSandboxConfig:
     command_timeout_seconds: int = 300
     max_upload_bytes: int = 2 * 1024 * 1024
     keep_sandbox: bool = False
+    use_server_proxy: bool = False
 
     @classmethod
     def from_env(cls) -> "OpenSandboxConfig":
@@ -97,6 +99,10 @@ class OpenSandboxConfig:
                 os.environ.get("OPEN_SANDBOX_KEEP", "0").lower()
                 in {"1", "true", "yes", "on"}
             ),
+            use_server_proxy=(
+                os.environ.get("OPEN_SANDBOX_USE_SERVER_PROXY", "0").lower()
+                in {"1", "true", "yes", "on"}
+            ),
         )
 
 
@@ -133,6 +139,24 @@ def _safe_relative_path(root: Path, candidate: Path) -> str | None:
     return relative.as_posix()
 
 
+def _validate_upload_path(value: str) -> str:
+    """Require an upload path to remain relative to the sandbox workspace."""
+
+    from pathlib import PurePosixPath
+
+    normalized = str(value).replace("\\", "/")
+    path = PurePosixPath(normalized)
+    if (
+        not normalized
+        or path.is_absolute()
+        or any(part in {"", ".", ".."} for part in path.parts)
+        or re.match(r"^[A-Za-z]:", normalized)
+        or "\x00" in normalized
+    ):
+        raise ValueError(f"Unsafe OpenSandbox upload path: {value!r}")
+    return path.as_posix()
+
+
 def collect_safe_workspace_files(
     root: str | Path,
     *,
@@ -165,7 +189,10 @@ def collect_safe_workspace_files(
             data = candidate.read_bytes()
         except OSError:
             continue
-        mode = 0o755 if os.access(candidate, os.X_OK) else 0o644
+        # Windows reports most regular files as executable through os.access(X_OK).
+        # Git and the OpenSandbox Linux filesystem only need executable bits from
+        # POSIX source workspaces; uploaded Windows workspaces use regular-file mode.
+        mode = 0o755 if os.name != "nt" and os.access(candidate, os.X_OK) else 0o644
         files.append(SandboxFile(path=relative, data=data, mode=mode))
     return files
 
@@ -229,7 +256,11 @@ class OpenSandboxExecutor:
         if self._sandbox is not None:
             return str(self.sandbox_id)
         Sandbox, ConnectionConfig, _, _ = self._sdk_types()
-        connection = ConnectionConfig(domain=self.config.domain, api_key=self.config.api_key)
+        connection = ConnectionConfig(
+            domain=self.config.domain,
+            api_key=self.config.api_key,
+            use_server_proxy=self.config.use_server_proxy,
+        )
         self._sandbox = await Sandbox.create(
             self.config.image,
             timeout=timedelta(seconds=self.config.timeout_seconds),
@@ -275,7 +306,9 @@ class OpenSandboxExecutor:
                 text = message.get("text") or message.get("content")
             if text is not None:
                 chunks.append(str(text))
-        return "".join(chunks)
+        # The SDK returns output as separate text messages; preserve line
+        # boundaries so captured patches and JSONL files remain parseable.
+        return "\n".join(chunks)
 
     async def execute_async(self, command: str, *, cwd: str | None = None) -> SandboxExecution:
         if self._sandbox is None:
@@ -310,7 +343,10 @@ class OpenSandboxExecutor:
             await self.start_async()
         _, _, _, WriteEntry = self._sdk_types()
         entries = [
-            WriteEntry(path=file.path, data=file.data, mode=file.mode)
+            # OpenSandbox server parses mode as an octal string (e.g. "644").
+            # Passing Python's 0o644 value directly serializes as decimal "420",
+            # which the server rejects because 8 and 9 are not octal digits.
+            WriteEntry(path=_validate_upload_path(file.path), data=file.data, mode=int(format(file.mode, "o")))
             for file in files
         ]
         if entries:

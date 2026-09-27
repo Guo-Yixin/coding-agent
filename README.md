@@ -282,25 +282,24 @@ python scripts/verify_streaming_runtime.py
 
 ## Agent Eval
 
-CODING includes a reproducible evaluation harness for running the production Agent on version-pinned task repositories. The Agent works in a fresh per-case copy; the source project, task baseline, patch, tests, and report are recorded separately.
+CODING 提供可复跑的 Agent Eval：每道题从固定目标提交创建独立项目副本，启动固定版本的真实 Agent，采集检索、工具、Token、耗时和补丁，并执行目标测试、回归测试与独立隐藏验收。框架还提供应用 HTTP/SSE 路径、SQLite 隔离、自包含 HTML 报告、脱敏导出和多轮对比。
 
-The first benchmark suite lives in the independent [`test-coding-eval`](https://github.com/Guo-Yixin/test-coding-eval) repository. Cases check focused code changes, target tests, regression tests, evaluator-side oracle checks, required test edits, real retrieval events, tool traces, provider-reported Token usage, and latency. Fake-mode output is not accepted as real-Agent evidence.
+评测框架版本与被测 Agent 版本分别记录。当前能力报告把 Agent 固定在 `710862e`，目标仓库为独立的 [`test-coding-eval`](https://github.com/Guo-Yixin/test-coding-eval)；fake 运行不会作为真实 Agent 成绩。
 
-Each run writes machine-readable `report.json`, review-friendly `report.md`, and a self-contained `report.html` to the external Eval output directory. Open `report.html` in a browser to inspect case status, scorecards, failures, and artifact links.
+### 首批真实评测结果
 
-### First real-run evidence
-
-After fixing retrieval workspace binding and Windows output encoding, all three cases passed in two real DeepSeek runs. See the consolidated [HTML report](docs/agent-eval/evidence/first-suite-combined/report.html), [Markdown summary](docs/agent-eval/evidence/first-suite-combined/report.md), and [machine-readable JSON](docs/agent-eval/evidence/first-suite-combined/report.json). The initial three-case run happened before those fixes and is not counted. The successful runs used benchmark baseline `d19ddda` and Agent base SHA `710862e`; the Eval source was uncommitted and changed between runs, so these are first-version functional evidence rather than a same-build comparison.
-
-| Case | Result | Agent time | Provider-reported tokens | Report |
+| 评测集 | 结果 | Agent 耗时 | Provider Token | 报告 |
 | --- | --- | ---: | ---: | --- |
-| `taskboard-priority-aliases` | Target, regression, oracle, retrieval, and patch checks passed | 71.3 s | 1,008,033 | [HTML report](docs/agent-eval/evidence/taskboard-priority-rerun/report.html) |
-| `taskboard-status-filter` | Target, regression, oracle, retrieval, and patch checks passed | 55.7 s | 604,297 | [HTML report](docs/agent-eval/evidence/status-search-rerun/report.html) |
-| `taskboard-title-search` | Target, regression, oracle, retrieval, and patch checks passed | 69.2 s | 785,482 | [Same two-case HTML report](docs/agent-eval/evidence/status-search-rerun/report.html) |
+| 5 道独立编码题 | 1/5 通过；5/5 回归通过；检索命中 1.0 | 279.9 秒 | 3,511,041 | [中文 HTML](docs/agent-eval/evidence/agent-capability-5case/report.html) · [JSON](docs/agent-eval/evidence/agent-capability-5case/report.json) |
+| 应用 API 端到端 | HTTP/SSE、计划审批恢复、隔离 SQLite、补丁及三类测试通过 | 69.1 秒 | 675,853 | [中文 HTML](docs/agent-eval/evidence/application-api-e2e/report.html) · [JSON](docs/agent-eval/evidence/application-api-e2e/report.json) |
+| 应用浏览器端到端 | 浏览器提交、计划审批、Agent 编码、页面完成状态、隔离 SQLite 和三类测试通过 | 98.7 秒 | 1,813,740 | [中文 HTML](docs/agent-eval/evidence/application-browser-e2e/report.html) · [JSON](docs/agent-eval/evidence/application-browser-e2e/report.json) |
+| 应用 API 计划拒绝 | 计划内容 5/5、pending → rejected、拒绝后工作区无改动、target/regression 通过 | 33.2 秒 | 163,761 | [中文 HTML](docs/agent-eval/evidence/application-plan-rejection-e2e/report.html) · [JSON](docs/agent-eval/evidence/application-plan-rejection-e2e/report.json) |
+| PostgreSQL 持久化专项 | 一次性本地容器；三类持久层、幂等 schema、回滚、重连、审计与清理通过 | 6.5 秒 | 不适用 | [中文 HTML](docs/agent-eval/evidence/postgres-persistence-e2e/report.html) · [JSON](docs/agent-eval/evidence/postgres-persistence-e2e/report.json) |
+| OpenSandbox 隔离冒烟 | 真实容器；凭证/SQLite 过滤、路径穿越拒绝、超时、补丁、三类验收和清理均通过 | 15.6 秒 | 不适用 | [中文 HTML](docs/agent-eval/evidence/opensandbox-isolation-smoke/report.html) · [JSON](docs/agent-eval/evidence/opensandbox-isolation-smoke/report.json) |
 
-Across the three cases, the Agent used 2,397,812 provider-reported tokens and 196.3 seconds of Agent time. This small suite is evidence that the real evaluation path works; it is not broad coverage of every coding-agent feature. Rerun after the Eval changes are committed to produce commit-pinned, same-build evidence.
+五题 suite 的失败结果也完整保留；这组测量显示 Agent 在该固定小型题库中通过 1/5，不能解读为通用编程成功率。应用 API 和浏览器结果分别衡量后端 API 链路与前后端交互链路，不能与五题直接 Agent suite 混成一个成功率。可在[应用链路对比页](docs/agent-eval/evidence/application-e2e-comparison.html)对照 API 与浏览器运行，也可在[首轮 suite 对比页](docs/agent-eval/evidence/first-full-suite-comparison.html)查看早期编码题运行。
 
-To create a sanitized shareable bundle from a completed run:
+每次运行都会在外部输出目录生成机器可读 `report.json`、Markdown `report.md` 和自包含 `report.html`。导出公开证据包时：
 
 ```powershell
 python scripts/export_eval_report.py `
@@ -308,7 +307,7 @@ python scripts/export_eval_report.py `
   'docs\agent-eval\evidence\<evidence-name>'
 ```
 
-The exporter includes the report and allowlisted text artifacts. It omits workspaces, SQLite files, secrets, and local machine paths; review the exported bundle before publishing it.
+导出器按 allowlist 收录报告与文本证据，排除项目副本和 SQLite，并脱敏本机路径及常见密钥格式。公开前仍应人工检查证据包。
 
 ### Run the real benchmark
 
@@ -317,14 +316,15 @@ python scripts/run_eval.py `
   --dataset 'A:\gyx_cv\test-coding-eval\cases' `
   --repo 'A:\gyx_cv\test-coding-eval' `
   --mode real `
-  --env-file 'A:\gyx_cv\coding_agent\.env'
+  --env-file 'A:\gyx_cv\coding_agent\.env' `
+  --agent-ref 710862e51e382762de1b3cccf63fdf965d369f4e
 ```
 
-The command requires the benchmark repository and its pinned baseline commit to be available locally. Model credentials are loaded from the specified environment file for the Agent child process and are not included in reports. Each run uses a unique directory under `A:\gyx_cv\coding-agent-eval-runs\runs\` by default.
+命令要求本地目标仓库包含案例锁定的完整提交。模型配置只读自指定 `.env` 并传给隔离子进程，不会写入报告。每次运行使用 `A:\gyx_cv\coding-agent-eval-runs\runs\` 下的新目录。多份 `report.json` 可用 `python scripts/compare_eval_reports.py --reports <报告1> <报告2> --output <对比.html>` 生成离线对比页。
 
 ### What the first suite proves
 
-The first suite is a small, repeatable coding benchmark, not exhaustive validation of every feature or repository. It is designed to demonstrate an operational real-Agent evaluation path and provide inspectable evidence. Frontend browser flows, PostgreSQL service instances, broad recovery scenarios, and full project coverage are later evaluation suites. See [Agent Eval design and scope](docs/AGENT_EVAL.md) and the [implementation plan](docs/CODING_AGENT_EVAL_IMPLEMENTATION_PLAN.md).
+当前已覆盖 Runner 隔离、真实 Agent 编码题、计划审批/拒绝、工具恢复计分、API/SSE 和浏览器应用路径、独立 SQLite、一次性 PostgreSQL 组件集成、真实 OpenSandbox 执行、脱敏可视化和跨报告比较。五题编码 suite 的 Agent 通过率是 1/5，注入工具错误后的恢复率为 0.0；计划拒绝案例为 1/1，通过 API 提交拒绝并验证计划状态与工作区未改动。这些是被测 Agent 在固定案例与配置下的实际成绩。PostgreSQL 专项只证明三个持久化组件可连接一次性本地容器，不等于整个应用的 PostgreSQL 部署验收；OpenSandbox 冒烟题证明了文件过滤、命令执行、补丁采集和容器清理，不等于完整 Agent 在沙箱内编码。完整覆盖边界、运行步骤和阶段状态见 [Agent Eval 设计](docs/AGENT_EVAL.md)、[Runner 可靠性契约](docs/AGENT_EVAL_RELIABILITY.md)与[实施计划](docs/CODING_AGENT_EVAL_COMPLETE_IMPLEMENTATION_PLAN.md)。
 
 ## 持久化与部署
 

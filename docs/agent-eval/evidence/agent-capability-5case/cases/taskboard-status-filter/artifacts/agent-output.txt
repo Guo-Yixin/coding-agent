@@ -1,0 +1,163 @@
+I'll start by planning this task and exploring the repository.
+
+# 状态筛选修复技术方案（Guo-Yixin/test-coding-eval）
+
+## 1. 需求理解
+
+`hybrid_code_search`（query：filter_by_status status filter implementation）已定位到实现位置：
+
+| 位置 | 内容 |
+| --- | --- |
+| `taskboard/tasks.py` 第 10-16 行 | `filter_by_status(tasks, status=None)` 定义 |
+| `taskboard/tasks.py` 第 16 行 | 问题代码：`[task for task in rows if task.get("status") == status]` |
+| `taskboard/__init__.py` 第 3、5 行 | 函数被 re-export，属于对外 API |
+| `tests/test_filter_by_status.py` | 可见目标测试（已包含期望用例） |
+
+需求可拆成三条可验收行为：
+
+1. `status` 比较忽略大小写：`"Open"` 应同时匹配 `open` 与 `OPEN`。
+2. `status is None` 时返回全部任务（当前已满足），不能因为改动而回归。
+3. 不修改输入列表与任务对象：既不改动调用方传入的 list（不追加、不清空、不排序），也不原地改写其中的 dict（不写回 `status` 做大小写归一）。
+
+实测基线（commit `7decd8f`，工作区干净）运行 `python -m pytest tests -q` 得 **4 passed / 4 failed**，其中 `tests/test_filter_by_status.py::test_status_filter_is_case_insensitive_and_does_not_mutate_tasks` 失败，断言 `[] == [1, 3]`，证明当前是纯大小写敏感的精确比较。
+
+## 2. 涉及模块和需要阅读的文件
+
+| 文件 | 作用 | 是否修改 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | 核心实现，`filter_by_status` 在此 | 是（唯一实现改动点） |
+| `tests/test_filter_by_status.py` | 状态筛选可见测试 | 是（补充/调整用例） |
+| `taskboard/__init__.py` | re-export 与 `__all__` | 否（签名不变则无需改） |
+| `tests/test_baseline.py` | 回归基线：`filter_by_status(TASKS) == TASKS`、空 query、优先级排序 | 否，但要作为回归门禁阅读 |
+| `cases/README.md` | case `taskboard-status-filter` 的验收描述 | 否，仅用于对齐验收口径 |
+| `taskboard/tasks.py` 内 `search_tasks` / `sort_by_priority` | 同文件邻居函数 | 否，避免顺手改动造成越界 |
+
+## 3. 数据结构、接口或页面变化
+
+- **接口签名不变**：`filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]`，因此 `taskboard/__init__.py` 的导入与 `__all__` 无需调整，无破坏性变更。
+- **返回值类型不变**：仍然是 `list[Task]`，元素仍是输入中的同一批 dict 对象（浅引用），保持"返回原任务对象而非副本"的既有契约。
+- **语义变化**：`status` 的匹配规则从"精确相等"变为"大小写不敏感的字符串相等"；`status is None` 语义保持不变（返回全部）。
+- **边界语义（需要明确约定，见风险点）**：字符串型 status 与"缺失/`None` 的 `task["status"]`"不做匹配；非字符串传入的处理方式需要用户确认。
+
+## 4. 具体实施步骤
+
+步骤 1：修改 `taskboard/tasks.py` 中的 `filter_by_status` 实现，只替换比较表达式，同时把 docstring 更新为描述新语义（说明匹配忽略大小写、`status is None` 返回全部、既不修改输入列表也不修改任务对象）。
+
+核心流程（伪代码，非最终实现）：
+
+```
+rows = list(tasks)              # 复制容器，不动调用方的 list
+if status is None:
+    return rows                 # 无筛选：全部返回
+key = status.casefold()         # 先做一次归一，避免循环内重复
+return [任务 for 任务 in rows
+        if isinstance(任务.get("status"), str) and 任务["status"].casefold() == key]
+```
+
+要点：
+
+- 采用"读取时归一"而非"写回归一"：绝不对 `task["status"]` 赋值，从根上满足"不修改任务对象"。
+- 使用 `list(tasks)` 生成新列表，保证调用方传入的 list、tuple 或生成器都不会被改写；返回的也是新列表，调用方 `append`/`sort` 不会影响原输入。
+- 归一使用 `casefold()` 而非 `lower()`，对 Unicode 大小写（如 `İ`/`i`、德语 `ß`）更正确，也与"忽略大小写"的验收口径一致。
+- 条件里保留 `isinstance(..., str)` 守卫，避免任务 `status` 缺失或为 `None` 时 `casefold` 抛 `AttributeError`；缺失 status 的任务不参与匹配。
+
+步骤 2：调整 `tests/test_filter_by_status.py`。现有两个用例保留（第一个用例本身即"大小写混合 + 输入未被修改"的合并断言），并补充以下覆盖：
+
+| 用例 | 覆盖点 | 断言要点 |
+| --- | --- | --- |
+| `test_status_filter_is_case_insensitive_and_does_not_mutate_tasks`（保留/可微调） | 大小写混合 + 输入未被修改 | 查询 `"Open"` 命中 `open`/`OPEN`，返回 id 顺序 `[1, 3]`；断言输入 list 不变、每个 dict 与深拷贝快照相等 |
+| `test_status_filter_matches_status_argument_case_variants` | 大小写混合（参数侧） | 同一批任务分别用 `"open"`、`"OPEN"`、`"oPeN"` 查询，结果 id 集合一致，验证参数大小写不敏感 |
+| `test_status_filter_returns_empty_list_when_no_task_matches`（保留） | 无匹配项 | 返回 `[]`，且是空列表而非 `None` |
+| `test_status_filter_with_no_match_leaves_input_untouched` | 无匹配项时也不修改输入 | 无匹配时输入 list 与 dict 快照同样保持不变 |
+| `test_status_filter_returns_new_list_and_keeps_task_objects` | 不修改输入列表 | 返回对象 **不是** 输入 list（`is not`）；对返回值排序或追加后，输入 list 长度与顺序不变 |
+| `test_status_filter_with_none_status_returns_all_tasks` | None 语义回归 | `filter_by_status(tasks)` 与 `filter_by_status(tasks, None)` 都返回全部任务，顺序与原输入一致 |
+| `test_status_filter_skips_tasks_without_status_key` | 缺失 status 的健壮性 | 包含无 `status` 键任务的输入不会抛异常，且这些任务不被命中 |
+
+实现"输入未被修改"断言时，用 `copy.deepcopy`（或 `[dict(task) for task in tasks]`）在调用前保存快照，调用后比较；这样能同时捕获"dict 被原地改写"和"list 被改动"两类变异。
+
+步骤 3：不改动 `tests/test_baseline.py`、`tests/test_search_tasks.py`、`tests/test_sort_by_priority.py`，避免越出"只改两个文件"的约束。
+
+## 5. 验证方案
+
+| 验证项 | 命令 / 方式 | 期望结果 |
+| --- | --- | --- |
+| 目标用例 | `python -m pytest tests/test_filter_by_status.py -q` | 全部通过（含新增用例） |
+| 全量套件 | `python -m pytest tests -q` | `test_filter_by_status.py` 全绿；`tests/test_baseline.py` 的 status 相关用例保持通过 |
+| 回归基线 | 观察 `tests/test_baseline.py::test_no_status_filter_returns_all_tasks_without_mutating_input` | 仍通过，确认 `status is None` 语义未被破坏 |
+| 输入不可变（可选手工验证） | 构造 `tasks` 与其深拷贝快照，调用后比较 | 两者仍相等，且 `filter_by_status` 返回值 `is not` 输入 list |
+| 混合大小写（可选手工验证） | 用 `"OPEN"`、`"open"`、`"Open"` 三次调用同一输入 | 三次返回的任务 id 集合一致 |
+| 变更范围核查 | `git diff --stat` | 仅出现 `taskboard/tasks.py` 与 `tests/test_filter_by_status.py` 两个文件 |
+
+已知预期：本仓库其余 case（`search_tasks`、`sort_by_priority`）的失败与本任务无关，修复后 `python -m pytest tests -q` 仍可能显示 `tests/test_search_tasks.py` 与 `tests/test_sort_by_priority.py` 的失败——这是既有基线状态，不是本次改动引入的，也不是本次改动范围（用户已限定只改两个文件）。
+
+## 6. 风险点和需要用户确认的事项
+
+| 风险 / 待确认项 | 说明与建议 |
+| --- | --- |
+| 非字符串 `status` 入参 | 当前签名标注 `str | None`。若传入非字符串（如 `123`、`True`），归一处理会抛 `AttributeError`/`TypeError`。建议方案：保持签名不变，不对非字符串入参做额外兼容（视为调用方违反契约）。**如需显式容错（例如非字符串直接返回 `[]`），请确认。** |
+| 匹配范围是否包含"任务 status 为 None/缺失"的任务 | 本方案约定不匹配（与"无匹配项返回空列表"一致）。若期望 `status=None` 时既返回全部、又要求缺失 status 任务被特殊处理，语义会冲突，需明确。 |
+| `casefold()` 与 `lower()` 的差异 | 用 `casefold()` 对 Unicode 更严格（如 `ß` → `ss`）。普通 ASCII 用例两者无差异；若评测 oracle 期望标准 `lower()` 语义且用例含非 ASCII 字符，行为可能不同。建议按 `casefold()` 实现，**若你更倾向 `lower()` 请指出**。 |
+| 返回元素是否允许为副本 | 为满足"不修改任务对象"，本方案返回输入中的同一批 dict 对象（不做深拷贝），与原实现一致，保证 `==` 断言与调用方期望不变。若要求返回深拷贝，会改变既有契约，需确认。 |
+| 基线测试中"不修改输入"的强度 | `tests/test_baseline.py` 现有断言只用 `list(TASKS)` 做浅快照，对 dict 被原地改写不敏感；本次新增用例会用深拷贝快照加强这一点，属于测试增强，不改变生产语义。 |
+| 越界改动风险 | 明确不改 `__init__.py`、`test_baseline.py` 及其它测试文件；不顺手修 `search_tasks`/`sort_by_priority`，即使它们当前也是失败状态。 |
+
+是否确认实施该方案？
+
+I'll implement the approved plan now.
+
+我注意到最后一次替换把「任意可迭代对象」用例的函数定义行丢掉了，现在检查并修正文件。
+
+文件结构检查通过，无语法残留。运行测试验证。
+
+验证通过：`filter_by_status.py` 与 `test_baseline.py` 12 项全绿，剩余 3 个失败均为本任务范围外的既有基线失败（`search_tasks`、`sort_by_priority`）。改动范围也严格限于两个文件。现在提交并推送。
+
+Git 写操作被评测环境拦截。工作区与代码改动均已就绪，我需要就收尾方式向你确认。
+
+代码修改与测试已完成并验证通过，但提交/推送/建 PR 被环境拦截，需要你决定收尾方式。
+
+## 已完成的改动（工作区）
+
+分支：`codex/task-eval-taskboard-status-fi`（原本地仓库只有 `main`，我按指定名新建了该分支，未切回 master/main）
+
+**1. `taskboard/tasks.py`** — 重写 `filter_by_status` 的匹配逻辑与 docstring：
+
+- 匹配改为双向 `casefold()` 归一：`wanted = status.casefold()`，与 `task["status"].casefold()` 比较，因此 `"Open"`、`"OPEN"`、`"oPeN"` 均能命中 `open`/`OPEN`。
+- `status is None` 仍直接返回 `list(tasks)`，语义未变。
+- 新增 `isinstance(task.get("status"), str)` 守卫，任务 status 缺失或为 `None` 时不会抛 `AttributeError`，且不参与匹配。
+- 采用「读取时归一」而非「写回归一」：从不对 `task["status"]` 赋值；容器用 `list(tasks)` 复制，返回新列表但元素仍是原任务对象（保持既有浅引用契约）。
+- 接口签名、返回类型、`taskboard/__init__.py` 的导出均未变动，无破坏性变更。
+
+**2. `tests/test_filter_by_status.py`** — 从 2 个用例扩展到 10 个，全部用 `copy.deepcopy` 快照断言输入不可变：
+
+- 保留原有两个用例并加强：`Open` 命中 `open`/`OPEN` 返回 `[1, 3]`、输入与深拷贝快照一致、返回 `[]` 而非 `None`。
+- 新增：参数侧大小写变体三种写法结果一致、无匹配时输入同样未被改动、返回值 `is not` 输入列表且对其排序/追加不影响输入、`status=None` 与省略参数都返回全部并保持顺序、缺失 status 键不抛异常且不被命中、输入为 `iter(...)`/`tuple` 等任意可迭代对象时也可用且原源未被改动。
+
+## 验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `python -m pytest tests/test_filter_by_status.py tests/test_baseline.py -q` | **12 passed** |
+| `python -m pytest tests -q` | **12 passed / 3 failed** |
+| `git diff --stat` | 仅 `taskboard/tasks.py`（+16/-2 附近）与 `tests/test_filter_by_status.py`（+101/-2），无越界文件 |
+
+剩余 3 个失败是**改动前就存在的基线失败**，与本次需求无关，也不在允许修改的文件范围内：`tests/test_search_tasks.py` 的 2 项（`search_tasks` 未忽略大小写、未跳过无 title 任务）和 `tests/test_sort_by_priority.py` 的 1 项（未知优先级应保持原位）。按你的约束我未触碰 `search_tasks`、`sort_by_priority`。
+
+## 未能完成的事项
+
+- `git commit` 直接失败：`PermissionError: Agent Eval blocks Git write and remote-sync commands`，沙箱明确拦截 Git 写与远端同步命令，`git push` 同理。
+- 因此 **未提交、未推送、未创建 Pull Request**，PR 地址不存在。
+- 改动目前只保留在本地工作区（已 `git add` 两个文件，暂存区已就绪），方案中「Git 收尾」一项保持未完成状态，我未做任何绕过尝试。
+- 收尾所需信息：commit message 建议 `Make status filtering case-insensitive without mutating input`；PR 目标分支留空交给平台真实默认分支解析；PR 描述可采用上面的「已完成的改动 / 验证结果 / 剩余基线失败说明」三段。
+
+## 实施中的方案偏差
+
+无功能性偏差，仅两点补充说明：一是基线测试 `tests/test_baseline.py` 全绿，确认 `status is None` 语义未被破坏；二是为验证「不改输入」的强度，新增用例同时覆盖了「输入为迭代器/元组」这类场景，属于测试增强，不改变生产语义。方案中列为待确认的非字符串入参、返回深拷贝等问题，按建议保持原契约（非字符串入参不做兼容、不返回深拷贝），如需调整请告知。
+
+请确认收尾方式：接受改动留在本地由你在环境外提交，还是放开沙箱 Git 写权限后由我继续完成 commit、push 与 PR？
+{"status": "completed", "model_provider": "DeepSeek", "model_name": "deepseek-flash", "usage": {"input_tokens": 773808, "output_tokens": 11164, "total_tokens": 784972}}
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return self._pregel_stream_v3(
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return GraphRunStream(graph_iter, mux)
+工具执行异常已被中间件捕获：tool=execute error=Agent Eval blocks Git write and remote-sync commands
+工具执行异常已被中间件捕获：tool=request_human_intervention error=(Interrupt(value={'type': 'human_intervention', 'question': '本环境禁止执行 Git 写操作（git commit / push 返回 PermissionError：「Agent Eval blocks Git write and remote-sync commands」）。代码修改和测试已完成并验证通过，但无法提交、推送或创建 Pull Request。请问如何处理？', 'reason': '当前沙箱策略明确拦截 Git 写与远端同步命令，属于任务预设流程（commit/push/建 PR）无法完成的外部限制，不由 Agent 自行绕过或改用其它写接口。', 'options': ['保持现状并结束：接受改动只留在本地工作区，放弃 commit/push/PR，由你在环境外自行提交', '由你临时放开该沙箱的 Git 写权限，我随后继续执行 commit、push 并按指定分支创建 PR', '由我提供一段可直接复制的本地命令清单（分支已建好，含 commit message 与 PR 标题/描述），你在本地执行']}, id='126626200df58a24c417a61663bebeae'),)

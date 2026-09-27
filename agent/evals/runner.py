@@ -18,6 +18,7 @@ from typing import Any
 
 from agent.evals.metrics import calculate_metrics
 from agent.evals.reporting import write_report_artifacts
+from agent.evals.runtime_snapshot import AgentRuntimeSnapshot, prepare_agent_runtime_snapshot, verify_agent_runtime_snapshot
 from agent.evals.schemas import EvalCase, EvalCaseResult, EvalReport
 
 
@@ -38,12 +39,17 @@ class EvalRunner:
         python_executable: str | None = None,
         env_file: Path | None = None,
         agent_source_root: Path | None = None,
+        agent_revision: str | None = None,
     ) -> None:
         self.output_dir = output_dir
         self.mode = mode
         self.python_executable = python_executable or os.environ.get("PYTHON", sys.executable)
         self.env_file = env_file.expanduser().resolve() if env_file else None
         self.agent_source_root = (agent_source_root or Path(__file__).resolve().parents[2]).expanduser().resolve()
+        self.agent_revision = agent_revision
+        self._agent_runtime: AgentRuntimeSnapshot | None = None
+        self._target_commits: dict[str, str] = {}
+        self._runtime_mutated = False
         self._test_logs: list[str] = []
 
     def run(self, cases: list[EvalCase], *, repository: Path) -> EvalReport:
@@ -63,15 +69,62 @@ class EvalRunner:
             for protected in self._protected_roots(repository):
                 if self.output_dir == protected or protected in self.output_dir.parents or self.output_dir in protected.parents:
                     raise ValueError(f"Real Eval output overlaps protected source/configuration path: {protected}")
+            case_ids = [case.case_id for case in cases]
+            if len(set(case_ids)) != len(case_ids):
+                raise ValueError("Real Agent Eval case_id values must be unique")
+            for case in cases:
+                if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", case.case_id):
+                    raise ValueError(f"Unsafe Eval case_id: {case.case_id!r}")
         self.output_dir.mkdir(parents=True, exist_ok=True)
         manifest = json.dumps([case.to_dict() for case in cases], sort_keys=True, ensure_ascii=False)
         report_id = hashlib.sha256(manifest.encode("utf-8")).hexdigest()[:16]
+        framework_sha = self._git_output(Path(__file__).resolve().parents[2], "rev-parse", "HEAD") or None
+        if self.mode == "real":
+            self._target_commits = {case.case_id: self._resolve_target_commit(case, repository) for case in cases}
+            self._agent_runtime = prepare_agent_runtime_snapshot(
+                source_root=self.agent_source_root,
+                revision=self.agent_revision,
+                destination=self.output_dir / "agent-runtime",
+                adapter_source_root=Path(__file__).resolve().parents[2],
+            )
+            run_manifest = {
+                "schema_version": 1,
+                "report_id": report_id,
+                "created_at": datetime.now(UTC).isoformat(),
+                "framework_source_sha": framework_sha,
+                "agent": {
+                    "source_sha": self._agent_runtime.commit,
+                    "runtime_snapshot_sha256": self._agent_runtime.fingerprint,
+                    "adapter_sha256": self._agent_runtime.adapter_sha256,
+                    "overlay_files": self._agent_runtime.overlay_files,
+                    "snapshot_path": "agent-runtime",
+                },
+                "target_repository": str(repository),
+                "cases": [
+                    {
+                        "case_id": case.case_id,
+                        "case_config_sha256": hashlib.sha256(
+                            json.dumps(case.to_dict(), sort_keys=True, ensure_ascii=False).encode("utf-8")
+                        ).hexdigest(),
+                        "target_repo_sha": self._target_commits[case.case_id],
+                    }
+                    for case in cases
+                ],
+            }
+            (self.output_dir / "manifest.json").write_text(
+                json.dumps(run_manifest, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8"
+            )
         results: list[EvalCaseResult] = []
         for case in cases:
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,79}", case.case_id):
-                raise ValueError(f"Unsafe Eval case_id: {case.case_id!r}")
             try:
-                results.append(self._run_real_case(case, repository=repository) if self.mode == "real" else self._run_case(case, repository=repository))
+                if self.mode == "real" and self._runtime_mutated:
+                    raise RuntimeError("Agent runtime snapshot changed during the previous case; remaining cases were not run")
+                result = self._run_real_case(case, repository=repository) if self.mode == "real" else self._run_case(case, repository=repository)
+                if self.mode == "real" and self._agent_runtime and not verify_agent_runtime_snapshot(self._agent_runtime):
+                    self._runtime_mutated = True
+                    result.status = "failed"
+                    result.errors.append("Agent runtime snapshot changed during evaluation")
+                results.append(result)
             except Exception as exc:
                 if self.mode != "real":
                     raise
@@ -99,9 +152,10 @@ class EvalRunner:
                     report_path = case_dir / "artifacts" / "report.json"
                     report_path.parent.mkdir(parents=True, exist_ok=True)
                     report_path.write_text(json.dumps(failed.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
-        source_sha = self._git_output(self.agent_source_root, "rev-parse", "HEAD").strip()
+        source_sha = self._agent_runtime.commit if self._agent_runtime else (self._git_output(self.agent_source_root, "rev-parse", "HEAD") or "")
         remote_sha = self._git_output(repository, "rev-parse", "origin/main").strip()
-        source_patch_sha = self._source_patch_fingerprint(self.agent_source_root)
+        source_patch_sha = None if self._agent_runtime else self._source_patch_fingerprint(self.agent_source_root)
+        framework_patch_sha = self._source_patch_fingerprint(Path(__file__).resolve().parents[2])
         report = EvalReport(
             report_id=report_id,
             mode=self.mode,
@@ -109,10 +163,17 @@ class EvalRunner:
             cases=results,
             config={
                 "python": self.python_executable,
-                "runner_version": "2",
+                "runner_version": "3",
                 "agent_source_sha": source_sha,
                 "agent_source_dirty_patch_sha256": source_patch_sha,
                 "agent_source_root": str(self.agent_source_root),
+                "agent_runtime_snapshot_sha256": self._agent_runtime.fingerprint if self._agent_runtime else None,
+                "agent_adapter_sha256": self._agent_runtime.adapter_sha256 if self._agent_runtime else None,
+                "agent_runtime_overlay_files": self._agent_runtime.overlay_files if self._agent_runtime else {},
+                "agent_runtime_path": "agent-runtime" if self._agent_runtime else None,
+                "framework_source_sha": framework_sha,
+                "framework_source_dirty_patch_sha256": framework_patch_sha,
+                "case_manifest_sha256": hashlib.sha256(manifest.encode("utf-8")).hexdigest(),
                 "remote_main_sha": remote_sha or None,
             },
             created_at=datetime.now(UTC).isoformat(),
@@ -122,6 +183,15 @@ class EvalRunner:
             (self.output_dir / "run.json").write_text(json.dumps(report.to_dict(), ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
         self._write_summary(report)
         return report
+
+    def _resolve_target_commit(self, case: EvalCase, repository: Path) -> str:
+        ref = case.base_ref or self._git_output(repository, "rev-parse", "origin/main") or ""
+        if not ref:
+            ref = self._git_output(repository, "rev-parse", "HEAD") or ""
+        resolved = self._git_output(repository, "rev-parse", "--verify", f"{ref}^{{commit}}", check=False)
+        if not resolved:
+            raise ValueError(f"Cannot resolve target baseline for case {case.case_id}: {ref}")
+        return resolved
 
     def _run_case(self, case: EvalCase, *, repository: Path) -> EvalCaseResult:
         if self.mode == "real":
@@ -181,20 +251,23 @@ class EvalRunner:
         started = time.perf_counter()
         self._test_logs = []
         errors: list[str] = []
-        agent_adapter = self.agent_source_root / "scripts" / "run_eval_agent.py"
+        if self._agent_runtime is None:
+            raise RuntimeError("Agent runtime snapshot was not prepared before case execution")
+        adapter_kind = str(case.metadata.get("adapter", "agent"))
+        if adapter_kind not in {"agent", "app"}:
+            raise ValueError(f"Unsupported real Eval adapter for {case.case_id}: {adapter_kind}")
+        adapter_name = "run_eval_app.py" if adapter_kind == "app" else "run_eval_agent.py"
+        agent_adapter = self._agent_runtime.source_dir / "scripts" / adapter_name
         if not agent_adapter.is_file():
-            raise FileNotFoundError(f"Real Agent adapter not found in Agent source tree: {agent_adapter}")
+            raise FileNotFoundError(f"Real Agent adapter not found in pinned runtime snapshot: {agent_adapter}")
+        adapter_sha256 = hashlib.sha256(agent_adapter.read_bytes()).hexdigest()
         case_dir = self.output_dir / "cases" / case.case_id
         if case_dir.exists():
             raise FileExistsError(f"Refusing to reuse existing case directory: {case_dir}")
         case_dir.mkdir(parents=True)
         repo_url = str(case.metadata.get("repo_url") or self._git_output(repository, "remote", "get-url", "origin")).strip()
         parsed_repo = parse_repo_url(repo_url)
-        target_sha = case.base_ref or self._git_output(repository, "rev-parse", "origin/main").strip()
-        if not target_sha:
-            target_sha = self._git_output(repository, "rev-parse", "HEAD").strip()
-        if not target_sha or self._git_output(repository, "cat-file", "-e", f"{target_sha}^{{commit}}", check=False) is None:
-            raise ValueError(f"Cannot resolve target baseline for case {case.case_id}: {target_sha}")
+        target_sha = self._target_commits.get(case.case_id) or self._resolve_target_commit(case, repository)
 
         workspace_root = case_dir / "workspace"
         repo_path = (workspace_root / repo_project_dir(parsed_repo)).resolve()
@@ -216,6 +289,14 @@ class EvalRunner:
         self._extract_git_archive(repository, target_sha, oracle_repo)
         self._init_git_baseline(repo_path)
         self._init_git_baseline(oracle_repo)
+        remote_added = subprocess.run(
+            ["git", "remote", "add", "origin", repo_url], cwd=repo_path,
+            env=self._safe_subprocess_env(), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", check=False, shell=False,
+        )
+        if remote_added.returncode != 0:
+            raise RuntimeError(f"Could not attach the declared target repository URL to the isolated Agent workspace: {remote_added.stderr[-1000:]}")
+        workspace_baseline_sha = self._git_output(repo_path, "rev-parse", "HEAD") or ""
 
         index_started = time.perf_counter()
         codegraph = shutil.which(os.environ.get("CODEGRAPH_BIN", "codegraph"))
@@ -236,6 +317,15 @@ class EvalRunner:
             })
             if completed.returncode != 0:
                 errors.append(f"CodeGraph indexing failed ({completed.returncode})")
+        # CodeGraph stores its disposable index below .codegraph/. Keep this generated
+        # workspace metadata out of the candidate patch and the pre-approval dirty check.
+        if (repo_path / ".git").is_dir():
+            exclude_file = repo_path / ".git" / "info" / "exclude"
+            exclude_file.parent.mkdir(parents=True, exist_ok=True)
+            existing_excludes = exclude_file.read_text(encoding="utf-8", errors="replace") if exclude_file.exists() else ""
+            if ".codegraph/" not in existing_excludes.splitlines():
+                with exclude_file.open("a", encoding="utf-8") as stream:
+                    stream.write("\n.codegraph/\n")
 
         trace_file = trace_dir / "agent-events.jsonl"
         agent_output_file = artifact_dir / "agent-output.txt"
@@ -256,8 +346,8 @@ class EvalRunner:
             "EVAL_CASE_CONFIG": str(case_config),
             "EVAL_REPO_URL": repo_url,
             "EVAL_MODEL_CALL_LIMIT": str(min(max(int(case.metadata.get("model_call_limit", 24)), 1), 40)),
-            "EVAL_TOOL_CALL_LIMIT": str(min(max(int(case.metadata.get("tool_call_limit", 24)), 1), 40)),
-            "AGENT_CODING_MAX_TOOL_CALLS": str(min(max(int(case.metadata.get("tool_call_limit", 24)), 1), 40)),
+            "EVAL_TOOL_CALL_LIMIT": str(min(max(int(case.metadata.get("tool_call_limit", 24)), 1), 100)),
+            "AGENT_CODING_MAX_TOOL_CALLS": str(min(max(int(case.metadata.get("tool_call_limit", 24)), 1), 100)),
             "AGENT_CODING_MAX_SECONDS": str(max(1, case.timeout_seconds)),
             "AI_WORKSPACE_ROOT": str(workspace_root),
             "PERSISTENCE_BACKEND": "sqlite",
@@ -267,8 +357,10 @@ class EvalRunner:
             "STORE_DB_PATH": str(db_paths[1]),
             "LANGGRAPH_STORE_DB_PATH": str(db_paths[2]),
             "CODING_LOG_DIR": str(case_dir / "logs"),
-            "PYTHONPATH": str(self.agent_source_root),
-            "EVAL_AGENT_SOURCE_ROOT": str(self.agent_source_root),
+            "PYTHONPATH": str(self._agent_runtime.source_dir),
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "EVAL_AGENT_SOURCE_ROOT": str(self._agent_runtime.source_dir),
+            "EVAL_AGENT_SOURCE_SHA": self._agent_runtime.commit,
             "EVAL_ENV_FILE": str(self.env_file) if self.env_file else "",
         })
         command = [self.python_executable, str(agent_adapter)]
@@ -297,8 +389,8 @@ class EvalRunner:
         agent_output_file.write_text(agent_output, encoding="utf-8")
 
         self._include_untracked_as_diff(repo_path)
-        patch = self._git_diff(repo_path)
-        changed_files = self._changed_files(repo_path)
+        patch = self._git_diff(repo_path, workspace_baseline_sha)
+        changed_files = self._changed_files(repo_path, workspace_baseline_sha)
         allowed_files = set(case.allowed_files)
         changed_outside = sorted(set(changed_files) - allowed_files) if allowed_files else []
         required_changed_files = {str(path).replace("\\", "/") for path in case.metadata.get("required_changed_files", [])}
@@ -324,6 +416,7 @@ class EvalRunner:
                 patch_apply = not case.requires_patch
 
         scorer_env = {**env, "PYTHONPATH": str(oracle_repo)}
+        scorer_env.pop("EVAL_ENV_FILE", None)
         target_pass, target_latency = self._run_tests(case.target_tests, oracle_repo, case.timeout_seconds, errors, env=scorer_env)
         regression_pass, regression_latency = self._run_tests(case.regression_tests, oracle_repo, case.timeout_seconds, errors, env=scorer_env)
         oracle_commands = [
@@ -350,6 +443,49 @@ class EvalRunner:
         missing_output_terms = [term for term in required_output_terms if term not in agent_output.lower()]
         if missing_output_terms:
             errors.append("Agent output omitted required evidence terms: " + ", ".join(missing_output_terms))
+        plan_approval_ok = True
+        if case.metadata.get("require_plan_approval"):
+            plan_approval_ok = bool(
+                runtime_result.get("plan_approval_performed")
+                and runtime_result.get("plan_pending_before_approval")
+                and runtime_result.get("workspace_clean_before_approval")
+            )
+            if not plan_approval_ok:
+                errors.append("Plan approval evidence is incomplete: the plan must be pending, the workspace clean before approval, and coding resumed after approval")
+        plan_rejection_ok = True
+        if case.metadata.get("require_plan_rejection"):
+            plan_rejection_ok = _plan_rejection_evidence_ok(runtime_result, changed_files)
+            if not plan_rejection_ok:
+                errors.append("Plan rejection evidence is incomplete: pending plan, clean workspace, rejected status, and no code changes are required")
+        plan_text = str(runtime_result.get("plan_text") or "").lower()
+        plan_rubric = case.metadata.get("plan_rubric_any_terms", [])
+        plan_rubric_results = [
+            {"accepted_terms": [str(term) for term in terms], "passed": any(str(term).lower() in plan_text for term in terms)}
+            for terms in plan_rubric
+            if isinstance(terms, list) and terms
+        ]
+        plan_rubric_ok = all(item["passed"] for item in plan_rubric_results)
+        if plan_rubric_results and not plan_rubric_ok:
+            errors.append("Plan quality rubric missed required sections: " + ", ".join(
+                " / ".join(item["accepted_terms"]) for item in plan_rubric_results if not item["passed"]
+            ))
+        tool_recovery_ok = not case.metadata.get("require_tool_recovery") or metric["tool_recovery_rate"] == 1.0
+        if case.metadata.get("require_tool_recovery") and not tool_recovery_ok:
+            errors.append("Injected tool failure was not followed by a verified successful recovery")
+        app_e2e = runtime_result.get("api_e2e") if isinstance(runtime_result.get("api_e2e"), dict) else {}
+        app_e2e_ok = adapter_kind != "app" or all(
+            app_e2e.get(key) is True for key in ("health_passed", "thread_created", "sse_received", "sqlite_isolated")
+        )
+        browser_evidence = app_e2e.get("browser") if isinstance(app_e2e.get("browser"), dict) else {}
+        if case.metadata.get("browser_e2e") is True:
+            app_e2e_ok = app_e2e_ok and all(
+                browser_evidence.get(key) is True for key in (
+                    "browser_started", "page_loaded", "repo_and_prompt_entered", "task_submitted",
+                    "pending_plan_displayed", "workspace_clean_before_approval", "approval_clicked", "completion_displayed",
+                )
+            )
+        if adapter_kind == "app" and not app_e2e_ok:
+            errors.append("App E2E evidence is incomplete: health, persisted thread, SSE, or isolated SQLite check failed")
         case_pass = (
             agent_exit == 0
             and runtime_status == expected_status
@@ -362,6 +498,11 @@ class EvalRunner:
             and (case.requires_patch or not changed_files)
             and not model_limit_exceeded
             and not missing_output_terms
+            and plan_approval_ok
+            and plan_rejection_ok
+            and plan_rubric_ok
+            and tool_recovery_ok
+            and app_e2e_ok
             and bool(retrieval_events)
             and metric["retrieval_hit_at_k"] == 1.0 if case.gold_files else
             agent_exit == 0 and runtime_status == expected_status and patch_apply
@@ -371,6 +512,11 @@ class EvalRunner:
             and oracle_pass is not False
             and not model_limit_exceeded
             and not missing_output_terms
+            and plan_approval_ok
+            and plan_rejection_ok
+            and plan_rubric_ok
+            and tool_recovery_ok
+            and app_e2e_ok
         )
         if case.requires_patch and not case.target_tests:
             errors.append("Coding case requires at least one independent target test")
@@ -387,7 +533,38 @@ class EvalRunner:
         status = "passed" if case_pass else "failed"
         patch_file = artifact_dir / "patch.diff"
         patch_file.write_text(patch, encoding="utf-8")
-        (artifact_dir / "tests.log").write_text("\n".join(self._test_logs + ["ERROR: " + error for error in errors]), encoding="utf-8")
+        tests_log_file = artifact_dir / "tests.log"
+        tests_log_file.write_text("\n".join(self._test_logs + ["ERROR: " + error for error in errors]), encoding="utf-8")
+        manual_review_file = artifact_dir / "manual-review.md"
+        review_evidence = [
+            f"- Agent 最终说明：`{agent_output_file.relative_to(self.output_dir).as_posix()}`",
+            f"- 实际补丁：`{patch_file.relative_to(self.output_dir).as_posix()}`；改动文件：{', '.join(changed_files) if changed_files else '无'}",
+            f"- 验收结果：target={target_pass}; regression={regression_pass}; oracle={oracle_pass}",
+            f"- 自动评分错误数：{len(errors)}",
+        ]
+        manual_review_file.write_text(
+            "\n".join([
+                f"# 人工复核：{case.case_id}",
+                "",
+                "本表专门核对 Agent 的最终说明是否与实际改动和测试证据一致。Runner 不会把待复核项目计为通过。请阅读最终说明、补丁和测试日志后填写结论。",
+                "",
+                "## 机器采集到的证据",
+                *review_evidence,
+                f"- 测试日志：`{tests_log_file.relative_to(self.output_dir).as_posix()}`",
+                "",
+                "## 复核表",
+                "",
+                "| 核对项 | 结论（通过/不通过/不适用） | 说明 |",
+                "|---|---|---|",
+                "| Agent 声称的改动文件与补丁一致 | 待复核 | |",
+                "| Agent 声称的测试结果与测试日志一致 | 待复核 | |",
+                "| Agent 准确说明未完成事项、失败项和限制 | 待复核 | |",
+                "",
+                "复核人：待填写　日期：待填写",
+                "",
+            ]),
+            encoding="utf-8",
+        )
         case_report = EvalCaseResult(
             case_id=case.case_id,
             status=status,
@@ -411,14 +588,32 @@ class EvalRunner:
                 "patch": str(patch_file.relative_to(self.output_dir)),
                 "tests": str((artifact_dir / "tests.log").relative_to(self.output_dir)),
                 "trace": str(trace_file.relative_to(self.output_dir)),
+                "manual_review": str(manual_review_file.relative_to(self.output_dir)),
             },
             metadata={
                 "target_repo_sha": target_sha,
+                "adapter": adapter_kind,
+                "workspace_baseline_sha": workspace_baseline_sha,
+                "agent_source_sha": self._agent_runtime.commit,
+                "agent_runtime_snapshot_sha256": self._agent_runtime.fingerprint,
+                "agent_adapter_sha256": self._agent_runtime.adapter_sha256,
+                "selected_adapter_sha256": adapter_sha256,
                 "repo_path": str(repo_path),
                 "workspace_root": str(workspace_root),
                 "state_files": [str(path) for path in db_paths if path.exists()],
                 "codegraph_index": index_result,
                 "runtime_status": runtime_status,
+                "adapter": adapter_kind,
+                "plan_approval_performed": runtime_result.get("plan_approval_performed"),
+                "plan_pending_before_approval": runtime_result.get("plan_pending_before_approval"),
+                "workspace_clean_before_approval": runtime_result.get("workspace_clean_before_approval"),
+                "plan_rejection_performed": runtime_result.get("plan_rejection_performed"),
+                "plan_pending_before_rejection": runtime_result.get("plan_pending_before_rejection"),
+                "workspace_clean_before_rejection": runtime_result.get("workspace_clean_before_rejection"),
+                "workspace_clean_after_rejection": runtime_result.get("workspace_clean_after_rejection"),
+                "plan_rejection_ok": plan_rejection_ok,
+                "plan_rubric": plan_rubric_results,
+                "api_e2e": app_e2e or None,
                 "expected_status": expected_status,
                 "model_call_limit": env["EVAL_MODEL_CALL_LIMIT"],
                 "tool_call_limit": env["EVAL_TOOL_CALL_LIMIT"],
@@ -614,13 +809,30 @@ class EvalRunner:
         return command
 
     @staticmethod
-    def _git_diff(workspace: Path) -> str:
-        result = subprocess.run(["git", "diff", "--binary", "HEAD"], cwd=workspace, env=EvalRunner._safe_subprocess_env(), capture_output=True, text=True, encoding="utf-8", errors="replace", shell=False, check=False)
+    def _include_untracked_for_diff(workspace: Path) -> None:
+        untracked = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard"], cwd=workspace,
+            env=EvalRunner._safe_subprocess_env(), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", shell=False, check=False,
+        )
+        paths = [path for path in untracked.stdout.splitlines() if path]
+        if paths:
+            subprocess.run(
+                ["git", "add", "-N", "--", *paths], cwd=workspace,
+                env=EvalRunner._safe_subprocess_env(), capture_output=True, text=True,
+                encoding="utf-8", errors="replace", shell=False, check=False,
+            )
+
+    @staticmethod
+    def _git_diff(workspace: Path, base_ref: str = "HEAD") -> str:
+        EvalRunner._include_untracked_for_diff(workspace)
+        result = subprocess.run(["git", "diff", "--binary", base_ref, "--"], cwd=workspace, env=EvalRunner._safe_subprocess_env(), capture_output=True, text=True, encoding="utf-8", errors="replace", shell=False, check=False)
         return result.stdout
 
     @staticmethod
-    def _changed_files(workspace: Path) -> list[str]:
-        result = subprocess.run(["git", "diff", "--name-only", "HEAD"], cwd=workspace, env=EvalRunner._safe_subprocess_env(), capture_output=True, text=True, encoding="utf-8", errors="replace", shell=False, check=False)
+    def _changed_files(workspace: Path, base_ref: str = "HEAD") -> list[str]:
+        EvalRunner._include_untracked_for_diff(workspace)
+        result = subprocess.run(["git", "diff", "--name-only", base_ref, "--"], cwd=workspace, env=EvalRunner._safe_subprocess_env(), capture_output=True, text=True, encoding="utf-8", errors="replace", shell=False, check=False)
         return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
     @staticmethod
@@ -670,3 +882,16 @@ class EvalRunner:
             lines.append(f"- `{case.case_id}`: **{case.status}**, target={case.target_tests_passed}, regression={case.regression_tests_passed}, latency={case.agent_latency_ms}ms")
         (self.output_dir / "summary.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
         write_report_artifacts(report, self.output_dir)
+
+
+def _plan_rejection_evidence_ok(runtime_result: dict[str, Any], changed_files: list[str]) -> bool:
+    """Score a rejected pending plan only when state and workspace prove no edits."""
+
+    return bool(
+        runtime_result.get("plan_rejection_performed")
+        and runtime_result.get("plan_pending_before_rejection")
+        and runtime_result.get("workspace_clean_before_rejection")
+        and runtime_result.get("workspace_clean_after_rejection")
+        and runtime_result.get("final_plan_status") == "rejected"
+        and not changed_files
+    )

@@ -1,0 +1,220 @@
+I'll start by planning this task and exploring the repository.
+
+I'll check the repository state and structure first.
+
+I'll read the key files to understand the current implementation.
+
+I'll check the test configuration and project conventions.
+
+I'll read the case spec and the other focused tests to align conventions.
+
+I'll read the case spec doc and the package init to complete context.
+
+I'll verify the baseline test outcome (在沙箱内只读验证，不产生仓库改动).
+
+I'll record confirmed results and remaining plan.
+
+# 标题关键字搜索技术方案（taskboard-title-search）
+
+## 1. 需求理解
+
+`search_tasks(tasks, query)` 需要实现「标题关键字搜索」，具体语义：
+
+| 需求点 | 期望行为 |
+| --- | --- |
+| 忽略大小写 | `"api"` 能匹配 `"Fix API timeout"`，`"API"` 也能匹配 `"api docs"` |
+| 保留输入顺序 | 结果按 `tasks` 中的原始先后顺序返回，不做重排 |
+| query 为空时返回全部任务 | `""` 或 `None`/空值时返回所有任务（等价于不过滤） |
+| 没有 title 的任务不报错、不误匹配 | `{"id": 1}` 这类任务既不抛异常，也不能被任何非空 query 命中 |
+| 返回类型 | `list[Task]`，元素是原 dict 引用，不做拷贝（与现有风格一致） |
+
+只修改 `taskboard/tasks.py` 与 `tests/test_search_tasks.py`，不动 `filter_by_status`、`sort_by_priority` 及它们的测试。
+
+## 2. 涉及模块和需要阅读的文件
+
+已完成的检索与阅读（`hybrid_code_search` 命中如下）：
+
+| 文件 | 作用 | 现状 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | 实现所在文件，`Task = dict[str, Any]` | `search_tasks` 已有骨架，但**没有大小写归一化** |
+| `tests/test_search_tasks.py` | 目标测试文件，已存在 2 个用例 | 2 个用例**当前全部失败** |
+| `tests/test_baseline.py` | 基线回归：`search_tasks(TASKS, "") == TASKS` | 通过，必须保持通过 |
+| `taskboard/__init__.py` | 导出 `search_tasks` | 无需修改 |
+| `cases/README.md` | 该用例验收口径：明确要求稳定的顺序、缺失 title 安全 | 与本方案一致 |
+
+### 关键现状代码逻辑（`taskboard/tasks.py:19-25`）
+
+```
+def search_tasks(tasks, query):
+    rows = list(tasks)
+    if not query: return rows          # 空 query 已正确返回全部，但结果未经拷贝
+    return [t for t in rows if query in str(t.get("title", ""))]  # 大小写敏感，核心缺陷
+```
+
+### 已实测确认的问题
+
+在仓库根执行 `python -m pytest -q`（只读验证，未改动任何文件）结果：`4 failed, 4 passed`。与本次直接相关的是：
+
+- `test_search_is_case_insensitive_and_preserves_order` → `assert [] == [1, 2]`，说明 `"api"` 在 `"Fix API timeout"` 中匹配不到。
+- `test_search_ignores_tasks_without_a_title` → 同样因为大小写敏感而失败（并非因为缺 title 抛异常；`str(t.get("title", ""))` 本身是安全的）。
+- 另外两个 `filter_by_status`、`sort_by_priority` 的失败属于**其它用例的范围**，本次不改。
+
+## 3. 数据结构、接口或页面变化
+
+- 接口签名不变：`search_tasks(tasks: Iterable[Task], query: str) -> list[Task]`。
+- `Task` 类型不变（`dict[str, Any]`），无新增字段、无新增模块、无 API/页面变化。
+- 语义补充（需要在 docstring 里写明）：大小写不敏感、保持输入顺序、空 query 返回全部、无 `title` 任务被跳过。
+- 唯一「行为变化」点：原先大小写敏感，现在是大小写不敏感匹配。
+
+## 4. 具体实施步骤
+
+### 步骤 1：修改 `taskboard/tasks.py` 的 `search_tasks`
+
+保持现有结构，仅补齐大小写归一化：
+
+1. 保留 `rows = list(tasks)`，先物化输入，保证结果顺序与输入一致且可重复遍历。
+2. 空值短路：`if not query: return rows`（覆盖 `""` 与 `None`）。归一化只在短路之后做，避免 `None` 调 `.lower()` 报错。
+3. 计算 `needle = str(query).strip().lower()`，冒号后统一小写。
+4. 列表推导：取 `title = task.get("title")`，当 title 为空值（`None`/缺失/空串）时直接跳过；否则 `str(title).lower()` 后判断 `needle in haystack`。
+5. 更新 docstring，把三点语义写清楚。
+
+核心逻辑伪代码（不贴完整实现）：
+
+```
+rows = list(tasks)
+if not query: return rows
+needle = str(query).strip().lower()
+result = []
+for task in rows:
+    title = task.get("title")
+    if not title: continue            # 缺失 / None / 空串都不参与匹配
+    if needle in str(title).lower(): result.append(task)
+return result
+```
+
+> 说明：用 `str(...)` 包裹是为了防止 title 是非法类型（例如 `{"title": 123}`）时抛 `AttributeError`，与现有实现习惯保持一致。
+
+### 步骤 2：调整 `tests/test_search_tasks.py`
+
+现有 2 个用例本身断言正确，可以保留，但「无 title」用例需要补强以覆盖「不得报错也不得误匹配」，并新增空 query、顺序保持、大小写混合类的用例。
+
+建议的用例清单（只列用例名与断言意图，不贴实现）：
+
+| 用例名 | 数据要点 | 断言意图 |
+| --- | --- | --- |
+| `test_search_is_case_insensitive_and_preserves_order` | 复用现有 3 条（`Fix API timeout` / `Write API docs` / `Clean UI`） | `search_tasks(tasks, "api")` 的 id 序列为 `[1, 2]`；再加一条 `"API"`、`"Api"` 也得到相同 id 序列 |
+| `test_search_returns_all_tasks_for_empty_query` | 含 title 与无 title 的混合任务 | `search_tasks(tasks, "")` 与 `search_tasks(tasks, None)` 均等于输入全部任务（逐元素相等、顺序一致） |
+| `test_search_skips_tasks_without_a_title` | 补 `{"id": 4, "title": None}`、`{"id": 5, "title": ""}` 与正常任务混排 | 任何非空 query 都不抛异常，且结果 id 中不含 4、5 |
+| `test_search_returns_empty_list_when_nothing_matches` | 全部任务均不含关键字 | 返回 `[]`（对齐 `filter_by_status` 的既有断言风格） |
+| `test_search_does_not_mutate_input` | 搜索前后对输入做浅拷贝快照比对 | 输入列表内容与顺序不变，所有测试均能隐含通过返回值顺序来验证 |
+
+测试风格对齐 `tests/test_filter_by_status.py`：每条用例一个明确断言目标，用 `[task["id"] for task in ...]` 的形式表达顺序，避免依赖 dict 的键顺序。
+
+### 步骤 3：回归验证
+
+不改 `tests/test_baseline.py`，但必须保证它仍然通过（特别是 `test_empty_search_returns_all_tasks`）。
+
+## 5. 验证方案
+
+| 验证项 | 命令 / 方式 | 期望结果 |
+| --- | --- | --- |
+| 目标文件单测 | 仓库根执行 `python -m pytest tests/test_search_tasks.py -q` | 全部通过 |
+| 基线回归 | `python -m pytest tests/test_baseline.py -q` | 全部通过（空 query 返回全部） |
+| 无关范围未被牵连 | `python -m pytest tests/test_filter_by_status.py tests/test_sort_by_priority.py -q` | 与本方案相关的用例没有**新增**失败；注意 `filter_by_status`、`sort_by_priority` 的既有 2 个失败属于其它独立用例，本方案不修复 |
+| 全量观察 | `python -m pytest -q` | 失败的用例只应是与本方案无关的既有失败项 |
+| 范围校验 | `git status --short` | 变更文件仅为 `taskboard/tasks.py` 与 `tests/test_search_tasks.py` |
+| 边界抽查（可选） | 直接调用 `search_tasks([{"id": 1}], "a")` | 返回 `[]`，不抛异常 |
+
+当前基线已经实测为 `4 failed, 4 passed`，因此验收需要以「本方案的 2 个失败转为通过，且不引入新失败」为准，而不是以「全绿」为准。
+
+## 6. 风险点和需要用户确认的事项
+
+| 风险 / 待确认点 | 说明 | 建议 |
+| --- | --- | --- |
+| `filter_by_status` 与 `sort_by_priority` 的既有失败 | 仓库当前有 4 个失败用例，其中 2 个不属于本次范围 | 保持不动。若你希望本次一并修复，需要扩大改动范围到 `filter_by_status` / `sort_by_priority` 及其测试 |
+| query 是否要 `strip()` | `" api "` 是否应匹配 `"Fix API"` | 我倾向做 `strip()`（更符合「关键字搜索」的直觉）；如你要求严格按原字符匹配，可去掉 |
+| 匹配方式 | 使用子串匹配（`in`），不是单词边界或前缀匹配 | 与现有实现和 docstring（`contains query`）一致，不做正则/分词 |
+| 返回元素形态 | 返回原 dict 引用而不是深拷贝 | 与 `filter_by_status` 一致，避免额外开销；如果你要求不可变返回，需要改为 `dict(task)` 拷贝并同步更新断言 |
+| query 为空但 title 缺失的任务 | 空 query 时无 title 的任务也一并返回 | 符合「返回全部任务」的需求。若你要求空 query 也过滤掉无 title 的任务，需明确 |
+| 非字符串 title（如 `123`） | 用 `str(...)` 兜底，会被当作文本匹配 | 如需忽略非字符串 title，可改为 `isinstance(title, str)` 判断，需你确认偏好 |
+| 顺序保证 | 单次遍历 + 追加，天然稳定 | 不引入 `sort` 或 `set`，避免破坏顺序 |
+| 范围限制 | 只允许改 2 个文件 | 不会顺手改 `README.md` / `cases/README.md` / `__init__.py` |
+
+是否确认实施该方案？
+
+I'll start by setting up the task list and verifying the current branch state.
+
+I'll create and check out the required task branch.
+
+Now I'll implement the case-insensitive title search.
+
+Now I'll rewrite the test file with the agreed coverage.
+
+Now I'll run the target tests and baseline regression.
+
+Result matches expectations. I'll verify the change scope.
+
+Scope is correct. I'll commit and push.
+
+Push hit an authentication failure. I'll check for a git-side credential source without printing any secrets.
+
+Push failed even with the harness askpass credential (HTTP 401), so I need to confirm with you before proceeding further.
+
+I'll verify the repo's changed content and update the repository memory, keeping the push pending.
+
+已按确认的方案完成代码修改和本地验证，但推送远端被 GitHub 拒绝，需要你先处理权限问题。
+
+## 完成的改动
+
+分支：`codex/task-eval-taskboard-title-sea`（已保留，未切回 `main`）
+提交：`18185f7 Make search_tasks title search case-insensitive`，变更仅两个文件，与方案范围一致。
+
+**`taskboard/tasks.py`** — 重写 `search_tasks`：
+- 先 `rows = list(tasks)` 物化输入，保证顺序稳定；
+- `if not query: return rows`，空字符串和 `None` 都返回全部任务（`list[Task]` 与输入逐元素相等、顺序一致）；
+- `needle = str(query).strip().lower()` 在短路之后计算，避免 `None` 调用 `.lower()` 报错；
+- 列表推导中用 `task.get("title")` 做真值判断，`title` 缺失 / `None` / `""` 的任务直接跳过，既不抛异常也不可能被空串误命中；
+- 比较时对 title 做 `str(...).lower()` 归一化，实现大小写不敏感子串匹配；单次遍历追加，不引入 `sort`/`set`，顺序天然稳定；
+- docstring 补充了大小写不敏感、空 query 返回全部、无 title 跳过这三条语义。
+
+**`tests/test_search_tasks.py`** — 5 个用例，风格对齐 `tests/test_filter_by_status.py`：
+
+| 用例 | 覆盖点 |
+| --- | --- |
+| `test_search_is_case_insensitive_and_preserves_order` | `"api"` / `"API"` / `"Api"` 均返回 `[1, 2]`，验证大小写与顺序 |
+| `test_search_returns_all_tasks_when_query_is_empty` | `""` 与 `None` 均返回全部任务（含无 title 任务） |
+| `test_search_ignores_tasks_without_a_title` | 混合缺失 / `None` / `""` 的 title，`"api"` 与单字符 `"a"` 都只命中真实含关键字的任务，且不报错 |
+| `test_search_returns_empty_list_when_no_task_matches` | 无命中返回 `[]` |
+| `test_search_does_not_mutate_tasks` | 搜索前后输入快照一致 |
+
+## 验证结果
+
+- `python -m pytest tests/test_search_tasks.py tests/test_baseline.py -q` → **8 passed**（目标用例和基线全绿）。
+- `python -m pytest -q` → **2 failed, 9 passed**。改动前基线为 `4 failed, 4 passed`，本次涉及的 3 个失败（2 个 search 用例 + 基线相关）已全部转为通过。
+- 剩余 2 个失败在方案中已确认**不属于本次范围**，本方案不修复：`test_filter_by_status.py::test_status_filter_is_case_insensitive_and_does_not_mutate_tasks`（`filter_by_status` 大小写敏感）和 `test_sort_by_priority.py::test_priority_sort_keeps_equal_and_unknown_priorities_stable`（`sort_by_priority` 缺 `urgent`/`backlog` 别名）。因此验收口径是「目标用例转通过且无新增失败」，而非全量全绿。
+- `git status --short` 确认仅有 `taskboard/tasks.py` 与 `tests/test_search_tasks.py` 被修改。
+
+## 未完成事项（受阻，需你确认）
+
+**`git push` 失败，Pull Request 因此尚未创建。**
+
+执行 `git push -u origin codex/task-eval-taskboard-title-sea` 连续两次返回：
+
+```
+remote: No anonymous write access.
+fatal: Authentication failed for 'https://github.com/Guo-Yixin/test-coding-eval.git/'
+```
+
+排查结论：`origin` 未被修改（仍为原始 HTTPS 地址），本地存在 `core.askpass` 指向工具注入的 askpass 脚本，但 GitHub 侧仍返回 401，说明当前凭据对该仓库无写权限或已失效。凭据修复涉及你的权限配置，我不能自行获取、更换或写入任何凭据，所以已暂停等待你处理。可选方向：
+
+1. 授予/更新该仓库写权限后，我重试 push 并创建 PR；
+2. 确认本次只需保留本地分支与提交（`18185f7`），不推送远端；
+3. 你给出其它可行的远端推送方式或目标仓库。
+
+选择 1 或 3 后我会继续完成 push 并按约定用 GitHub PR 工具创建（base 留空，由 API 使用仓库真实默认分支）；在此之前评审可先基于本地 commit `18185f7` 进行。仓库记忆已同步更新了技术栈、测试命令、关键文件、上述基线状态，以及 push 凭据受限这一环境注意事项。
+{"status": "completed", "model_provider": "DeepSeek", "model_name": "deepseek-flash", "usage": {"input_tokens": 1209714, "output_tokens": 10880, "total_tokens": 1220594}}
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return self._pregel_stream_v3(
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return GraphRunStream(graph_iter, mux)
+工具执行异常已被中间件捕获：tool=request_human_intervention error=(Interrupt(value={'type': 'human_intervention', 'question': "代码修改和本地验证已完成，但 `git push -u origin codex/task-eval-taskboard-title-sea` 连续两次失败，报错为 `remote: No anonymous write access.` / `fatal: Authentication failed for 'https://github.com/Guo-Yixin/test-coding-eval.git/'`（即 GitHub 侧 401）。本地仓库的 `core.askpass` 已指向运行时提供的 askpass 脚本，说明现有凭据无法写入该仓库。请问如何继续？", 'reason': 'push 是对外写操作，且当前 Git 凭据被 GitHub 拒绝（401）。可能原因包括：平台 Token 无该校验仓库的写权限、凭据已过期，或远端仓库不允许该账号推送。修复凭据涉及用户侧权限配置，我不能自行获取、更换或写入任何凭据。', 'options': ['由你更新或重新授予该仓库的写权限后，我重试 push 并创建 Pull Request', '你确认本次不需要推送远端，只保留本地分支 codex/task-eval-taskboard-title-sea 上的提交（当前 commit 18185f7）', '你提供其他可行的远端推送方式或目标仓库，我再继续执行']}, id='afff1618197b27c7e0876815127e2d6b'),)

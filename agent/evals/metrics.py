@@ -18,6 +18,15 @@ def retrieval_hit_at_k(retrieval: list[dict[str, Any]], gold_files: list[str], k
 
 def tool_recovery_rate(events: list[dict[str, Any]]) -> float | None:
     failures = [event for event in events if event.get("type") in {"tool_error", "tool_failed"}]
+    identified = [
+        event for event in failures
+        if (event.get("payload") or {}).get("tool_name") or event.get("tool_name")
+    ]
+    # Unknown raw-stream errors cannot be paired with a concrete retry. Exclude them
+    # whenever the adapter has supplied identified tool failures; keep compatibility
+    # with older traces whose error events had no tool name at all.
+    if identified:
+        failures = identified
     if not failures:
         return None
     recovered = sum(1 for event in failures if event.get("recovered") is True or event.get("recovery") in {"success", "recovered"})

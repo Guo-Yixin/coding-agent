@@ -8,6 +8,7 @@ import pytest
 from agent.sandbox.opensandbox_executor import (
     OpenSandboxConfig,
     OpenSandboxExecutor,
+    _validate_upload_path,
     collect_safe_workspace_files,
     sandbox_health,
 )
@@ -35,16 +36,28 @@ def test_collect_safe_workspace_files_rejects_large_files(tmp_path: Path) -> Non
     assert collect_safe_workspace_files(tmp_path, max_file_bytes=5) == []
 
 
+@pytest.mark.parametrize("path", ["../secret.txt", "repo/../../secret", "C:\\private\\secret", "/etc/passwd", ""])
+def test_upload_path_rejects_absolute_and_parent_traversal(path: str) -> None:
+    with pytest.raises(ValueError, match="Unsafe OpenSandbox upload path"):
+        _validate_upload_path(path)
+
+
+def test_upload_path_normalizes_safe_windows_separators() -> None:
+    assert _validate_upload_path("repo\\src\\main.py") == "repo/src/main.py"
+
+
 def test_config_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("OPEN_SANDBOX_DOMAIN", "http://192.168.11.128:8080/")
     monkeypatch.setenv("OPEN_SANDBOX_IMAGE", "python:3.12")
     monkeypatch.setenv("OPEN_SANDBOX_TIMEOUT_SECONDS", "42")
+    monkeypatch.setenv("OPEN_SANDBOX_USE_SERVER_PROXY", "true")
 
     config = OpenSandboxConfig.from_env()
 
     assert config.domain == "http://192.168.11.128:8080"
     assert config.image == "python:3.12"
     assert config.timeout_seconds == 42
+    assert config.use_server_proxy is True
 
 
 def test_sandbox_health_reports_connection_error_without_raising() -> None:

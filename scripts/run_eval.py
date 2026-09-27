@@ -25,6 +25,7 @@ def main() -> int:
     parser.add_argument("--repo", type=Path, default=Path("."))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--env-file", type=Path, help="Read model credentials from this file for the isolated Agent child; it is never copied into the Eval workspace")
+    parser.add_argument("--agent-ref", help="Pin the Agent runtime to a Git commit/ref; defaults to the source checkout HEAD")
     parser.add_argument("--mode", choices=("fake", "real", "sandbox"), default="real")
     args = parser.parse_args()
     repository = args.repo.resolve()
@@ -65,6 +66,7 @@ def main() -> int:
         mode=args.mode,
         env_file=args.env_file,
         agent_source_root=PROJECT_ROOT,
+        agent_revision=args.agent_ref,
     )
     report = runner.run(cases, repository=repository)
     print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2, sort_keys=True))
