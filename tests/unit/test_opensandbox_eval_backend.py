@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent.sandbox.eval_backend import OpenSandboxEvalBackend
+from agent.sandbox.opensandbox_executor import SandboxExecution
 
 
 def _backend(tmp_path: Path) -> OpenSandboxEvalBackend:
@@ -47,3 +48,37 @@ def test_opensandbox_backend_rejects_workspace_escape_and_eval_git_writes(tmp_pa
     assert not backend._blocks_git_write("git remote get-url origin")
     assert backend._blocks_git_write("git push origin main")
     assert backend._blocks_git_write("git -C repo commit -m done")
+
+
+def test_sandbox_command_error_injection_records_recovery_after_success(tmp_path: Path, monkeypatch):
+    backend = _backend(tmp_path)
+    backend.command_guard_enabled = False
+    backend._sandbox_id = "sandbox-test"
+    backend._execute_injection_remaining = 1
+    backend._pending_execute_recovery = None
+    monkeypatch.setenv("CODING_AGENT_EVAL_MODE", "0")
+    events: list[tuple[str, dict]] = []
+    monkeypatch.setattr(OpenSandboxEvalBackend, "_record", staticmethod(lambda name, payload: events.append((name, payload))))
+
+    class FakeExecutor:
+        sandbox_id = "sandbox-test"
+
+        def execute(self, command: str, *, cwd: str | None = None, timeout: int | None = None):
+            return SandboxExecution(
+                sandbox_id=self.sandbox_id,
+                command=command,
+                exit_code=0,
+                stdout="tests passed",
+                stderr="",
+                duration_ms=12,
+            )
+
+    backend.executor = FakeExecutor()
+    first = backend.execute("python -m pytest -q")
+    second = backend.execute("python -m pytest -q")
+
+    assert first.exit_code == 75
+    assert second.exit_code == 0
+    assert [name for name, _ in events] == ["tool_error", "sandbox_command", "tool_recovery"]
+    assert events[0][1]["probe_id"] == events[2][1]["probe_id"]
+    assert events[2][1]["success"] is True
