@@ -58,6 +58,11 @@
     ],
     "model_call_limit": 32,
     "tool_call_limit": 80,
+    "require_tool_recovery": true,
+    "inject_tool_error_once": {
+      "tool": "sandbox_execute",
+      "message": "评测注入的一次性可恢复沙箱命令失败；请改用其他命令或重试后继续。"
+    },
     "auto_approve_plan": true,
     "require_plan_approval": true,
     "plan_rubric_any_terms": [

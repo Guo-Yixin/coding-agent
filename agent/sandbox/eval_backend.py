@@ -17,6 +17,7 @@ import shlex
 import subprocess
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from deepagents.backends.protocol import ExecuteResponse, FileDownloadResponse, FileUploadResponse
 from deepagents.backends.sandbox import BaseSandbox
@@ -40,6 +41,17 @@ class OpenSandboxEvalBackend(LocalShellBackend):
         self._closed = False
         self._uploaded_file_count = 0
         self._uploaded_bytes = 0
+        self._execute_injection_remaining = 0
+        self._pending_execute_recovery: str | None = None
+        case_config = os.environ.get("EVAL_CASE_CONFIG", "").strip()
+        if case_config:
+            try:
+                payload = json.loads(Path(case_config).read_text(encoding="utf-8"))
+                injection = payload.get("metadata", {}).get("inject_tool_error_once", {})
+                if str(injection.get("tool", "")).lower() in {"execute", "sandbox_execute"}:
+                    self._execute_injection_remaining = 1
+            except (OSError, json.JSONDecodeError, AttributeError):
+                pass
         self._sandbox_id = self.executor.start()
         atexit.register(self.close)
         self._upload_snapshot()
@@ -94,6 +106,21 @@ class OpenSandboxEvalBackend(LocalShellBackend):
             raise RuntimeError("The configured OpenSandbox image must include git and pytest")
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
+        if self._execute_injection_remaining:
+            self._execute_injection_remaining -= 1
+            probe_id = uuid4().hex
+            self._pending_execute_recovery = probe_id
+            self._record("tool_error", {
+                "probe_id": probe_id,
+                "tool_name": "sandbox_execute",
+                "injected": True,
+                "error_type": "InjectedSandboxCommandError",
+            })
+            return ExecuteResponse(
+                output="评测注入的一次性沙箱命令失败；请检查错误并重试或改用其他命令验证。",
+                exit_code=75,
+                truncated=False,
+            )
         base_sandbox_script = command.lstrip().startswith(("python3 -c", "python -c"))
         if self.command_guard_enabled and not base_sandbox_script:
             denied = self._deny_reason(command)
@@ -117,6 +144,14 @@ class OpenSandboxEvalBackend(LocalShellBackend):
             "duration_ms": result.duration_ms,
             "command_class": self._command_class(command),
         })
+        if result.exit_code == 0 and self._pending_execute_recovery:
+            self._record("tool_recovery", {
+                "probe_id": self._pending_execute_recovery,
+                "tool_name": "sandbox_execute",
+                "strategy": "retry_or_alternate_sandbox_command",
+                "success": True,
+            })
+            self._pending_execute_recovery = None
         if len(output) > 500_000:
             output = output[:250_000] + "\n...[sandbox output truncated]...\n" + output[-250_000:]
             return ExecuteResponse(output=output, exit_code=result.exit_code, truncated=True)
@@ -252,8 +287,14 @@ class OpenSandboxEvalBackend(LocalShellBackend):
 
     def run(self, command: str, cwd: str = ".", timeout: int = 300) -> CommandResult:
         cwd_path = self._remote_cwd(cwd)
-        result = self.executor.execute(self._map_command_paths(command), cwd=cwd_path, timeout=timeout)
-        return CommandResult(command=command, cwd=cwd_path, exit_code=int(result.exit_code if result.exit_code is not None else 1), stdout=result.stdout, stderr=result.stderr)
+        response = self.execute(command, timeout=timeout)
+        return CommandResult(
+            command=command,
+            cwd=cwd_path,
+            exit_code=int(response.exit_code if response.exit_code is not None else 1),
+            stdout=response.output,
+            stderr="",
+        )
 
     def workspace_is_clean(self) -> bool:
         result = self.executor.execute(
