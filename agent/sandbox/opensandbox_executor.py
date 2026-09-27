@@ -310,14 +310,16 @@ class OpenSandboxExecutor:
         # boundaries so captured patches and JSONL files remain parseable.
         return "\n".join(chunks)
 
-    async def execute_async(self, command: str, *, cwd: str | None = None) -> SandboxExecution:
+    async def execute_async(
+        self, command: str, *, cwd: str | None = None, timeout: int | None = None
+    ) -> SandboxExecution:
         if self._sandbox is None:
             await self.start_async()
         _, _, RunCommandOpts, _ = self._sdk_types()
         started = time.perf_counter()
         opts = RunCommandOpts(
             working_directory=cwd,
-            timeout=timedelta(seconds=self.config.command_timeout_seconds),
+            timeout=timedelta(seconds=timeout or self.config.command_timeout_seconds),
         )
         result = await self._sandbox.commands.run(command, opts=opts)
         logs = getattr(result, "logs", None)
@@ -335,8 +337,10 @@ class OpenSandboxExecutor:
             duration_ms=int((time.perf_counter() - started) * 1000),
         )
 
-    def execute(self, command: str, *, cwd: str | None = None) -> SandboxExecution:
-        return self._run_sync(self.execute_async(command, cwd=cwd))
+    def execute(
+        self, command: str, *, cwd: str | None = None, timeout: int | None = None
+    ) -> SandboxExecution:
+        return self._run_sync(self.execute_async(command, cwd=cwd, timeout=timeout))
 
     async def upload_files_async(self, files: Iterable[SandboxFile]) -> int:
         if self._sandbox is None:

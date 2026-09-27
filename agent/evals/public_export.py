@@ -52,6 +52,7 @@ def export_public_report(run_dir: Path, output_dir: Path) -> dict[str, Any]:
                 "model_call_limit", "tool_call_limit", "codegraph_index",
                 "agent_adapter_sha256", "selected_adapter_sha256", "agent_runtime_snapshot_sha256",
                 "database_evaluation", "plan_rejection_ok", "plan_rubric",
+                "sandbox_e2e_passed", "sandbox",
             )
             if key in metadata
         }
@@ -91,6 +92,14 @@ def export_public_report(run_dir: Path, output_dir: Path) -> dict[str, Any]:
                 "cleanup_succeeded", "command_latency_ms", "oracle_test_latency_ms",
             )
             case["metadata"]["sandbox"] = {key: sandbox[key] for key in sandbox_fields if key in sandbox}
+            case["metadata"]["sandbox"].update({
+                key: sandbox[key]
+                for key in (
+                    "host_patch_exported", "uploaded_bytes", "target_workspace",
+                    "patch_bytes", "already_closed", "error", "cleanup_error",
+                )
+                if key in sandbox
+            })
             safety = sandbox.get("safety_probes")
             if isinstance(safety, dict):
                 safe_probe_fields = (

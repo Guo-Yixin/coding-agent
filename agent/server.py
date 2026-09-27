@@ -122,8 +122,16 @@ def ensure_backend_for_thread(
 
     backend = _BACKENDS.get(thread_id)
     if backend is None:
-        logger.info("为 thread 创建 LocalShellBackend：%s", thread_id)
-        backend = LocalShellBackend(provider=provider, working_dir=working_dir)
+        if os.environ.get("CODING_AGENT_EVAL_BACKEND", "local").strip().lower() == "opensandbox":
+            if os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() != "1":
+                raise RuntimeError("OpenSandbox Eval backend is only available in isolated Agent Eval runs")
+            from agent.sandbox.eval_backend import OpenSandboxEvalBackend
+
+            logger.info("为 thread 创建 OpenSandboxEvalBackend：%s", thread_id)
+            backend = OpenSandboxEvalBackend(provider=provider, working_dir=working_dir)
+        else:
+            logger.info("为 thread 创建 LocalShellBackend：%s", thread_id)
+            backend = LocalShellBackend(provider=provider, working_dir=working_dir)
         _BACKENDS[thread_id] = backend
     else:
         logger.info("复用 thread 的 LocalShellBackend：%s", thread_id)

@@ -1,0 +1,86 @@
+{
+  "case_id": "taskboard-count-by-status",
+  "prompt": "请先使用 hybrid_code_search 定位 taskboard 的公开 API，然后新增 count_by_status(tasks)：按 status 去除首尾空格并忽略大小写统计数量；缺失、null、空白状态归入 unknown；键按状态首次出现顺序排列，输入不被修改。通过 taskboard 包导出，并扩展 tests/test_count_by_status.py。只修改 taskboard/tasks.py、taskboard/__init__.py 和该测试文件。",
+  "repo_path": ".",
+  "base_ref": "d65047705e6e947bcd33e193ab4c8fdfeb8956c8",
+  "gold_files": [
+    "taskboard/tasks.py",
+    "taskboard/__init__.py"
+  ],
+  "fixture_files": [
+    "tests/test_count_by_status.py"
+  ],
+  "target_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/test_count_by_status.py",
+      "-q"
+    ]
+  ],
+  "regression_tests": [
+    [
+      "python",
+      "-m",
+      "pytest",
+      "tests/test_baseline.py",
+      "-q"
+    ]
+  ],
+  "oracle_tests": [
+    [
+      "python",
+      "{oracle_scripts}/test_taskboard_count_by_status.py",
+      "{target_repo}"
+    ]
+  ],
+  "requires_patch": true,
+  "timeout_seconds": 480,
+  "allowed_files": [
+    "taskboard/tasks.py",
+    "taskboard/__init__.py",
+    "tests/test_count_by_status.py"
+  ],
+  "expected_status": "completed",
+  "metadata": {
+    "adapter": "agent",
+    "repo_url": "https://github.com/Guo-Yixin/test-coding-eval.git",
+    "purpose": "OpenSandbox 沙箱内完成代码修改、运行目标测试并回传补丁",
+    "required_changed_files": [
+      "taskboard/tasks.py",
+      "taskboard/__init__.py",
+      "tests/test_count_by_status.py"
+    ],
+    "expected_task_kind": "coding",
+    "agent_tools": [
+      "hybrid_code_search"
+    ],
+    "model_call_limit": 24,
+    "tool_call_limit": 48,
+    "auto_approve_plan": true,
+    "require_plan_approval": true,
+    "plan_rubric_any_terms": [
+      [
+        "需求理解",
+        "需求拆解",
+        "目标"
+      ],
+      [
+        "涉及文件",
+        "相关文件",
+        "改动文件",
+        "taskboard/tasks.py",
+        "taskboard/__init__.py",
+        "tests/"
+      ],
+      [
+        "验证方案",
+        "测试方案",
+        "pytest",
+        "测试命令"
+      ]
+    ],
+    "agent_backend": "opensandbox"
+  }
+}
