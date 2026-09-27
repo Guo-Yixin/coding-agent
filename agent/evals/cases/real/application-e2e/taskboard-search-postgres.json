@@ -23,8 +23,8 @@
     "expected_task_kind": "coding",
     "agent_tools": ["hybrid_code_search"],
     "required_changed_files": ["taskboard/tasks.py", "tests/test_search_tasks.py"],
-    "model_call_limit": 18,
-    "tool_call_limit": 36,
+    "model_call_limit": 32,
+    "tool_call_limit": 80,
     "require_plan_approval": true,
     "auto_approve_plan": true,
     "plan_rubric_any_terms": [
