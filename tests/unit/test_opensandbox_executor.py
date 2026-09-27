@@ -83,3 +83,22 @@ def test_sync_executor_reuses_event_loop_for_one_lifecycle() -> None:
     assert len(loop_ids) == 2
     assert loop_ids[0] == loop_ids[1]
     assert executor._sync_loop is None
+
+
+def test_sync_executor_can_be_called_inside_another_running_event_loop() -> None:
+    executor = OpenSandboxExecutor(OpenSandboxConfig(domain="http://sandbox.test"))
+    loop_ids: list[int] = []
+
+    async def record_loop() -> None:
+        loop_ids.append(id(asyncio.get_running_loop()))
+
+    async def call_sync_bridge() -> None:
+        executor._run_sync(record_loop())
+
+    try:
+        asyncio.run(call_sync_bridge())
+    finally:
+        executor.close()
+
+    assert len(loop_ids) == 1
+    assert executor._sync_loop is None

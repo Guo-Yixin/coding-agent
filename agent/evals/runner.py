@@ -934,7 +934,10 @@ class EvalRunner:
     def _git_diff(workspace: Path, base_ref: str = "HEAD") -> str:
         EvalRunner._include_untracked_for_diff(workspace)
         result = subprocess.run(["git", "diff", "--binary", base_ref, "--"], cwd=workspace, env=EvalRunner._safe_subprocess_env(), capture_output=True, text=True, encoding="utf-8", errors="replace", shell=False, check=False)
-        return result.stdout
+        # Windows Git may emit CRLF for patch text when core.autocrlf is enabled.
+        # Normalize transport line endings before applying the patch to a clean
+        # oracle checkout (which was materialized from Git archive with LF).
+        return result.stdout.replace("\r\n", "\n").replace("\r", "\n")
 
     @staticmethod
     def _changed_files(workspace: Path, base_ref: str = "HEAD") -> list[str]:
