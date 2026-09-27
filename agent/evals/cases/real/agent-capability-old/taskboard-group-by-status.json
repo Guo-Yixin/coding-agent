@@ -48,7 +48,6 @@
     "purpose": "cross-file API feature with stable ordered grouping",
     "required_changed_files": [
       "taskboard/tasks.py",
-      "taskboard/__init__.py",
       "tests/test_group_tasks_by_status.py"
     ],
     "model_call_limit": 18,
