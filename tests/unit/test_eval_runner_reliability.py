@@ -260,6 +260,19 @@ def test_git_diff_normalizes_windows_patch_line_endings(tmp_path: Path, monkeypa
     assert EvalRunner._git_diff(tmp_path) == "diff --git a/x b/x\n+line\n"
 
 
+def test_lf_patch_applies_to_clean_checkout_without_windows_stdin_conversion(tmp_path: Path) -> None:
+    candidate, _ = _target_repo(tmp_path)
+    oracle = tmp_path / "oracle"
+    subprocess.run(["git", "clone", "--quiet", str(candidate), str(oracle)], check=True)
+    (candidate / "result.txt").write_text("agent change\n", encoding="utf-8")
+    patch = EvalRunner._git_diff(candidate)
+
+    applied, error = EvalRunner._apply_patch_to_checkout(oracle, patch)
+
+    assert applied is True, error
+    assert (oracle / "result.txt").read_text(encoding="utf-8") == "agent change\n"
+
+
 def test_real_report_preserves_target_test_failure_diagnostics(tmp_path: Path, monkeypatch) -> None:
     repository, _ = _target_repo(tmp_path)
     source = _agent_source(tmp_path)

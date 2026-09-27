@@ -435,14 +435,9 @@ class EvalRunner:
         patch_apply = False
         if agent_exit == 0 and (bool(patch) or not case.requires_patch) and not changed_outside:
             if patch:
-                check = subprocess.run(["git", "apply", "--check", "-"], cwd=oracle_repo, input=patch,
-                                       capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
-                if check.returncode == 0:
-                    applied = subprocess.run(["git", "apply", "-"], cwd=oracle_repo, input=patch,
-                                              capture_output=True, text=True, encoding="utf-8", errors="replace", check=False)
-                    patch_apply = applied.returncode == 0
+                patch_apply, patch_error = self._apply_patch_to_checkout(oracle_repo, patch)
                 if not patch_apply:
-                    errors.append(f"patch does not apply to clean oracle baseline: {(check.stderr or '')[-1000:]}")
+                    errors.append(f"patch does not apply to clean oracle baseline: {patch_error[-1000:]}")
             else:
                 patch_apply = not case.requires_patch
 
@@ -938,6 +933,27 @@ class EvalRunner:
         # Normalize transport line endings before applying the patch to a clean
         # oracle checkout (which was materialized from Git archive with LF).
         return result.stdout.replace("\r\n", "\n").replace("\r", "\n")
+
+    @staticmethod
+    def _apply_patch_to_checkout(workspace: Path, patch: str) -> tuple[bool, str]:
+        """Apply portable LF patch bytes without Windows text-mode conversion."""
+
+        raw_patch = patch.replace("\r\n", "\n").replace("\r", "\n").encode("utf-8")
+        check = subprocess.run(
+            ["git", "apply", "--check", "-"], cwd=workspace,
+            env=EvalRunner._safe_subprocess_env(), input=raw_patch,
+            capture_output=True, check=False, shell=False,
+        )
+        if check.returncode != 0:
+            return False, (check.stderr or b"").decode("utf-8", errors="replace")
+        applied = subprocess.run(
+            ["git", "apply", "-"], cwd=workspace,
+            env=EvalRunner._safe_subprocess_env(), input=raw_patch,
+            capture_output=True, check=False, shell=False,
+        )
+        if applied.returncode != 0:
+            return False, (applied.stderr or b"").decode("utf-8", errors="replace")
+        return True, ""
 
     @staticmethod
     def _changed_files(workspace: Path, base_ref: str = "HEAD") -> list[str]:
