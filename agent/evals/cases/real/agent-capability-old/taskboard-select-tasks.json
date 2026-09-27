@@ -48,7 +48,6 @@
     "purpose": "multi-condition feature across public API and tests",
     "required_changed_files": [
       "taskboard/tasks.py",
-      "taskboard/__init__.py",
       "tests/test_select_tasks.py"
     ],
     "model_call_limit": 18,
