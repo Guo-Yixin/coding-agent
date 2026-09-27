@@ -1,0 +1,174 @@
+diff --git a/taskboard/__init__.py b/taskboard/__init__.py
+index fb699df..d98ef42 100644
+--- a/taskboard/__init__.py
++++ b/taskboard/__init__.py
+@@ -1,5 +1,5 @@
+ """Small target project used by the CODING Agent evaluation suite."""
+ 
+-from taskboard.tasks import filter_by_status, search_tasks, sort_by_priority
++from taskboard.tasks import filter_by_status, merge_task_updates, search_tasks, sort_by_priority
+ 
+-__all__ = ["filter_by_status", "search_tasks", "sort_by_priority"]
++__all__ = ["filter_by_status", "merge_task_updates", "search_tasks", "sort_by_priority"]
+diff --git a/taskboard/tasks.py b/taskboard/tasks.py
+index 24f522b..69e7d7d 100644
+--- a/taskboard/tasks.py
++++ b/taskboard/tasks.py
+@@ -1,6 +1,6 @@
+ from __future__ import annotations
+ 
+-from collections.abc import Iterable
++from collections.abc import Iterable, Mapping
+ from typing import Any
+ 
+ 
+@@ -30,3 +30,21 @@ def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:
+ 
+     order = {"high": 0, "medium": 1, "low": 2}
+     return sorted(tasks, key=lambda task: order.get(str(task.get("priority", "")).lower(), 99))
++
++
++def merge_task_updates(tasks: Iterable[Task], task_id: Any, updates: Mapping[str, Any]) -> list[Task]:
++    """Return a new list where only the first task matching task_id is updated.
++
++    The matching task is replaced by a copied dictionary merged with updates, so
++    neither the input list nor any of its task dictionaries are modified. The
++    identifier may not be changed: updates carrying an "id" that differs from
++    task_id raise ValueError. A missing task_id raises KeyError.
++    """
++
++    rows = list(tasks)
++    if "id" in updates and updates["id"] != task_id:
++        raise ValueError(f"updates must not change task id: {updates['id']!r} != {task_id!r}")
++    for index, task in enumerate(rows):
++        if task.get("id") == task_id:
++            return [*rows[:index], {**task, **updates}, *rows[index + 1:]]
++    raise KeyError(task_id)
+diff --git a/tests/test_merge_task_updates.py b/tests/test_merge_task_updates.py
+index 341c66f..65f8c54 100644
+--- a/tests/test_merge_task_updates.py
++++ b/tests/test_merge_task_updates.py
+@@ -3,14 +3,18 @@ import pytest
+ from taskboard import merge_task_updates
+ 
+ 
++def snapshot(tasks):
++    return [dict(task) for task in tasks]
++
++
+ def test_updates_one_matching_task_without_mutating_the_input():
+     tasks = [{"id": 1, "title": "First"}, {"id": 2, "title": "Old", "status": "open"}]
+-    snapshot = [dict(task) for task in tasks]
++    snapshot_of_tasks = snapshot(tasks)
+     updated = merge_task_updates(tasks, 2, {"title": "New", "status": "done"})
+     assert updated == [{"id": 1, "title": "First"}, {"id": 2, "title": "New", "status": "done"}]
+     assert updated is not tasks
+     assert updated[1] is not tasks[1]
+-    assert tasks == snapshot
++    assert tasks == snapshot_of_tasks
+ 
+ 
+ def test_update_keeps_identifier_and_rejects_missing_task():
+@@ -18,3 +22,102 @@ def test_update_keeps_identifier_and_rejects_missing_task():
+         merge_task_updates([{"id": 1}], 1, {"id": 2})
+     with pytest.raises(KeyError):
+         merge_task_updates([], 9, {"title": "missing"})
++
++
++def test_only_the_target_task_changes_and_the_order_is_preserved():
++    tasks = [
++        {"id": 1, "title": "First", "status": "open"},
++        {"id": 2, "title": "Second", "status": "open"},
++        {"id": 3, "title": "Third", "status": "open"},
++    ]
++    original = snapshot(tasks)
++
++    updated = merge_task_updates(tasks, 2, {"status": "done"})
++
++    assert [task["id"] for task in updated] == [1, 2, 3]
++    assert updated[0] == {"id": 1, "title": "First", "status": "open"}
++    assert updated[1] == {"id": 2, "title": "Second", "status": "done"}
++    assert updated[2] == {"id": 3, "title": "Third", "status": "open"}
++    assert tasks == original
++
++
++def test_result_list_and_target_task_are_new_objects():
++    tasks = [{"id": 1, "title": "First"}, {"id": 2, "title": "Second"}]
++
++    updated = merge_task_updates(tasks, 2, {"title": "Renamed"})
++
++    assert updated is not tasks
++    assert updated[1] is not tasks[1]
++    assert updated[0] is tasks[0]
++    assert tasks[1] == {"id": 2, "title": "Second"}
++
++
++def test_updates_without_id_keep_the_identifier():
++    tasks = [{"id": 7, "title": "Old", "status": "open"}]
++
++    updated = merge_task_updates(tasks, 7, {"title": "New"})
++
++    assert updated == [{"id": 7, "title": "New", "status": "open"}]
++    assert updated[0]["id"] == 7
++
++
++def test_updates_carrying_the_same_id_are_allowed():
++    tasks = [{"id": 5, "title": "Keep"}]
++
++    updated = merge_task_updates(tasks, 5, {"id": 5, "title": "Kept"})
++
++    assert updated == [{"id": 5, "title": "Kept"}]
++
++
++def test_identity_match_does_not_mutate_untouched_tasks():
++    tasks = [
++        {"id": 1, "title": "First"},
++        {"id": 2, "title": "Second"},
++        {"id": 3, "title": "Third"},
++    ]
++    original = snapshot(tasks)
++
++    updated = merge_task_updates(tasks, 1, {"title": "First updated"})
++
++    assert updated == [
++        {"id": 1, "title": "First updated"},
++        {"id": 2, "title": "Second"},
++        {"id": 3, "title": "Third"},
++    ]
++    assert tasks == original
++    assert all(task is original_task for task, original_task in zip(updated[1:], tasks[1:]))
++
++
++def test_duplicate_identifiers_update_the_first_match_only():
++    tasks = [{"id": 1, "title": "Old"}, {"id": 1, "title": "Also old"}]
++    original = snapshot(tasks)
++
++    updated = merge_task_updates(tasks, 1, {"title": "New"})
++
++    assert updated == [{"id": 1, "title": "New"}, {"id": 1, "title": "Also old"}]
++    assert tasks == original
++
++
++def test_tasks_without_an_id_are_never_matched():
++    tasks = [{"title": "No id"}, {"id": 2, "title": "Has id"}]
++
++    with pytest.raises(KeyError):
++        merge_task_updates(tasks, 1, {"title": "Missing"})
++
++    assert merge_task_updates(tasks, 2, {"title": "Updated"})[0] == {"title": "No id"}
++
++
++def test_missing_identifier_raises_key_error_and_keeps_input_intact():
++    tasks = [{"id": 1, "title": "First"}, {"id": 2, "title": "Second"}]
++    original = snapshot(tasks)
++
++    with pytest.raises(KeyError):
++        merge_task_updates(tasks, 3, {"title": "Nope"})
++
++    assert tasks == original
++
++
++def test_iterable_inputs_are_supported():
++    updated = merge_task_updates(iter([{"id": 1, "title": "Old"}]), 1, {"title": "New"})
++
++    assert updated == [{"id": 1, "title": "New"}]

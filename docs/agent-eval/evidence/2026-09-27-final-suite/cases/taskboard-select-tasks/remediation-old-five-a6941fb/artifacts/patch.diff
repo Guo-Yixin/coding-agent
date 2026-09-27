@@ -1,0 +1,134 @@
+diff --git a/taskboard/tasks.py b/taskboard/tasks.py
+index b689d5b..a1b6b7c 100644
+--- a/taskboard/tasks.py
++++ b/taskboard/tasks.py
+@@ -41,6 +41,25 @@ def group_tasks_by_status(tasks: Iterable[Task]) -> dict[str, list[Task]]:
+ def select_tasks(
+     tasks: Iterable[Task], *, status: str | None = None, query: str = ""
+ ) -> list[Task]:
+-    """Select tasks by optional case-insensitive status and title query."""
++    """Return tasks matching the case-insensitive status and title query filters.
+ 
+-    raise NotImplementedError("benchmark task: combine task filters")
++    Both filters are optional and combine as an intersection; results keep the
++    input order and the input tasks are never mutated.
++    """
++
++    rows = list(tasks)
++    keyword = query.strip().lower() if isinstance(query, str) else ""
++    wanted_status = status.lower() if status is not None else None
++
++    def matches(task: Task) -> bool:
++        if wanted_status is not None:
++            current = task.get("status")
++            if current is None or str(current).lower() != wanted_status:
++                return False
++        if keyword:
++            title = task.get("title")
++            if title is None or keyword not in str(title).lower():
++                return False
++        return True
++
++    return [task for task in rows if matches(task)]
+diff --git a/tests/test_select_tasks.py b/tests/test_select_tasks.py
+index 8a790a6..8de49c7 100644
+--- a/tests/test_select_tasks.py
++++ b/tests/test_select_tasks.py
+@@ -1,3 +1,5 @@
++import pytest
++
+ from taskboard import select_tasks
+ 
+ 
+@@ -14,3 +16,91 @@ def test_select_tasks_combines_case_insensitive_filters_and_keeps_input_order():
+     assert [task["id"] for task in select_tasks(tasks, query="API")] == [1, 2, 3]
+     assert [task["id"] for task in select_tasks(tasks, status="missing")] == []
+     assert tasks == original
++
++
++def test_select_tasks_without_filters_returns_new_list_with_every_task():
++    tasks = [
++        {"id": 1, "title": "Fix API timeout", "status": "Open"},
++        {"id": 2, "title": "Write docs", "status": "done"},
++    ]
++    original = [dict(task) for task in tasks]
++
++    assert select_tasks(tasks) == tasks
++    assert select_tasks(tasks, query="") == tasks
++    assert select_tasks(tasks) is not tasks
++    assert tasks == original
++
++
++def test_select_tasks_status_only_is_case_insensitive_in_both_directions():
++    tasks = [
++        {"id": 1, "status": "Open"},
++        {"id": 2, "status": "done"},
++        {"id": 3, "status": "OPEN"},
++    ]
++
++    assert [task["id"] for task in select_tasks(tasks, status="oPeN")] == [1, 3]
++    assert [task["id"] for task in select_tasks(tasks, status="DONE")] == [2]
++
++
++def test_select_tasks_ignores_tasks_without_a_usable_title():
++    tasks = [
++        {"id": 1, "title": "API guide"},
++        {"id": 2},
++        {"id": 3, "title": None},
++    ]
++    original = [dict(task) for task in tasks]
++
++    assert [task["id"] for task in select_tasks(tasks, query="api")] == [1]
++    assert select_tasks(tasks, status="open", query="api") == []
++    assert tasks == original
++
++
++def test_select_tasks_intersection_can_be_empty():
++    tasks = [
++        {"id": 1, "title": "Fix API timeout", "status": "open"},
++        {"id": 2, "title": "Write docs", "status": "done"},
++    ]
++
++    assert [task["id"] for task in select_tasks(tasks, status="done", query="api")] == []
++    assert [task["id"] for task in select_tasks(tasks, status="done", query="docs")] == [2]
++
++
++def test_select_tasks_accepts_one_shot_iterables_keeping_order():
++    tasks = (
++        {"id": index, "title": title, "status": status}
++        for index, title, status in [
++            (1, "API docs", "open"),
++            (2, "API design", "done"),
++            (3, "Clean UI", "open"),
++            (4, "api review", "OPEN"),
++        ]
++    )
++
++    assert [task["id"] for task in select_tasks(tasks, status="open", query="API")] == [1, 4]
++
++
++def test_select_tasks_does_not_mutate_input_tasks():
++    tasks = [
++        {"id": 1, "title": "Fix API timeout", "status": "Open"},
++        {"id": 2, "title": "Write API docs", "status": "done"},
++        {"id": 3, "status": "open"},
++    ]
++    original = [dict(task) for task in tasks]
++    references = [task for task in tasks]
++
++    select_tasks(tasks, status="OPEN", query="api")
++
++    assert tasks == original
++    assert [id(task) for task in tasks] == [id(task) for task in references]
++
++
++def test_select_tasks_filters_are_keyword_only():
++    tasks = [
++        {"id": 1, "title": "Fix API timeout", "status": "open"},
++        {"id": 2, "title": "Clean UI", "status": "done"},
++    ]
++
++    with pytest.raises(TypeError):
++        select_tasks(tasks, "open")
++    with pytest.raises(TypeError):
++        select_tasks(tasks, "open", "api")

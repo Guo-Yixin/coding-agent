@@ -1,0 +1,100 @@
+diff --git a/taskboard/tasks.py b/taskboard/tasks.py
+index 24f522b..2e9335c 100644
+--- a/taskboard/tasks.py
++++ b/taskboard/tasks.py
+@@ -17,12 +17,25 @@ def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[T
+ 
+ 
+ def search_tasks(tasks: Iterable[Task], query: str) -> list[Task]:
+-    """Find tasks whose title contains query, preserving input order."""
++    """Find tasks whose title contains query, ignoring case and preserving order.
++
++    An empty query returns every task untouched. Tasks without a usable
++    string title are skipped instead of raising or matching by accident.
++    """
+ 
+     rows = list(tasks)
+     if not query:
+         return rows
+-    return [task for task in rows if query in str(task.get("title", ""))]
++
++    needle = query.casefold()
++    matches: list[Task] = []
++    for task in rows:
++        title = task.get("title")
++        if not isinstance(title, str):
++            continue
++        if needle in title.casefold():
++            matches.append(task)
++    return matches
+ 
+ 
+ def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:
+diff --git a/tests/test_search_tasks.py b/tests/test_search_tasks.py
+index 4110daf..0987fc7 100644
+--- a/tests/test_search_tasks.py
++++ b/tests/test_search_tasks.py
+@@ -4,11 +4,60 @@ from taskboard.tasks import search_tasks
+ def test_search_is_case_insensitive_and_preserves_order():
+     tasks = [
+         {"id": 1, "title": "Fix API timeout"},
+-        {"id": 2, "title": "Write API docs"},
++        {"id": 2, "title": "Write api docs"},
+         {"id": 3, "title": "Clean UI"},
++        {"id": 4, "title": "Refactor ApI client"},
+     ]
+-    assert [task["id"] for task in search_tasks(tasks, "api")] == [1, 2]
++    assert [task["id"] for task in search_tasks(tasks, "api")] == [1, 2, 4]
++
++
++def test_search_query_case_does_not_change_results():
++    tasks = [
++        {"id": 1, "title": "Fix API timeout"},
++        {"id": 2, "title": "Write api docs"},
++    ]
++    lowercase = [task["id"] for task in search_tasks(tasks, "api")]
++    mixedcase = [task["id"] for task in search_tasks(tasks, "Api")]
++    uppercase = [task["id"] for task in search_tasks(tasks, "API")]
++    assert lowercase == mixedcase == uppercase == [1, 2]
+ 
+ 
+ def test_search_ignores_tasks_without_a_title():
+-    assert search_tasks([{"id": 1}, {"id": 2, "title": "API"}], "api") == [{"id": 2, "title": "API"}]
++    tasks = [{"id": 1}, {"id": 2, "title": "API"}, {"id": 3, "title": None}]
++    assert search_tasks(tasks, "api") == [{"id": 2, "title": "API"}]
++
++
++def test_search_skips_non_string_titles_without_raising():
++    tasks = [{"id": 1, "title": 42}, {"id": 2, "title": ["api"]}, {"id": 3, "title": "API"}]
++    assert [task["id"] for task in search_tasks(tasks, "api")] == [3]
++
++
++def test_empty_query_returns_all_tasks_without_mutating_input():
++    tasks = [
++        {"id": 1, "title": "Fix API", "status": "open"},
++        {"id": 2},
++        {"id": 3, "title": None},
++    ]
++    original = [dict(task) for task in tasks]
++
++    result = search_tasks(tasks, "")
++
++    assert result == tasks
++    assert tasks == original
++
++
++def test_search_without_matches_returns_empty_list():
++    tasks = [{"id": 1, "title": "Fix API"}, {"id": 2, "title": "Clean UI"}]
++    assert search_tasks(tasks, "missing") == []
++
++
++def test_search_returns_original_task_objects():
++    tasks = [{"id": 1, "title": "Fix API"}]
++    result = search_tasks(tasks, "api")
++    assert len(result) == 1
++    assert result[0] is tasks[0]
++
++
++def test_empty_query_keeps_results_in_input_order():
++    tasks = [{"id": 3}, {"id": 1, "title": "Fix API"}, {"id": 2, "title": "Clean UI"}]
++    assert [task["id"] for task in search_tasks(tasks, "")] == [3, 1, 2]

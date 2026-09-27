@@ -1,0 +1,113 @@
+diff --git a/taskboard/tasks.py b/taskboard/tasks.py
+index 24f522b..b6e8b32 100644
+--- a/taskboard/tasks.py
++++ b/taskboard/tasks.py
+@@ -25,8 +25,26 @@ def search_tasks(tasks: Iterable[Task], query: str) -> list[Task]:
+     return [task for task in rows if query in str(task.get("title", ""))]
+ 
+ 
++_PRIORITY_RANKS = {"high": 0, "medium": 1, "low": 2}
++_PRIORITY_ALIASES = {"urgent": "high", "backlog": "low"}
++_UNKNOWN_PRIORITY = 99
++
++
++def _priority_rank(task: Task) -> int:
++    """Map a task priority to its rank, aliases and case insensitive."""
++
++    raw = task.get("priority")
++    key = str(raw).strip().lower() if raw is not None else ""
++    key = _PRIORITY_ALIASES.get(key, key)
++    return _PRIORITY_RANKS.get(key, _UNKNOWN_PRIORITY)
++
++
+ def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:
+-    """Return tasks ordered by priority while preserving equal-priority order."""
++    """Return tasks ordered by priority while preserving equal-priority order.
++
++    Priorities are compared case insensitively, ``urgent`` ranks as ``high``
++    and ``backlog`` ranks as ``low``. Missing or unknown priorities are stable
++    among themselves and sorted after every known priority.
++    """
+ 
+-    order = {"high": 0, "medium": 1, "low": 2}
+-    return sorted(tasks, key=lambda task: order.get(str(task.get("priority", "")).lower(), 99))
++    return sorted(tasks, key=_priority_rank)
+diff --git a/tests/test_sort_by_priority.py b/tests/test_sort_by_priority.py
+index 632b4d0..cdd60e5 100644
+--- a/tests/test_sort_by_priority.py
++++ b/tests/test_sort_by_priority.py
+@@ -1,6 +1,37 @@
+ from taskboard.tasks import sort_by_priority
+ 
+ 
++def test_priority_sort_treats_urgent_as_high_and_backlog_as_low():
++    tasks = [
++        {"id": 1, "priority": "backlog"},
++        {"id": 2, "priority": "medium"},
++        {"id": 3, "priority": "urgent"},
++        {"id": 4, "priority": "high"},
++        {"id": 5, "priority": "low"},
++    ]
++    assert [task["id"] for task in sort_by_priority(tasks)] == [3, 4, 2, 1, 5]
++
++
++def test_priority_sort_ignores_case_and_accepts_mixed_case_values():
++    mixed_case = [
++        {"id": 1, "priority": "BACKLOG"},
++        {"id": 2, "priority": "MeDiUm"},
++        {"id": 3, "priority": "Urgent"},
++        {"id": 4, "priority": "High"},
++        {"id": 5, "priority": "low"},
++    ]
++    lowercase = [
++        {"id": 1, "priority": "backlog"},
++        {"id": 2, "priority": "medium"},
++        {"id": 3, "priority": "urgent"},
++        {"id": 4, "priority": "high"},
++        {"id": 5, "priority": "low"},
++    ]
++    expected = [3, 4, 2, 1, 5]
++    assert [task["id"] for task in sort_by_priority(mixed_case)] == expected
++    assert [task["id"] for task in sort_by_priority(lowercase)] == expected
++
++
+ def test_priority_sort_keeps_equal_and_unknown_priorities_stable():
+     tasks = [
+         {"id": 1, "priority": "low"},
+@@ -10,3 +41,36 @@ def test_priority_sort_keeps_equal_and_unknown_priorities_stable():
+         {"id": 5, "priority": "high"},
+     ]
+     assert [task["id"] for task in sort_by_priority(tasks)] == [2, 4, 5, 1, 3]
++
++
++def test_priority_sort_keeps_equal_priority_tasks_in_input_order():
++    tasks = [
++        {"id": 1, "priority": "medium"},
++        {"id": 2, "priority": "high"},
++        {"id": 3, "priority": "urgent"},
++        {"id": 4, "priority": "backlog"},
++        {"id": 5, "priority": "low"},
++        {"id": 6, "priority": "MEDIUM"},
++    ]
++    assert [task["id"] for task in sort_by_priority(tasks)] == [2, 3, 1, 6, 4, 5]
++
++
++def test_priority_sort_places_unknown_priorities_last_and_stably():
++    tasks = [
++        {"id": 1, "priority": "whenever"},
++        {"id": 2, "priority": "high"},
++        {"id": 3, "priority": "someday"},
++        {"id": 4, "priority": "low"},
++    ]
++    assert [task["id"] for task in sort_by_priority(tasks)] == [2, 4, 1, 3]
++
++
++def test_priority_sort_treats_missing_and_empty_priorities_as_unknown():
++    tasks = [
++        {"id": 1},
++        {"id": 2, "priority": "high"},
++        {"id": 3, "priority": None},
++        {"id": 4, "priority": ""},
++        {"id": 5, "priority": "urgent"},
++    ]
++    assert [task["id"] for task in sort_by_priority(tasks)] == [2, 5, 1, 3, 4]

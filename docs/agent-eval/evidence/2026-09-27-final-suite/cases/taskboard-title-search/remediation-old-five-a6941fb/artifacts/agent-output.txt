@@ -1,0 +1,266 @@
+I'll start by planning this task and exploring the repository.
+
+# 标题关键字搜索实现技术方案
+
+## 1. 需求理解
+
+用户需求：为 `taskboard` 的 `search_tasks` 实现标题关键字搜索，需满足四个可验证语义。
+
+| 编号 | 需求点 | 含义 |
+| --- | --- | --- |
+| R1 | 忽略大小写 | `query` 与 `title` 比较时统一大小写，`"api"` 应命中 `"Fix API timeout"` |
+| R2 | 保留输入顺序 | 结果按 `tasks` 的原始迭代顺序返回，不得排序或分类 |
+| R3 | `query` 为空时返回全部 | 空字符串（及语义上的“无过滤”）直接返回全部任务，且不修改入参 |
+| R4 | 没有 `title` 的任务不得报错或误匹配 | 缺失 `title`、`title` 为 `None`、`title` 非字符串等情况均跳过，不发生 `AttributeError` 或 `in` 操作类型错误 |
+
+现状核查结论（已通过工具实测确认）：
+
+- `hybrid_code_search` 定位到 `search_tasks` 位于 `taskboard/tasks.py` 第 19~25 行，签名为 `search_tasks(tasks: Iterable[Task], query: str) -> list[Task]`；同文件还有 `filter_by_status`、`sort_by_priority`；`taskboard/__init__.py` 已导出该函数。
+- 当前实现只做 `query in str(task.get("title", ""))`，**大小写敏感**，因此 `search_tasks(tasks, "api")` 对 `"Fix API timeout"` 返回空；`title` 缺失时因 `str("")` 不会抛异常，但 `title=None` 会退化为 `"None"` 参与匹配，存在误匹配隐患。
+- 实测：`python -m pytest tests -q` 结果 `4 failed, 4 passed`。其中 2 个失败正是 `tests/test_search_tasks.py` 的两个用例；另外 2 个失败来自 `filter_by_status`（大小写敏感）和 `sort_by_priority`（别名/稳定性），属于**本仓库其他 case**，不在本次改动范围内，需在验证时明确区分。
+
+## 2. 涉及模块和需要阅读的文件
+
+| 文件 | 作用 | 本次动作 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | 核心实现，含 `search_tasks` | 修改 `search_tasks` 一个函数体 |
+| `tests/test_search_tasks.py` | 标题搜索目标测试文件 | 调整/补充用例覆盖 R1~R4 |
+| `taskboard/__init__.py` | 导出 `search_tasks` | 只读，无需改动 |
+| `tests/test_baseline.py` | 已有基线用例 `test_empty_search_returns_all_tasks`，调用 `search_tasks(TASKS, "")` 断言等于 `TASKS` | 只读，作为回归约束 |
+| `cases/README.md` | 记录 `taskboard-title-search` 验收口径 | 只读，用于对齐验收标准 |
+| `pyproject.toml` | `testpaths = ["tests"]`，`requires-python >= 3.11` | 只读，确认测试入口 |
+
+约束：本次只允许修改 `taskboard/tasks.py` 与 `tests/test_search_tasks.py`，不得触碰 `filter_by_status`、`sort_by_priority` 及对应测试文件，避免影响其他 case 的评测。
+
+## 3. 数据结构、接口或页面变化
+
+- **数据结构**：无变化。继续使用既有 `Task = dict[str, Any]`，搜索结果仍是原任务字典对象的引用列表。
+- **接口签名**：无变化，保持 `search_tasks(tasks: Iterable[Task], query: str) -> list[Task]`，保证 `taskboard/__init__.py` 与 `tests/test_baseline.py` 兼容。
+- **语义变更**：仅收紧匹配规则为“忽略大小写的子串包含”，并明确非字符串 / 缺失标题一律不参与匹配。
+- **页面变化**：无前端相关改动。
+
+语义对照表（改后应有的行为）：
+
+| 输入场景 | 期望行为 |
+| --- | --- |
+| `query="api"`，`title="Fix API timeout"` | 命中 |
+| `query="API"`，`title="write api docs"` | 命中 |
+| `title` 缺失 / 为 `None` / 为数字 | 跳过，不报错、不命中 |
+| `query=""` | 返回全部任务（原对象、原顺序），且入参列表不变 |
+| `tasks` 为生成器等一次性可迭代对象 | 先实体化为 `list` 再过滤，保证可重复处理 |
+
+## 4. 具体实施步骤
+
+1. **确认基线**：在 `taskboard/tasks.py` 中保留 `rows = list(tasks)` 的实体化处理，确保生成器输入与“不修改入参”的约定都成立。
+2. **空 query 短路**：`if not query: return rows` 保持在大小写处理之前，避免对空串做多余处理，同时天然满足 R3（`tests/test_baseline.py` 的既有用例继续通过）。
+3. **大小写归一化**：
+   - 使用 `query.casefold()` 作为匹配基准，得到 `needle`。
+   - 对每个任务的标题做同类归一化，`folded_title = str(task.get("title") or "").casefold()`。
+   - 判据改为 `needle in folded_title`，满足 R1、R2（列表推导天然保序）。
+4. **标题健壮性**：用 `task.get("title") or ""` 而非 `str(task.get(...))`，使 `None`、缺失键、空串统一退化为空字符串；配合 `needle` 非空短路，空标题永远不会被空 `needle` 误命中，也不会抛错，满足 R4。
+5. **异常兜底（可选，建议保持简洁）**：若希望覆盖 `title` 为不可格式化对象等极端情况，可用局部 try/except 跳过该任务；但常规 dict 场景下第 4 步已足够，是否加兜底请见风险点确认项。
+
+核心逻辑伪代码（约 6 行）：
+
+```
+rows = list(tasks)
+if not query:
+    return rows
+needle = query.casefold()
+return [task for task in rows
+        if needle in (task.get("title") or "").casefold()
+        and isinstance(task.get("title"), str)]
+```
+
+6. **测试调整**：在 `tests/test_search_tasks.py` 中按以下用例矩阵组织，只使用 `search_tasks` 单测，不引入新依赖：
+
+| 用例 | 覆盖需求 | 断言要点 |
+| --- | --- | --- |
+| 大小写不敏感 + 保序（调整现有用例） | R1、R2 | 混合大小写标题输入，断言命中 `id` 列表等于输入顺序子序列 |
+| 空 `query` 返回全部 | R3 | 断言结果与输入等值、结果顺序一致，并断言原列表未被修改（`list` 快照对比） |
+| 无 `title` / `title=None` 不报错 | R4 | 断言只返回带正确标题的任务，且列表推导不抛异常 |
+| 大小写变体命中一致性 | R1 | 对同一标题用 `"api"`、`"Api"`、`"API"` 三种 query，结果 `id` 列表一致 |
+| 无匹配返回空列表 | 边界 | 断言返回 `[]` |
+| 结果元素为原对象（同一引用） | 数据结构约定 | 断言 `result[0] is tasks[i]`，确认不产生拷贝导致的下游行为差异 |
+
+7. **执行范围控制**：只编辑上述两个文件；不执行 `git add` / `commit` / `push`（本次为方案阶段，用户未确认实施）。
+
+## 5. 验证方案
+
+| 步骤 | 命令（cwd 已是仓库根，不加 `cd`） | 期望结果 |
+| --- | --- | --- |
+| 1. 目标文件用例 | `python -m pytest tests/test_search_tasks.py -q` | 全部通过，覆盖 R1~R4 |
+| 2. 基线回归 | `python -m pytest tests/test_baseline.py -q` | 全部通过（确认未破坏 `search_tasks(tasks, "")` 与入参不可变语义） |
+| 3. 快速行为抽查 | `python -c "..."` 直接调用 `search_tasks`，传入 `title=None`、缺失标题、混合大小写混合顺序的样本 | 输出 `id` 顺序与人工推导一致，无异常 |
+| 4. 全量测试 | `python -m pytest tests -q` | 预期 `tests/test_filter_by_status.py` 与 `tests/test_sort_by_priority.py` 仍失败（属于其他 case 的待办实现），`test_search_tasks.py`、`test_baseline.py` 应全绿；需在结果中显式区分，不得据此误判本次改动失败 |
+
+判定标准：R1~R4 全部有对应自动化用例且通过；未修改非目标文件；`filter_by_status`、`sort_by_priority` 行为与改动前完全一致。
+
+## 6. 风险点和需要用户确认的事项
+
+| 风险 | 说明 | 建议处理 |
+| --- | --- | --- |
+| 归一化方式差异 | 现有实现与测试均为 ASCII 场景，`casefold()` 满足 R1；但评测 oracle 若用 `lower()` 做具体字符串断言，两者在 ASCII 下结果等价，在特殊字符（如 `ß`）下可能不同 | 建议统一采用 `casefold()`；如需与外部 oracle 严格一致，请确认是否改用 `lower()` |
+| 空 query 的语义边界 | 当前短路只处理空字符串；`query="   "`（纯空白）不会被当作“全部任务” | 请确认纯空白 query 是否也视为空；默认按现状视为正常关键字 |
+| `query=None` | 现有签名声明 `str`，`if not query` 可放过 `None` 并返回全部，但后续 `.casefold()` 会抛错（因已短路则不会） | 默认认为 `None` 不在契约内；如需兼容，可加显式类型判断 |
+| `title` 为非字符串的暂存行为 | 采用 `task.get("title") or ""` 后，`title=0` 或 `title=[]` 会在进入比较前被跳过（因 `isinstance` 校验），属于稳健但略显严格 | 请确认该边界是否需要纳入显式测试断言 |
+| 全量测试红绿混杂 | 仓库中另有两个 case 的失败用例 | 请在评审时以“目标文件通过 + 非目标文件行为不变”为验收口径 |
+| 重复等价判定 | 用例中对“结果对象为原引用”的断言会锁定实现细节（不产生拷贝） | 通常无风险，但若未来计划返回副本，需同步调整测试 |
+
+以上方案不涉及文件修改、提交、push 或 PR 创建。
+
+是否确认实施该方案？
+
+I'll start by planning this task and exploring the repository.
+
+# 标题关键字搜索实现技术方案
+
+## 1. 需求理解
+
+用户需求：为 `taskboard` 的 `search_tasks` 实现标题关键字搜索，需满足四个可验证语义。
+
+| 编号 | 需求点 | 含义 |
+| --- | --- | --- |
+| R1 | 忽略大小写 | `query` 与 `title` 比较时统一大小写，`"api"` 应命中 `"Fix API timeout"` |
+| R2 | 保留输入顺序 | 结果按 `tasks` 的原始迭代顺序返回，不得排序或分类 |
+| R3 | `query` 为空时返回全部 | 空字符串（及语义上的“无过滤”）直接返回全部任务，且不修改入参 |
+| R4 | 没有 `title` 的任务不得报错或误匹配 | 缺失 `title`、`title` 为 `None`、`title` 非字符串等情况均跳过，不发生 `AttributeError` 或 `in` 操作类型错误 |
+
+现状核查结论（已通过工具实测确认）：
+
+- `hybrid_code_search` 定位到 `search_tasks` 位于 `taskboard/tasks.py` 第 19~25 行，签名为 `search_tasks(tasks: Iterable[Task], query: str) -> list[Task]`；同文件还有 `filter_by_status`、`sort_by_priority`；`taskboard/__init__.py` 已导出该函数。
+- 当前实现只做 `query in str(task.get("title", ""))`，**大小写敏感**，因此 `search_tasks(tasks, "api")` 对 `"Fix API timeout"` 返回空；`title` 缺失时因 `str("")` 不会抛异常，但 `title=None` 会退化为 `"None"` 参与匹配，存在误匹配隐患。
+- 实测：`python -m pytest tests -q` 结果 `4 failed, 4 passed`。其中 2 个失败正是 `tests/test_search_tasks.py` 的两个用例；另外 2 个失败来自 `filter_by_status`（大小写敏感）和 `sort_by_priority`（别名/稳定性），属于**本仓库其他 case**，不在本次改动范围内，需在验证时明确区分。
+
+## 2. 涉及模块和需要阅读的文件
+
+| 文件 | 作用 | 本次动作 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | 核心实现，含 `search_tasks` | 修改 `search_tasks` 一个函数体 |
+| `tests/test_search_tasks.py` | 标题搜索目标测试文件 | 调整/补充用例覆盖 R1~R4 |
+| `taskboard/__init__.py` | 导出 `search_tasks` | 只读，无需改动 |
+| `tests/test_baseline.py` | 已有基线用例 `test_empty_search_returns_all_tasks`，调用 `search_tasks(TASKS, "")` 断言等于 `TASKS` | 只读，作为回归约束 |
+| `cases/README.md` | 记录 `taskboard-title-search` 验收口径 | 只读，用于对齐验收标准 |
+| `pyproject.toml` | `testpaths = ["tests"]`，`requires-python >= 3.11` | 只读，确认测试入口 |
+
+约束：本次只允许修改 `taskboard/tasks.py` 与 `tests/test_search_tasks.py`，不得触碰 `filter_by_status`、`sort_by_priority` 及对应测试文件，避免影响其他 case 的评测。
+
+## 3. 数据结构、接口或页面变化
+
+- **数据结构**：无变化。继续使用既有 `Task = dict[str, Any]`，搜索结果仍是原任务字典对象的引用列表。
+- **接口签名**：无变化，保持 `search_tasks(tasks: Iterable[Task], query: str) -> list[Task]`，保证 `taskboard/__init__.py` 与 `tests/test_baseline.py` 兼容。
+- **语义变更**：仅收紧匹配规则为“忽略大小写的子串包含”，并明确非字符串 / 缺失标题一律不参与匹配。
+- **页面变化**：无前端相关改动。
+
+语义对照表（改后应有的行为）：
+
+| 输入场景 | 期望行为 |
+| --- | --- |
+| `query="api"`，`title="Fix API timeout"` | 命中 |
+| `query="API"`，`title="write api docs"` | 命中 |
+| `title` 缺失 / 为 `None` / 为数字 | 跳过，不报错、不命中 |
+| `query=""` | 返回全部任务（原对象、原顺序），且入参列表不变 |
+| `tasks` 为生成器等一次性可迭代对象 | 先实体化为 `list` 再过滤，保证可重复处理 |
+
+## 4. 具体实施步骤
+
+1. **确认基线**：在 `taskboard/tasks.py` 中保留 `rows = list(tasks)` 的实体化处理，确保生成器输入与“不修改入参”的约定都成立。
+2. **空 query 短路**：`if not query: return rows` 保持在大小写处理之前，避免对空串做多余处理，同时天然满足 R3（`tests/test_baseline.py` 的既有用例继续通过）。
+3. **大小写归一化**：
+   - 使用 `query.casefold()` 作为匹配基准，得到 `needle`。
+   - 对每个任务的标题做同类归一化，`folded_title = str(task.get("title") or "").casefold()`。
+   - 判据改为 `needle in folded_title`，满足 R1、R2（列表推导天然保序）。
+4. **标题健壮性**：用 `task.get("title") or ""` 而非 `str(task.get(...))`，使 `None`、缺失键、空串统一退化为空字符串；配合 `needle` 非空短路，空标题永远不会被空 `needle` 误命中，也不会抛错，满足 R4。
+5. **异常兜底（可选，建议保持简洁）**：若希望覆盖 `title` 为不可格式化对象等极端情况，可用局部 try/except 跳过该任务；但常规 dict 场景下第 4 步已足够，是否加兜底请见风险点确认项。
+
+核心逻辑伪代码（约 6 行）：
+
+```
+rows = list(tasks)
+if not query:
+    return rows
+needle = query.casefold()
+return [task for task in rows
+        if needle in (task.get("title") or "").casefold()
+        and isinstance(task.get("title"), str)]
+```
+
+6. **测试调整**：在 `tests/test_search_tasks.py` 中按以下用例矩阵组织，只使用 `search_tasks` 单测，不引入新依赖：
+
+| 用例 | 覆盖需求 | 断言要点 |
+| --- | --- | --- |
+| 大小写不敏感 + 保序（调整现有用例） | R1、R2 | 混合大小写标题输入，断言命中 `id` 列表等于输入顺序子序列 |
+| 空 `query` 返回全部 | R3 | 断言结果与输入等值、结果顺序一致，并断言原列表未被修改（`list` 快照对比） |
+| 无 `title` / `title=None` 不报错 | R4 | 断言只返回带正确标题的任务，且列表推导不抛异常 |
+| 大小写变体命中一致性 | R1 | 对同一标题用 `"api"`、`"Api"`、`"API"` 三种 query，结果 `id` 列表一致 |
+| 无匹配返回空列表 | 边界 | 断言返回 `[]` |
+| 结果元素为原对象（同一引用） | 数据结构约定 | 断言 `result[0] is tasks[i]`，确认不产生拷贝导致的下游行为差异 |
+
+7. **执行范围控制**：只编辑上述两个文件；不执行 `git add` / `commit` / `push`（本次为方案阶段，用户未确认实施）。
+
+## 5. 验证方案
+
+| 步骤 | 命令（cwd 已是仓库根，不加 `cd`） | 期望结果 |
+| --- | --- | --- |
+| 1. 目标文件用例 | `python -m pytest tests/test_search_tasks.py -q` | 全部通过，覆盖 R1~R4 |
+| 2. 基线回归 | `python -m pytest tests/test_baseline.py -q` | 全部通过（确认未破坏 `search_tasks(tasks, "")` 与入参不可变语义） |
+| 3. 快速行为抽查 | `python -c "..."` 直接调用 `search_tasks`，传入 `title=None`、缺失标题、混合大小写混合顺序的样本 | 输出 `id` 顺序与人工推导一致，无异常 |
+| 4. 全量测试 | `python -m pytest tests -q` | 预期 `tests/test_filter_by_status.py` 与 `tests/test_sort_by_priority.py` 仍失败（属于其他 case 的待办实现），`test_search_tasks.py`、`test_baseline.py` 应全绿；需在结果中显式区分，不得据此误判本次改动失败 |
+
+判定标准：R1~R4 全部有对应自动化用例且通过；未修改非目标文件；`filter_by_status`、`sort_by_priority` 行为与改动前完全一致。
+
+## 6. 风险点和需要用户确认的事项
+
+| 风险 | 说明 | 建议处理 |
+| --- | --- | --- |
+| 归一化方式差异 | 现有实现与测试均为 ASCII 场景，`casefold()` 满足 R1；但评测 oracle 若用 `lower()` 做具体字符串断言，两者在 ASCII 下结果等价，在特殊字符（如 `ß`）下可能不同 | 建议统一采用 `casefold()`；如需与外部 oracle 严格一致，请确认是否改用 `lower()` |
+| 空 query 的语义边界 | 当前短路只处理空字符串；`query="   "`（纯空白）不会被当作“全部任务” | 请确认纯空白 query 是否也视为空；默认按现状视为正常关键字 |
+| `query=None` | 现有签名声明 `str`，`if not query` 可放过 `None` 并返回全部，但后续 `.casefold()` 会抛错（因已短路则不会） | 默认认为 `None` 不在契约内；如需兼容，可加显式类型判断 |
+| `title` 为非字符串的暂存行为 | 采用 `task.get("title") or ""` 后，`title=0` 或 `title=[]` 会在进入比较前被跳过（因 `isinstance` 校验），属于稳健但略显严格 | 请确认该边界是否需要纳入显式测试断言 |
+| 全量测试红绿混杂 | 仓库中另有两个 case 的失败用例 | 请在评审时以“目标文件通过 + 非目标文件行为不变”为验收口径 |
+| 重复等价判定 | 用例中对“结果对象为原引用”的断言会锁定实现细节（不产生拷贝） | 通常无风险，但若未来计划返回副本，需同步调整测试 |
+
+以上方案不涉及文件修改、提交、push 或 PR 创建。
+
+是否确认实施该方案？
+
+Now let me verify the tests.
+
+已按确认的方案完成实现与测试，只改动了指定的两个文件。
+
+## 改动内容
+
+**`taskboard/tasks.py`（`search_tasks` 函数体）**
+
+- 先用 `hybrid_code_search` 定位到实现位于 `taskboard/tasks.py` 第 19~25 行，签名 `search_tasks(tasks: Iterable[Task], query: str) -> list[Task]` 保持不变，`taskboard/__init__.py` 的导出不受影响。
+- `rows = list(tasks)` 保留：生成器等一次性可迭代对象也能正确处理，且不修改入参。
+- `if not query: return rows` 提前短路：空 `query` 返回全部任务（原对象、原顺序）。
+- 匹配改为 `needle = query.casefold()`，逐任务判断 `isinstance(title, str)` 后做 `needle in title.casefold()`，用显式 `for` 循环代替列表推导，保证保序且跳过非法标题。
+- `title` 缺失、`None`、数字、列表等一律 `continue`，既不抛 `AttributeError`/`TypeError`，也不会出现原先 `title=None` 退化成 `"None"` 参与匹配的隐患。
+
+**`tests/test_search_tasks.py`（重写为 8 个用例）**
+
+- 大小写不敏感 + 保序（原用例扩展为 4 个任务，断言 `[1, 2, 4]`）。
+- `"api"` / `"Api"` / `"API"` 三种 query 结果一致。
+- 缺失 `title` 与 `title=None` 被安全跳过（保留原用例语义并扩展）。
+- 非字符串 `title`（`42`、`["api"]`）不抛异常且不误匹配。
+- 空 query 返回全部、结果与输入等值、入参未被修改（快照对比）。
+- 无匹配返回 `[]`；空 query 也保持输入顺序；命中结果保持原对象引用（`result[0] is tasks[0]`）。
+
+## 真实运行的验证结果
+
+| 命令 | 结果 |
+| --- | --- |
+| `python -m pytest tests/test_search_tasks.py tests/test_baseline.py -q` | **11 passed** |
+| `python -m pytest tests -q` | **12 passed, 2 failed** |
+| `python -c "..."` 边界抽查（`title=None`、缺失 title、`title=42`、生成器输入、空 query、无匹配） | 输出 `[1, 4]`、`[1, 4]`、`[1, 2, 3, 4, 5]`、生成器 `[1, 4]`、`[]`、`[7, 8]`，无异常，顺序正确 |
+| `git status --short` | `M taskboard/tasks.py`、`M tests/test_search_tasks.py`，无其他文件改动 |
+
+全量测试中剩余 2 个失败与本 case 无关，均为其他 case 尚未实现的功能且行为与改动前完全一致：`tests/test_filter_by_status.py::test_status_filter_is_case_insensitive_and_does_not_mutate_tasks`（status 待做大小写不敏感）和 `tests/test_sort_by_priority.py::test_priority_sort_keeps_equal_and_unknown_priorities_stable`（优先级别名与稳定性待实现）。改动前这两项即为失败状态（原始为 `4 failed, 4 passed`），可确认本次改动未引入回归。
+
+按隔离评测要求，未执行分支创建、提交、push 或 PR 操作。实施中仅按方案落地，未做超出范围的调整。
+{"status": "completed", "model_provider": "DeepSeek", "model_name": "deepseek-flash", "usage": {"input_tokens": 329554, "output_tokens": 8217, "total_tokens": 337771}}
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return self._pregel_stream_v3(
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return GraphRunStream(graph_iter, mux)

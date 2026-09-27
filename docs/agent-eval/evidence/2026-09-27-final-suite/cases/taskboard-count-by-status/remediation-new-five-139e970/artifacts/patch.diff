@@ -1,0 +1,148 @@
+diff --git a/taskboard/__init__.py b/taskboard/__init__.py
+index fb699df..a2d0588 100644
+--- a/taskboard/__init__.py
++++ b/taskboard/__init__.py
+@@ -1,5 +1,10 @@
+ """Small target project used by the CODING Agent evaluation suite."""
+ 
+-from taskboard.tasks import filter_by_status, search_tasks, sort_by_priority
++from taskboard.tasks import (
++    count_by_status,
++    filter_by_status,
++    search_tasks,
++    sort_by_priority,
++)
+ 
+-__all__ = ["filter_by_status", "search_tasks", "sort_by_priority"]
++__all__ = ["count_by_status", "filter_by_status", "search_tasks", "sort_by_priority"]
+diff --git a/taskboard/tasks.py b/taskboard/tasks.py
+index 24f522b..1628688 100644
+--- a/taskboard/tasks.py
++++ b/taskboard/tasks.py
+@@ -6,6 +6,25 @@ from typing import Any
+ 
+ Task = dict[str, Any]
+ 
++UNKNOWN_STATUS = "unknown"
++
++
++def count_by_status(tasks: Iterable[Task]) -> dict[str, int]:
++    """Count tasks per normalized status, keyed in first-seen order.
++
++    A status is normalized by trimming surrounding whitespace and lowercasing.
++    Missing, ``None``, and blank statuses are all counted under ``"unknown"``.
++    The input tasks are never modified.
++    """
++
++    counts: dict[str, int] = {}
++    for task in tasks:
++        raw = task.get("status")
++        key = str(raw).strip().lower() if raw is not None else ""
++        key = key or UNKNOWN_STATUS
++        counts[key] = counts.get(key, 0) + 1
++    return counts
++
+ 
+ def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]:
+     """Return tasks matching status; no filter returns every task."""
+diff --git a/tests/test_count_by_status.py b/tests/test_count_by_status.py
+index 4a38c64..10e30a7 100644
+--- a/tests/test_count_by_status.py
++++ b/tests/test_count_by_status.py
+@@ -14,3 +14,96 @@ def test_counts_normalized_statuses_and_keeps_first_seen_order():
+ 
+ def test_empty_input_has_no_groups():
+     assert count_by_status([]) == {}
++
++
++def test_whitespace_and_case_variants_share_one_group():
++    tasks = [
++        {"id": 1, "status": "OPEN"},
++        {"id": 2, "status": " open "},
++        {"id": 3, "status": "Open"},
++        {"id": 4, "status": "\topen\n"},
++    ]
++    assert count_by_status(tasks) == {"open": 4}
++
++
++def test_missing_null_and_blank_statuses_all_count_as_unknown():
++    tasks = [
++        {"id": 1, "status": ""},
++        {"id": 2, "status": "   "},
++        {"id": 3, "status": None},
++        {"id": 4},
++        {"id": 5, "status": "\t"},
++        {"id": 6, "status": "open"},
++    ]
++    assert count_by_status(tasks) == {"unknown": 5, "open": 1}
++
++
++def test_keys_follow_first_seen_order_not_alphabetical_order():
++    tasks = [
++        {"id": 1, "status": "done"},
++        {"id": 2, "status": "OPEN"},
++        {"id": 3, "status": "blocked"},
++    ]
++
++    assert list(count_by_status(tasks)) == ["done", "open", "blocked"]
++
++
++def test_unknown_is_placed_at_its_first_seen_position():
++    tasks = [
++        {"id": 1},
++        {"id": 2, "status": "open"},
++        {"id": 3, "status": None},
++    ]
++    result = count_by_status(tasks)
++
++    assert list(result) == ["unknown", "open"]
++    assert result == {"unknown": 2, "open": 1}
++
++
++def test_input_tasks_are_not_modified():
++    tasks = [
++        {"id": 1, "status": "  Open "},
++        {"id": 2},
++        {"id": 3, "status": None},
++    ]
++    original = [dict(task) for task in tasks]
++
++    count_by_status(tasks)
++
++    assert tasks == original
++    assert tasks == [
++        {"id": 1, "status": "  Open "},
++        {"id": 2},
++        {"id": 3, "status": None},
++    ]
++
++
++def test_accepts_a_one_shot_iterable():
++    tasks = [
++        {"id": 1, "status": "open"},
++        {"id": 2, "status": " OPEN "},
++        {"id": 3, "status": "done"},
++    ]
++
++    assert count_by_status(iter(tasks)) == {"open": 2, "done": 1}
++
++
++def test_values_that_normalize_to_unknown_join_the_unknown_group():
++    tasks = [
++        {"id": 1, "status": "unknown"},
++        {"id": 2, "status": " UNKNOWN "},
++        {"id": 3},
++        {"id": 4, "status": ""},
++    ]
++    assert count_by_status(tasks) == {"unknown": 4}
++
++
++def test_single_task_input():
++    assert count_by_status([{"id": 1, "status": "done"}]) == {"done": 1}
++
++
++def test_repeated_calls_return_consistent_results():
++    tasks = [{"id": 1, "status": "open"}, {"id": 2}]
++
++    assert count_by_status(tasks) == {"open": 1, "unknown": 1}
++    assert count_by_status(tasks) == {"open": 1, "unknown": 1}

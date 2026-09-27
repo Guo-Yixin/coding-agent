@@ -1,0 +1,277 @@
+I'll start by planning this task and exploring the repository.
+
+Now let me run the hybrid code search and inspect the cases directory.
+
+# find_overdue_tasks 技术方案
+
+## 1. 需求理解
+
+在 `taskboard` 包中新增逾期任务查询 API `find_overdue_tasks(tasks, *, today)`，行为约束如下：
+
+- `today` 只接受 `datetime.date`（或 `datetime.datetime`，取其 `date()`）或 ISO 日期字符串；无法解析时抛 `ValueError`。
+- 返回 `due_date` 早于 `today` 的任务，即严格的 `due < today`。
+- 今天到期（`due == today`）不算逾期。
+- 排除已完成/取消状态：`done`、`completed`、`cancelled`（大小写不敏感，建议同时兼容 `canceled` 拼写，见风险点 6.3）。
+- `due_date` 缺失、为 `None`、类型不支持或字符串无法解析时跳过该任务，而不是抛异常。
+- 结果是 `list[Task]`，保持原输入顺序（等价于稳定过滤），且不修改输入（不排序、不写回、复用原对象引用）。
+- 通过 `taskboard` 包顶层导出，使 `from taskboard import find_overdue_tasks` 可用。
+- 只允许修改 `taskboard/tasks.py`、`taskboard/__init__.py`、`tests/test_find_overdue_tasks.py`。
+
+## 2. 涉及的模块和需要阅读的文件
+
+| 文件 | 作用 | 当前状态 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | 三个 API 实现所在地，含 `Task = dict[str, Any]` 类型别名，`from __future__ import annotations` 已在用 | 需新增函数 |
+| `taskboard/__init__.py` | 包顶层再导出 + `__all__` | 需增加导入与 `__all__` 项 |
+| `tests/test_find_overdue_tasks.py` | 目标测试，已存在 2 个用例且**在基线必然失败**（尚未实现） | 需扩展 |
+| `tests/test_baseline.py` | 回归基线，只覆盖 `filter_by_status`/`search_tasks`/`sort_by_priority` | 不改，用作回归 |
+| `pyproject.toml` | `requires-python = ">=3.11"`，pytest `testpaths = ["tests"]`，`addopts = "-ra"` | 不改 |
+
+仓库结构事实（来自 `git status --short --branch`：`## main`，工作区干净）：
+
+- 固定导入约定：测试用 `from taskboard.tasks import X`（`test_baseline.py`、`test_filter_by_status.py`、`test_search_tasks.py`、`test_sort_by_priority.py`）或 `from taskboard import find_overdue_tasks`（当前目标测试文件）。
+- 现有实现风格：`Iterable[Task]` 入参 → 内部 `list(tasks)` 物化 → 列表推导过滤 → 返回新 `list`；模块顶部有 `from __future__ import annotations`，未引入 `datetime`。
+- `hybrid_code_search` 检索结果确认：`find_overdue_tasks` 目前只出现在 `tests/test_find_overdue_tasks.py`，`taskboard/tasks.py` 与 `taskboard/__init__.py` 中都没有定义或导出，属于纯新增能力。
+
+## 3. 数据结构、接口变化
+
+**接口签名**（`taskboard/tasks.py`）
+
+- 新增 `find_overdue_tasks(tasks: Iterable[Task], *, today: date | str | None) -> list[Task]`，`today` 为 keyword-only。
+- `Task` 复用现有 `dict[str, Any]` 类型别名，不新增数据类、不新增字段、不改变现有字段语义。
+- 新增两个模块内私有辅助（不导出）：一个负责日期规范化（`today` 解析），一个负责单个任务 `due_date` 的宽松解析。返回值 `list[Task]`，元素仍是输入中的原始 dict 对象（浅层引用，不做 copy），保证调用方 `task is result[i]` 为真。
+
+**解析与判定规则**
+
+| 场景 | 处理 |
+| --- | --- |
+| `today` 是 `datetime.date` | 直接使用（`datetime` 子类先取 `.date()`） |
+| `today` 是 `str` | 先 `str.strip()`，再用 `date.fromisoformat`；`Y-m-d` 正常解析，空白串或非法串 → `ValueError` |
+| `today` 是 `None` / `int` / `object` 等其它类型 | `TypeError` → 转换为 `ValueError` 抛出 |
+| 任务缺 `due_date` 键 / 值为 `None` | 跳过 |
+| `due_date` 是 `date` | 直接比较，`due < today` 才算逾期 |
+| `due_date` 是 `str` | `date.fromisoformat`（先 `strip`）；解析失败或非字符串类型 → 跳过 |
+| 任务 `status` 缺失 | 视为未完成，参与逾期判定 |
+| `status` 为 `DONE`/`Done`/`COMPLETED`/`Cancelled` | `strip().lower()` 后属于 `{done, completed, cancelled}` → 排除 |
+
+**包顶层导出**（`taskboard/__init__.py`）
+
+- `from taskboard.tasks import filter_by_status, find_overdue_tasks, search_tasks, sort_by_priority`
+- `__all__` 增加 `"find_overdue_tasks"`，保持其余三项不变。
+
+## 4. 具体实施步骤
+
+1. **`taskboard/tasks.py`**
+   - 顶部补 `from datetime import date, datetime`（或 `import datetime as _dt`，避免与字段名 `date` 混淆）。
+   - 增加模块级常量 `FINISHED_STATUSES = frozenset({"done", "completed", "cancelled"})`（如确认兼容 `canceled`，则集合加一项）。
+   - 新增私有函数 `_as_date(value) -> date | None`：`None`/`date`（含 `datetime` 取 `date()`）/可解析字符串返回 `date`，其它返回 `None`。
+   - 新增私有函数 `_coerce_today(today) -> date`：命中 `_as_date` 逻辑则返回；否则抛 `ValueError`，异常信息里带上原始值类型但不含敏感数据。
+   - 新增 `find_overdue_tasks`：`rows = list(tasks)` → 解析 `today`（一次性，放在物化之后或之前都可，建议循环前解析以便非法 `today` 立即失败）→ 单层列表推导同时完成 due 判定与 status 排除，天然保持顺序。核心判定逻辑（伪代码）：
+
+     ```python
+     rows = list(tasks)
+     cutoff = _coerce_today(today)
+     return [
+         task
+         for task in rows
+         if (due := _as_date(task.get("due_date"))) is not None
+         and due < cutoff
+         and str(task.get("status", "")).strip().lower() not in FINISHED_STATUSES
+     ]
+     ```
+   - 为函数补 docstring，风格与现有三函数一致（一行英文摘要），可选补类型注解与 `__all__`（模块级 `__all__` 目前不存在，建议不新增以免与包层 `__all__` 语义混淆，仅在包层维护）。
+
+2. **`taskboard/__init__.py`**：更新导入行与 `__all__`（见第 3 节），保持文件其余内容（模块 docstring）不变。
+
+3. **`tests/test_find_overdue_tasks.py`**：保留现有 2 个用例不动（它们分别覆盖“严格早于今天 + 排除大写 DONE + 保持顺序”和“跳过缺失/非法 due_date + ISO 字符串 today”），在其后追加新用例，覆盖：
+   - 今天到期不算逾期（`due == today` 被排除），以及 `due` 在明天/未来被排除。
+   - 三种终态各写一条：`done`、`completed`、`cancelled`，并包含大小写混合（如 `Completed`）与前后空白（如 `" cancelled "`）。
+   - 状态缺失的任务仍参与逾期判定。
+   - `today` 传 `date` 与传等值 ISO 字符串结果一致。
+   - `today` 非法（`"2024-13-45"`、`"not-a-date"`、`""`）使用 `pytest.raises(ValueError)`；非日期类型（如 `20240101` 整数或 `object()`）同样 `ValueError`。
+   - 输入不被修改：调用前做 `original = [dict(t) for t in tasks]`，调用后断言 `tasks == original`，并断言返回元素是原 dict 对象（如 `result[0] is tasks[2]`）。
+   - 无可匹配任务时返回 `[]`。
+   - 可选：`datetime(2025, 1, 2, 12, 0)` 与 `date(2025, 1, 2)` 行为一致。
+   - 需在文件顶部补 `datetime`（若加 datetime 用例）与 `pytest` 导入；风格对齐现有测试（无 fixture、直接断言、断言 `[task["id"] for task in ...]`）。
+
+4. **不改动**：`tests/test_baseline.py` 与其它测试文件、`pyproject.toml`、`README.md`、`cases/*`。
+
+## 5. 验证方案
+
+| 验证项 | 命令 | 期望 |
+| --- | --- | --- |
+| 目标测试 | `python -m pytest tests/test_find_overdue_tasks.py -q` | 全部通过（含新增用例） |
+| 回归基线 | `python -m pytest tests/test_baseline.py -q` | 全部通过，无破坏 |
+| 全量测试 | `python -m pytest -q` | `tests/` 下 5 个文件全部通过 |
+| 导入契约 | `python -c "from taskboard import find_overdue_tasks"`，以及 `from taskboard import __all__; assert "find_overdue_tasks" in __all__` | 无 `ImportError` |
+| 只读约束 | `git status --short` | 变更文件仅 `taskboard/tasks.py`、`taskboard/__init__.py`、`tests/test_find_overdue_tasks.py` |
+| 边界抽查 | `date(2025,1,2)`、`"2025-01-02"`、缺失与非法 `due_date`、`due == today`、三种终态 | 与第 3 节规则表逐条一致 |
+
+## 6. 风险点和需要用户确认的事项
+
+1. **`today` 解析的宽容度**：计划用 `str.strip()` + `date.fromisoformat`，因此 `"2025-01-02"` 正常，`" 2025-01-02 "` 也可解析，但 `"2025/01/02"`、`"20250102"`、`"2025-01-02T00:00:00"`（Python 3.11 的 `date.fromisoformat` 不接受时间部分）都会 `ValueError`。如需支持后两种格式，需要改为 `datetime.fromisoformat` 兜底方案。
+2. **终态集合是否包含 `canceled`**：需求只写了 `cancelled`。计划只列 `cancelled`；若希望美式拼写 `canceled` 同样豁免，需要明确加进集合。
+3. **status 是否去除空白/忽略大小写**：需求只说“status 不是 done/completed/cancelled”，未明确大小写。目标测试里只有大写 `DONE`，计划做 `strip().lower()` 归一化；若必须与 `status` 精确相等（不忽略大小写），需确认。
+4. **`today` 类型边界**：`datetime.datetime` 计划自动取 `.date()`；`None` 计划转为 `ValueError` 而不是 `TypeError`。若希望 `None` 或 `datetime` 有不同语义，需要确认。
+5. **`due_date` 为 `datetime` 对象**：计划按其日期部分判定；若应视为非法并跳过，需要确认。
+6. **是否补充 `taskboard/tasks.py` 模块级 `__all__`**：当前模块没有 `__all__`，计划只在包层维护，避免改变现有模块的隐式导出行为。
+7. **测试文件顶部导入**：`pyproject.toml` 未显式声明 pytest 依赖解析方式，但所有现有测试都依赖 pytest 可用；新增用例使用 `pytest.raises`，与仓库既有 pytest-only 约定一致。
+
+是否确认实施该方案？
+
+I'll start by planning this task and exploring the repository.
+
+Now let me run the hybrid code search and inspect the cases directory.
+
+# find_overdue_tasks 技术方案
+
+## 1. 需求理解
+
+在 `taskboard` 包中新增逾期任务查询 API `find_overdue_tasks(tasks, *, today)`，行为约束如下：
+
+- `today` 只接受 `datetime.date`（或 `datetime.datetime`，取其 `date()`）或 ISO 日期字符串；无法解析时抛 `ValueError`。
+- 返回 `due_date` 早于 `today` 的任务，即严格的 `due < today`。
+- 今天到期（`due == today`）不算逾期。
+- 排除已完成/取消状态：`done`、`completed`、`cancelled`（大小写不敏感，建议同时兼容 `canceled` 拼写，见风险点 6.3）。
+- `due_date` 缺失、为 `None`、类型不支持或字符串无法解析时跳过该任务，而不是抛异常。
+- 结果是 `list[Task]`，保持原输入顺序（等价于稳定过滤），且不修改输入（不排序、不写回、复用原对象引用）。
+- 通过 `taskboard` 包顶层导出，使 `from taskboard import find_overdue_tasks` 可用。
+- 只允许修改 `taskboard/tasks.py`、`taskboard/__init__.py`、`tests/test_find_overdue_tasks.py`。
+
+## 2. 涉及的模块和需要阅读的文件
+
+| 文件 | 作用 | 当前状态 |
+| --- | --- | --- |
+| `taskboard/tasks.py` | 三个 API 实现所在地，含 `Task = dict[str, Any]` 类型别名，`from __future__ import annotations` 已在用 | 需新增函数 |
+| `taskboard/__init__.py` | 包顶层再导出 + `__all__` | 需增加导入与 `__all__` 项 |
+| `tests/test_find_overdue_tasks.py` | 目标测试，已存在 2 个用例且**在基线必然失败**（尚未实现） | 需扩展 |
+| `tests/test_baseline.py` | 回归基线，只覆盖 `filter_by_status`/`search_tasks`/`sort_by_priority` | 不改，用作回归 |
+| `pyproject.toml` | `requires-python = ">=3.11"`，pytest `testpaths = ["tests"]`，`addopts = "-ra"` | 不改 |
+
+仓库结构事实（来自 `git status --short --branch`：`## main`，工作区干净）：
+
+- 固定导入约定：测试用 `from taskboard.tasks import X`（`test_baseline.py`、`test_filter_by_status.py`、`test_search_tasks.py`、`test_sort_by_priority.py`）或 `from taskboard import find_overdue_tasks`（当前目标测试文件）。
+- 现有实现风格：`Iterable[Task]` 入参 → 内部 `list(tasks)` 物化 → 列表推导过滤 → 返回新 `list`；模块顶部有 `from __future__ import annotations`，未引入 `datetime`。
+- `hybrid_code_search` 检索结果确认：`find_overdue_tasks` 目前只出现在 `tests/test_find_overdue_tasks.py`，`taskboard/tasks.py` 与 `taskboard/__init__.py` 中都没有定义或导出，属于纯新增能力。
+
+## 3. 数据结构、接口变化
+
+**接口签名**（`taskboard/tasks.py`）
+
+- 新增 `find_overdue_tasks(tasks: Iterable[Task], *, today: date | str | None) -> list[Task]`，`today` 为 keyword-only。
+- `Task` 复用现有 `dict[str, Any]` 类型别名，不新增数据类、不新增字段、不改变现有字段语义。
+- 新增两个模块内私有辅助（不导出）：一个负责日期规范化（`today` 解析），一个负责单个任务 `due_date` 的宽松解析。返回值 `list[Task]`，元素仍是输入中的原始 dict 对象（浅层引用，不做 copy），保证调用方 `task is result[i]` 为真。
+
+**解析与判定规则**
+
+| 场景 | 处理 |
+| --- | --- |
+| `today` 是 `datetime.date` | 直接使用（`datetime` 子类先取 `.date()`） |
+| `today` 是 `str` | 先 `str.strip()`，再用 `date.fromisoformat`；`Y-m-d` 正常解析，空白串或非法串 → `ValueError` |
+| `today` 是 `None` / `int` / `object` 等其它类型 | `TypeError` → 转换为 `ValueError` 抛出 |
+| 任务缺 `due_date` 键 / 值为 `None` | 跳过 |
+| `due_date` 是 `date` | 直接比较，`due < today` 才算逾期 |
+| `due_date` 是 `str` | `date.fromisoformat`（先 `strip`）；解析失败或非字符串类型 → 跳过 |
+| 任务 `status` 缺失 | 视为未完成，参与逾期判定 |
+| `status` 为 `DONE`/`Done`/`COMPLETED`/`Cancelled` | `strip().lower()` 后属于 `{done, completed, cancelled}` → 排除 |
+
+**包顶层导出**（`taskboard/__init__.py`）
+
+- `from taskboard.tasks import filter_by_status, find_overdue_tasks, search_tasks, sort_by_priority`
+- `__all__` 增加 `"find_overdue_tasks"`，保持其余三项不变。
+
+## 4. 具体实施步骤
+
+1. **`taskboard/tasks.py`**
+   - 顶部补 `from datetime import date, datetime`（或 `import datetime as _dt`，避免与字段名 `date` 混淆）。
+   - 增加模块级常量 `FINISHED_STATUSES = frozenset({"done", "completed", "cancelled"})`（如确认兼容 `canceled`，则集合加一项）。
+   - 新增私有函数 `_as_date(value) -> date | None`：`None`/`date`（含 `datetime` 取 `date()`）/可解析字符串返回 `date`，其它返回 `None`。
+   - 新增私有函数 `_coerce_today(today) -> date`：命中 `_as_date` 逻辑则返回；否则抛 `ValueError`，异常信息里带上原始值类型但不含敏感数据。
+   - 新增 `find_overdue_tasks`：`rows = list(tasks)` → 解析 `today`（一次性，放在物化之后或之前都可，建议循环前解析以便非法 `today` 立即失败）→ 单层列表推导同时完成 due 判定与 status 排除，天然保持顺序。核心判定逻辑（伪代码）：
+
+     ```python
+     rows = list(tasks)
+     cutoff = _coerce_today(today)
+     return [
+         task
+         for task in rows
+         if (due := _as_date(task.get("due_date"))) is not None
+         and due < cutoff
+         and str(task.get("status", "")).strip().lower() not in FINISHED_STATUSES
+     ]
+     ```
+   - 为函数补 docstring，风格与现有三函数一致（一行英文摘要），可选补类型注解与 `__all__`（模块级 `__all__` 目前不存在，建议不新增以免与包层 `__all__` 语义混淆，仅在包层维护）。
+
+2. **`taskboard/__init__.py`**：更新导入行与 `__all__`（见第 3 节），保持文件其余内容（模块 docstring）不变。
+
+3. **`tests/test_find_overdue_tasks.py`**：保留现有 2 个用例不动（它们分别覆盖“严格早于今天 + 排除大写 DONE + 保持顺序”和“跳过缺失/非法 due_date + ISO 字符串 today”），在其后追加新用例，覆盖：
+   - 今天到期不算逾期（`due == today` 被排除），以及 `due` 在明天/未来被排除。
+   - 三种终态各写一条：`done`、`completed`、`cancelled`，并包含大小写混合（如 `Completed`）与前后空白（如 `" cancelled "`）。
+   - 状态缺失的任务仍参与逾期判定。
+   - `today` 传 `date` 与传等值 ISO 字符串结果一致。
+   - `today` 非法（`"2024-13-45"`、`"not-a-date"`、`""`）使用 `pytest.raises(ValueError)`；非日期类型（如 `20240101` 整数或 `object()`）同样 `ValueError`。
+   - 输入不被修改：调用前做 `original = [dict(t) for t in tasks]`，调用后断言 `tasks == original`，并断言返回元素是原 dict 对象（如 `result[0] is tasks[2]`）。
+   - 无可匹配任务时返回 `[]`。
+   - 可选：`datetime(2025, 1, 2, 12, 0)` 与 `date(2025, 1, 2)` 行为一致。
+   - 需在文件顶部补 `datetime`（若加 datetime 用例）与 `pytest` 导入；风格对齐现有测试（无 fixture、直接断言、断言 `[task["id"] for task in ...]`）。
+
+4. **不改动**：`tests/test_baseline.py` 与其它测试文件、`pyproject.toml`、`README.md`、`cases/*`。
+
+## 5. 验证方案
+
+| 验证项 | 命令 | 期望 |
+| --- | --- | --- |
+| 目标测试 | `python -m pytest tests/test_find_overdue_tasks.py -q` | 全部通过（含新增用例） |
+| 回归基线 | `python -m pytest tests/test_baseline.py -q` | 全部通过，无破坏 |
+| 全量测试 | `python -m pytest -q` | `tests/` 下 5 个文件全部通过 |
+| 导入契约 | `python -c "from taskboard import find_overdue_tasks"`，以及 `from taskboard import __all__; assert "find_overdue_tasks" in __all__` | 无 `ImportError` |
+| 只读约束 | `git status --short` | 变更文件仅 `taskboard/tasks.py`、`taskboard/__init__.py`、`tests/test_find_overdue_tasks.py` |
+| 边界抽查 | `date(2025,1,2)`、`"2025-01-02"`、缺失与非法 `due_date`、`due == today`、三种终态 | 与第 3 节规则表逐条一致 |
+
+## 6. 风险点和需要用户确认的事项
+
+1. **`today` 解析的宽容度**：计划用 `str.strip()` + `date.fromisoformat`，因此 `"2025-01-02"` 正常，`" 2025-01-02 "` 也可解析，但 `"2025/01/02"`、`"20250102"`、`"2025-01-02T00:00:00"`（Python 3.11 的 `date.fromisoformat` 不接受时间部分）都会 `ValueError`。如需支持后两种格式，需要改为 `datetime.fromisoformat` 兜底方案。
+2. **终态集合是否包含 `canceled`**：需求只写了 `cancelled`。计划只列 `cancelled`；若希望美式拼写 `canceled` 同样豁免，需要明确加进集合。
+3. **status 是否去除空白/忽略大小写**：需求只说“status 不是 done/completed/cancelled”，未明确大小写。目标测试里只有大写 `DONE`，计划做 `strip().lower()` 归一化；若必须与 `status` 精确相等（不忽略大小写），需确认。
+4. **`today` 类型边界**：`datetime.datetime` 计划自动取 `.date()`；`None` 计划转为 `ValueError` 而不是 `TypeError`。若希望 `None` 或 `datetime` 有不同语义，需要确认。
+5. **`due_date` 为 `datetime` 对象**：计划按其日期部分判定；若应视为非法并跳过，需要确认。
+6. **是否补充 `taskboard/tasks.py` 模块级 `__all__`**：当前模块没有 `__all__`，计划只在包层维护，避免改变现有模块的隐式导出行为。
+7. **测试文件顶部导入**：`pyproject.toml` 未显式声明 pytest 依赖解析方式，但所有现有测试都依赖 pytest 可用；新增用例使用 `pytest.raises`，与仓库既有 pytest-only 约定一致。
+
+是否确认实施该方案？
+
+Confirmed. Now implementing the function.
+
+Now let's run the tests.
+
+## 实施结果
+
+### 改动内容
+
+**1. `taskboard/tasks.py`（新增能力）**
+- 顶部新增 `from datetime import date, datetime`，并添加模块级常量 `FINISHED_STATUSES = frozenset({"done", "completed", "cancelled"})`。
+- 新增私有辅助 `_as_date(value)`：接受 `datetime`（取 `.date()`）、`date`、可解析的 ISO 字符串；其它类型或解析失败返回 `None`。
+- 新增私有辅助 `_coerce_today(today)`：解析 `date`/`datetime`/ISO 字符串；字符串非法或类型不支持统一抛 `ValueError`（`date.fromisoformat` 的 `ValueError` 用 `raise ... from error` 保留原因）。
+- 新增 `find_overdue_tasks(tasks: Iterable[Task], *, today: date | str) -> list[Task]`：先 `list(tasks)` 物化，循环前一次性解析 `today`（非法值立刻失败），单层列表推导完成判定——`due_date` 可解析、严格 `due < today`、`status` 归一化（`strip().lower()`）后不在 `FINISHED_STATUSES` 中；因此天然保持输入顺序、返回原 dict 引用、不修改输入。
+
+**2. `taskboard/__init__.py`（导出）**
+- 导入行改为多行形式并加入 `find_overdue_tasks`；`__all__` 变为 `["filter_by_status", "find_overdue_tasks", "search_tasks", "sort_by_priority"]`，使 `from taskboard import find_overdue_tasks` 可用。
+
+**3. `tests/test_find_overdue_tasks.py`（扩展）**
+- 保留原有 2 个用例不变，新增 13 个用例（含参数化展开），覆盖：今天到期/未来到期不算逾期；`done`/`Done`/`completed`/`Completed`/`cancelled`/`"  Cancelled  "` 全部排除；status 缺失/`None`/空串仍参与判定；`today` 传 `date` 与等值 ISO 字符串结果一致；`datetime` 取日期部分；`today` 为 `"2024-13-45"`、`"not-a-date"`、`""`、`"2024/01/02"`、`20240101`、`None` 时 `pytest.raises(ValueError)`；返回元素是原 dict 对象（`is` 断言）且输入未被修改；无可匹配时返回 `[]`。
+
+### 真实运行的验证结果
+- `python -m pytest tests/test_find_overdue_tasks.py -q` → **15 passed**
+- `python -m pytest tests/test_baseline.py -q`（回归基线）→ **3 passed**
+- 导入契约：`python -c "from taskboard import find_overdue_tasks, __all__; import taskboard; print(taskboard.__all__)"` → `['filter_by_status', 'find_overdue_tasks', 'search_tasks', 'sort_by_priority']`，逾期判定抽样输出 `[{'due_date': '2024-01-01', 'status': 'open'}]`（`done` 任务被正确排除）
+- `git status --short` → 仅 `taskboard/__init__.py`、`taskboard/tasks.py`、`tests/test_find_overdue_tasks.py` 三个文件变更，范围符合约束
+
+### 需要说明的既有失败（非本次引入）
+`python -m pytest -q` 全量为 **4 failed, 19 passed**。失败的 4 个用例均在本次未修改的文件里，且断言的是基线提交上尚未实现的行为：`tests/test_filter_by_status.py`、`tests/test_search_tasks.py`（大小写不敏感匹配）、`tests/test_sort_by_priority.py`（`urgent`/`backlog` 别名）。该仓库是评测靶场，这些是各评测用例的“目标测试”，在基线必然失败，不属于 `find_overdue_tasks` 范围的修改内容，因此按方案未改动。相关回归判定以 `tests/test_baseline.py` 为准，已通过。
+
+未执行提交、push、PR 或 Issue 操作；同时已把仓库技术栈、测试命令、既有失败背景与本次结论写入仓库记忆文件。
+{"status": "completed", "model_provider": "DeepSeek", "model_name": "deepseek-flash", "usage": {"input_tokens": 792902, "output_tokens": 11668, "total_tokens": 804570}}
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return self._pregel_stream_v3(
+[LOCAL_PATH] LangChainBetaWarning: The v3 streaming protocol on Pregel is experimental.
+  return GraphRunStream(graph_iter, mux)

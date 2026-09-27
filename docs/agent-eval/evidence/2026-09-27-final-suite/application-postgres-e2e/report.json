@@ -1,0 +1,186 @@
+{
+  "cases": [
+    {
+      "agent_exit_code": 0,
+      "agent_latency_ms": 64397,
+      "artifacts": {},
+      "case_id": "taskboard-search-postgres-api-e2e",
+      "changed_files": [
+        "taskboard/tasks.py",
+        "tests/test_search_tasks.py"
+      ],
+      "errors": [],
+      "input_tokens": 372556,
+      "metadata": {
+        "model_provider": "DeepSeek",
+        "model_name": "deepseek-flash",
+        "model_usage": {
+          "input_tokens": 372556,
+          "output_tokens": 6744,
+          "total_tokens": 379300
+        },
+        "retrieval_call_count": 4,
+        "tool_usage": {
+          "call_count": 34,
+          "calls_by_tool": {
+            "edit_file": 1,
+            "execute": 10,
+            "hybrid_code_search": 2,
+            "ls": 2,
+            "read_file": 12,
+            "write_file": 1,
+            "write_todos": 6
+          },
+          "failure_count": 0,
+          "result_count": 34,
+          "success_count": 34
+        },
+        "test_behavior": {
+          "required_test_files": [
+            "tests/test_search_tasks.py"
+          ],
+          "required_test_files_modified": true
+        },
+        "target_repo_sha": "d19ddda0ac269adf1e68d7d2840968527b313bc4",
+        "expected_status": "completed",
+        "model_call_limit": "32",
+        "tool_call_limit": "80",
+        "codegraph_index": {
+          "available": true,
+          "exit_code": 0,
+          "latency_ms": 822,
+          "output_tail": "T  Initializing CodeGraph\n|\n*  Initialized in [LOCAL_PATH]\n|\nScanning files...\nParsing code...\nResolving refs...\nLinking dynamic dispatch...\n|\n*  Indexed 6 files\n|\n•  27 nodes, 50 edges in 377ms\n|\n—  Done\n\n",
+          "succeeded": true
+        },
+        "agent_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+        "selected_adapter_sha256": "bab87fe6011dc225c93a92d41616badbc5178686028b2deb96eb173d6caae18f",
+        "agent_runtime_snapshot_sha256": "04748ed76036552fdae56e8ed5757752110904e6c2538adfd30421aaad42c5d0",
+        "plan_rejection_ok": true,
+        "plan_rubric": [
+          {
+            "accepted_terms": [
+              "需求理解",
+              "需求拆解",
+              "目标"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "涉及文件",
+              "相关文件",
+              "改动文件",
+              "taskboard/tasks.py",
+              "tests/"
+            ],
+            "passed": true
+          },
+          {
+            "accepted_terms": [
+              "验证方案",
+              "测试方案",
+              "pytest",
+              "测试命令"
+            ],
+            "passed": true
+          }
+        ],
+        "sandbox_e2e_passed": true,
+        "sandbox": {
+          "uploaded_file_count": 16,
+          "cleanup_succeeded": true,
+          "host_patch_exported": true,
+          "uploaded_bytes": 6948,
+          "target_workspace": "OpenSandbox:/",
+          "patch_bytes": 3649
+        },
+        "api_e2e": {
+          "health_passed": true,
+          "thread_created": true,
+          "sse_received": true,
+          "approval_posted": true,
+          "rejection_posted": false,
+          "workspace_clean_after_rejection": null,
+          "final_plan_status": "approved",
+          "sqlite_isolated": false,
+          "persistence_backend": "postgres",
+          "persistence_isolated": true,
+          "final_status": "finished",
+          "initial_event_count": 506,
+          "approval_event_count": 274,
+          "postgres_e2e": {
+            "identity_verified": true,
+            "records_persisted": true,
+            "reconnect_verified": true,
+            "backend_restarted": true,
+            "record_counts": {
+              "run_events": 26,
+              "runs": 2,
+              "thread_messages": 4,
+              "thread_plans": 1,
+              "threads": 1
+            },
+            "checkpoint_count": 105,
+            "record_counts_after_restart": {
+              "run_events": 26,
+              "runs": 2,
+              "thread_messages": 4,
+              "thread_plans": 1,
+              "threads": 1
+            },
+            "api_thread_restored": true,
+            "api_message_count_after_restart": 6,
+            "status_after_restart": "finished"
+          }
+        }
+      },
+      "oracle_tests_passed": true,
+      "output_tokens": 6744,
+      "patch": "diff --git a/taskboard/tasks.py b/taskboard/tasks.py\nindex 24f522b..edbedbe 100644\n--- a/taskboard/tasks.py\n+++ b/taskboard/tasks.py\n@@ -16,13 +16,26 @@ def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[T\n     return [task for task in rows if task.get(\"status\") == status]\n \n \n+def _normalize_title(value: Any) -> str:\n+    \"\"\"Normalize a title or query for case-insensitive comparison.\n+\n+    Missing and empty titles normalize to an empty string so they never match a\n+    non-empty query.\n+    \"\"\"\n+\n+    if value is None:\n+        return \"\"\n+    return str(value).strip().lower()\n+\n+\n def search_tasks(tasks: Iterable[Task], query: str) -> list[Task]:\n     \"\"\"Find tasks whose title contains query, preserving input order.\"\"\"\n \n     rows = list(tasks)\n-    if not query:\n+    needle = _normalize_title(query)\n+    if not needle:\n         return rows\n-    return [task for task in rows if query in str(task.get(\"title\", \"\"))]\n+    return [task for task in rows if needle in _normalize_title(task.get(\"title\"))]\n \n \n def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:\ndiff --git a/tests/test_search_tasks.py b/tests/test_search_tasks.py\nindex 4110daf..572956c 100644\n--- a/tests/test_search_tasks.py\n+++ b/tests/test_search_tasks.py\n@@ -10,5 +10,47 @@ def test_search_is_case_insensitive_and_preserves_order():\n     assert [task[\"id\"] for task in search_tasks(tasks, \"api\")] == [1, 2]\n \n \n+def test_search_matches_any_query_casing_with_stable_order():\n+    tasks = [\n+        {\"id\": 1, \"title\": \"Fix API timeout\"},\n+        {\"id\": 2, \"title\": \"Write api docs\"},\n+        {\"id\": 3, \"title\": \"Clean UI\"},\n+    ]\n+    for query in (\"api\", \"API\", \"Api\"):\n+        assert [task[\"id\"] for task in search_tasks(tasks, query)] == [1, 2]\n+\n+\n def test_search_ignores_tasks_without_a_title():\n     assert search_tasks([{\"id\": 1}, {\"id\": 2, \"title\": \"API\"}], \"api\") == [{\"id\": 2, \"title\": \"API\"}]\n+\n+\n+def test_search_ignores_missing_none_and_blank_titles():\n+    tasks = [\n+        {\"id\": 1},\n+        {\"id\": 2, \"title\": None},\n+        {\"id\": 3, \"title\": \"\"},\n+        {\"id\": 4, \"title\": \"   \"},\n+        {\"id\": 5, \"title\": \"Fix API timeout\"},\n+    ]\n+    assert [task[\"id\"] for task in search_tasks(tasks, \"api\")] == [5]\n+    # \"none\" must not match a task whose title is missing or None.\n+    assert search_tasks(tasks, \"none\") == []\n+\n+\n+def test_search_returns_empty_list_when_nothing_matches():\n+    tasks = [\n+        {\"id\": 1, \"title\": \"Fix API timeout\"},\n+        {\"id\": 2, \"title\": \"Write API docs\"},\n+    ]\n+    original = list(tasks)\n+    assert search_tasks(tasks, \"zzz\") == []\n+    assert search_tasks(tasks, \"release\") == []\n+    assert tasks == original\n+\n+\n+def test_empty_query_returns_all_tasks():\n+    tasks = [\n+        {\"id\": 1, \"title\": \"Fix API timeout\"},\n+        {\"id\": 2, \"title\": \"Write API docs\"},\n+    ]\n+    assert search_tasks(tasks, \"\") == tasks\n",
+      "patch_apply": true,
+      "regression_test_latency_ms": 857,
+      "regression_tests_passed": true,
+      "retrieval_hit_at_k": 1.0,
+      "status": "passed",
+      "target_test_latency_ms": 904,
+      "target_tests_passed": true,
+      "tool_recovery_rate": null,
+      "total_tokens": 379300
+    }
+  ],
+  "config": {
+    "agent_source_sha": "9b07905ce3a07289d58b9ab0c9a56e2f93656042",
+    "agent_source_dirty_patch_sha256": null,
+    "agent_adapter_sha256": "bdd5a333daf4f6c5a40a90ba2475f1e0e0431f844ded9606fd67ea548ee66693",
+    "agent_runtime_snapshot_sha256": "04748ed76036552fdae56e8ed5757752110904e6c2538adfd30421aaad42c5d0",
+    "agent_runtime_overlay_files": {},
+    "framework_source_sha": "9b07905ce3a07289d58b9ab0c9a56e2f93656042",
+    "framework_source_dirty_patch_sha256": null,
+    "case_manifest_sha256": "2d88e0747b07cec538b4746aff49c7663a83ae4dea35bd4309cfd19eedce7bc6",
+    "runner_version": "4"
+  },
+  "created_at": "2026-09-27T05:59:22.659695+00:00",
+  "mode": "real",
+  "report_id": "2d88e0747b07cec5",
+  "repository": "test-coding-eval",
+  "summary": {
+    "case_count": 1,
+    "failed_count": 0,
+    "oracle_test_case_count": 1,
+    "oracle_test_pass_rate": 1.0,
+    "oracle_test_passed_case_count": 1,
+    "passed_count": 1,
+    "patch_apply_rate": 1.0,
+    "regression_test_case_count": 1,
+    "regression_test_pass_rate": 1.0,
+    "regression_test_passed_case_count": 1,
+    "retrieval_hit_at_k": 1.0,
+    "target_test_case_count": 1,
+    "target_test_pass_rate": 1.0,
+    "target_test_passed_case_count": 1,
+    "token_usage_case_count": 1,
+    "tool_recovery_rate": null,
+    "total_latency_ms": 64397,
+    "total_tokens": 379300
+  }
+}

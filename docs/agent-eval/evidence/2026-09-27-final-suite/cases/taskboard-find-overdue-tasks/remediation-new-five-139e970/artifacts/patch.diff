@@ -1,0 +1,170 @@
+diff --git a/taskboard/__init__.py b/taskboard/__init__.py
+index fb699df..3cd4ae5 100644
+--- a/taskboard/__init__.py
++++ b/taskboard/__init__.py
+@@ -1,5 +1,10 @@
+ """Small target project used by the CODING Agent evaluation suite."""
+ 
+-from taskboard.tasks import filter_by_status, search_tasks, sort_by_priority
++from taskboard.tasks import (
++    filter_by_status,
++    find_overdue_tasks,
++    search_tasks,
++    sort_by_priority,
++)
+ 
+-__all__ = ["filter_by_status", "search_tasks", "sort_by_priority"]
++__all__ = ["filter_by_status", "find_overdue_tasks", "search_tasks", "sort_by_priority"]
+diff --git a/taskboard/tasks.py b/taskboard/tasks.py
+index 24f522b..ee1fd29 100644
+--- a/taskboard/tasks.py
++++ b/taskboard/tasks.py
+@@ -1,11 +1,14 @@
+ from __future__ import annotations
+ 
+ from collections.abc import Iterable
++from datetime import date, datetime
+ from typing import Any
+ 
+ 
+ Task = dict[str, Any]
+ 
++FINISHED_STATUSES = frozenset({"done", "completed", "cancelled"})
++
+ 
+ def filter_by_status(tasks: Iterable[Task], status: str | None = None) -> list[Task]:
+     """Return tasks matching status; no filter returns every task."""
+@@ -30,3 +33,47 @@ def sort_by_priority(tasks: Iterable[Task]) -> list[Task]:
+ 
+     order = {"high": 0, "medium": 1, "low": 2}
+     return sorted(tasks, key=lambda task: order.get(str(task.get("priority", "")).lower(), 99))
++
++
++def _as_date(value: Any) -> date | None:
++    """Coerce a date, datetime or ISO date string into a date; None when unsupported."""
++
++    if isinstance(value, datetime):
++        return value.date()
++    if isinstance(value, date):
++        return value
++    if isinstance(value, str):
++        try:
++            return date.fromisoformat(value.strip())
++        except ValueError:
++            return None
++    return None
++
++
++def _coerce_today(today: Any) -> date:
++    """Return today as a date, raising ValueError when it cannot be parsed."""
++
++    if isinstance(today, datetime):
++        return today.date()
++    if isinstance(today, date):
++        return today
++    if isinstance(today, str):
++        try:
++            return date.fromisoformat(today.strip())
++        except ValueError as error:
++            raise ValueError(f"today is not a valid ISO date: {today!r}") from error
++    raise ValueError(f"today must be a date or ISO date string: {type(today).__name__}")
++
++
++def find_overdue_tasks(tasks: Iterable[Task], *, today: date | str) -> list[Task]:
++    """Return unfinished tasks whose due_date is strictly before today, in input order."""
++
++    rows = list(tasks)
++    cutoff = _coerce_today(today)
++    return [
++        task
++        for task in rows
++        if (due := _as_date(task.get("due_date"))) is not None
++        and due < cutoff
++        and str(task.get("status", "")).strip().lower() not in FINISHED_STATUSES
++    ]
+diff --git a/tests/test_find_overdue_tasks.py b/tests/test_find_overdue_tasks.py
+index a532c9d..e37e59c 100644
+--- a/tests/test_find_overdue_tasks.py
++++ b/tests/test_find_overdue_tasks.py
+@@ -1,4 +1,6 @@
+-from datetime import date
++from datetime import date, datetime
++
++import pytest
+ 
+ from taskboard import find_overdue_tasks
+ 
+@@ -16,3 +18,73 @@ def test_returns_only_unfinished_tasks_strictly_before_today_in_input_order():
+ def test_ignores_missing_or_invalid_due_dates_and_accepts_iso_today():
+     tasks = [{"id": 1}, {"id": 2, "due_date": "not-a-date"}, {"id": 3, "due_date": "2024-01-01"}]
+     assert [task["id"] for task in find_overdue_tasks(tasks, today="2024-02-01")] == [3]
++
++
++def test_due_today_or_in_the_future_is_not_overdue():
++    tasks = [
++        {"id": 1, "due_date": "2025-01-01", "status": "open"},
++        {"id": 2, "due_date": "2025-01-02", "status": "open"},
++        {"id": 3, "due_date": "2025-01-03", "status": "open"},
++    ]
++    assert [task["id"] for task in find_overdue_tasks(tasks, today=date(2025, 1, 2))] == [1]
++
++
++def test_finished_statuses_are_excluded_regardless_of_case_and_padding():
++    tasks = [
++        {"id": 1, "due_date": "2024-01-01", "status": "open"},
++        {"id": 2, "due_date": "2024-01-01", "status": "done"},
++        {"id": 3, "due_date": "2024-01-01", "status": "Done"},
++        {"id": 4, "due_date": "2024-01-01", "status": "completed"},
++        {"id": 5, "due_date": "2024-01-01", "status": "Completed"},
++        {"id": 6, "due_date": "2024-01-01", "status": "cancelled"},
++        {"id": 7, "due_date": "2024-01-01", "status": "  Cancelled  "},
++    ]
++    assert [task["id"] for task in find_overdue_tasks(tasks, today=date(2024, 6, 1))] == [1]
++
++
++def test_tasks_without_status_still_count_as_unfinished():
++    tasks = [
++        {"id": 1, "due_date": "2024-01-01"},
++        {"id": 2, "due_date": "2024-01-01", "status": None},
++        {"id": 3, "due_date": "2024-01-01", "status": ""},
++    ]
++    assert [task["id"] for task in find_overdue_tasks(tasks, today=date(2024, 6, 1))] == [1, 2, 3]
++
++
++def test_today_accepts_date_and_equivalent_iso_string():
++    tasks = [{"id": 1, "due_date": "2024-12-31", "status": "open"}]
++    as_date = find_overdue_tasks(tasks, today=date(2025, 1, 1))
++    as_iso = find_overdue_tasks(tasks, today="2025-01-01")
++    assert as_date == as_iso == [tasks[0]]
++
++
++def test_datetime_today_uses_its_date_part():
++    tasks = [{"id": 1, "due_date": "2024-01-01", "status": "open"}]
++    assert find_overdue_tasks(tasks, today=datetime(2024, 6, 1, 12, 30)) == [tasks[0]]
++
++
++@pytest.mark.parametrize("today", ["2024-13-45", "not-a-date", "", "2024/01/02", 20240101, None])
++def test_unparsable_today_raises_value_error(today):
++    with pytest.raises(ValueError):
++        find_overdue_tasks([{"id": 1, "due_date": "2024-01-01"}], today=today)
++
++
++def test_result_keeps_original_objects_and_does_not_mutate_input():
++    tasks = [
++        {"id": 1, "due_date": "2024-01-01", "status": "open"},
++        {"id": 2, "due_date": "2024-01-01", "status": "done"},
++        {"id": 3, "due_date": "2023-05-05", "status": "open"},
++    ]
++    original = [dict(task) for task in tasks]
++
++    result = find_overdue_tasks(tasks, today="2024-06-01")
++
++    assert [task["id"] for task in result] == [1, 3]
++    assert result[0] is tasks[0]
++    assert result[1] is tasks[2]
++    assert tasks == original
++
++
++def test_returns_empty_list_when_nothing_is_overdue():
++    tasks = [{"id": 1, "due_date": "2025-01-01", "status": "open"}]
++    assert find_overdue_tasks(tasks, today=date(2024, 1, 1)) == []
