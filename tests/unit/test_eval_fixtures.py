@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,19 @@ def test_case_fixtures_are_hashed_and_materialized_inside_workspace(tmp_path: Pa
 
     assert hashes == {"tests/test_feature.py": hashlib.sha256(fixture.read_bytes()).hexdigest()}
     assert (workspace / "tests" / "test_feature.py").read_bytes() == fixture.read_bytes()
+
+
+def test_all_checked_in_real_cases_resolve_their_fixture_files() -> None:
+    case_root = Path(__file__).resolve().parents[2] / "agent" / "evals" / "cases" / "real"
+    case_files = sorted(case_root.rglob("*.json"))
+
+    assert case_files
+    for path in case_files:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        cases = payload if isinstance(payload, list) else [payload]
+        for value in cases:
+            case = EvalCase.from_dict(value)
+            EvalRunner._fixture_hashes(case)
 
 
 @pytest.mark.parametrize("fixture_path", ["../outside.py", "C:/outside.py", ""])
