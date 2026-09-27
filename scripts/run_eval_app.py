@@ -82,6 +82,26 @@ def _latest_plan(thread: dict[str, Any]) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def _eval_backend_for_thread(thread_id: str):
+    try:
+        from agent.server import _BACKENDS
+
+        return _BACKENDS.get(thread_id)
+    except Exception:
+        return None
+
+
+def _close_eval_sandbox(thread_id: str) -> dict[str, Any] | None:
+    backend = _eval_backend_for_thread(thread_id)
+    try:
+        from agent.sandbox.eval_backend import close_opensandbox_backends
+
+        evidence = close_opensandbox_backends([backend]) if backend is not None else []
+        return evidence[0] if evidence else None
+    except Exception:
+        return None
+
+
 def _postgres_thread_snapshot(dsn: str, thread_id: str) -> dict[str, Any]:
     """Verify the app wrote this run to the expected disposable PostgreSQL database."""
 
@@ -254,11 +274,15 @@ def _run_browser_task(source_root: Path, api_url: str, repo_url: str, prompt: st
                 pending.wait_for(state="visible")
                 plan_text = page.locator(".proposal-card-content").inner_text()
                 pending_plan_displayed = "待你确认" in pending.inner_text()
-                workspace_status = subprocess.run(
-                    ["git", "status", "--porcelain", "--untracked-files=all"], cwd=workspace_dir,
-                    capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
-                )
-                clean_before_approval = workspace_status.returncode == 0 and not workspace_status.stdout.strip()
+                backend = _eval_backend_for_thread(thread_id)
+                if callable(getattr(backend, "workspace_is_clean", None)):
+                    clean_before_approval = backend.workspace_is_clean()
+                else:
+                    workspace_status = subprocess.run(
+                        ["git", "status", "--porcelain", "--untracked-files=all"], cwd=workspace_dir,
+                        capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+                    )
+                    clean_before_approval = workspace_status.returncode == 0 and not workspace_status.stdout.strip()
                 with page.expect_response(
                     lambda response: response.request.method == "POST" and response.url.endswith("/stream-message"),
                     timeout=timeout * 1000,
@@ -401,16 +425,20 @@ def main() -> int:
                 plan_pending = bool(plan and plan.get("status") == "pending" and plan.get("plan_id"))
                 import subprocess
 
-                workspace_status = subprocess.run(
-                    ["git", "status", "--porcelain", "--untracked-files=all"],
-                    cwd=Path(os.environ["EVAL_CASE_REPO"]).resolve(),
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    check=False,
-                )
-                clean_before_approval = workspace_status.returncode == 0 and not workspace_status.stdout.strip()
+                backend = _eval_backend_for_thread(thread_id)
+                if callable(getattr(backend, "workspace_is_clean", None)):
+                    clean_before_approval = backend.workspace_is_clean()
+                else:
+                    workspace_status = subprocess.run(
+                        ["git", "status", "--porcelain", "--untracked-files=all"],
+                        cwd=Path(os.environ["EVAL_CASE_REPO"]).resolve(),
+                        capture_output=True,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        check=False,
+                    )
+                    clean_before_approval = workspace_status.returncode == 0 and not workspace_status.stdout.strip()
                 second_events = []
                 if plan_pending and plan_decision == "reject":
                     second_events = _submit_plan_decision(
@@ -426,6 +454,7 @@ def main() -> int:
             final_response.raise_for_status()
             final_payload = final_response.json()
             final_plan = _latest_plan(final_payload)
+            sandbox_evidence = _close_eval_sandbox(thread_id)
             import subprocess
 
             final_workspace_status = subprocess.run(
@@ -516,6 +545,7 @@ def main() -> int:
                 "workspace_clean_before_rejection": clean_before_approval if plan_decision == "reject" else None,
                 "workspace_clean_after_rejection": workspace_clean_after_decision if plan_decision == "reject" else None,
                 "plan_text": plan_text,
+                "sandbox": sandbox_evidence,
                 "runtime_status": final_payload.get("status"),
                 "final_plan_status": (final_plan or {}).get("status"),
                 "api_e2e": {
@@ -536,6 +566,7 @@ def main() -> int:
                     "final_status": final_payload.get("status"),
                     "final_plan_status": (final_plan or {}).get("status"),
                     "browser": browser_evidence,
+                    "sandbox": sandbox_evidence,
                 },
                 "output": _sanitize_text(_thread_text(final_payload)),
             }

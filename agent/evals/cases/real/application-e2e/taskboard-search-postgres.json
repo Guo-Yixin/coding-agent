@@ -18,6 +18,7 @@
     "repo_url": "https://github.com/Guo-Yixin/test-coding-eval.git",
     "purpose": "full FastAPI/SSE/Agent/plan approval/PostgreSQL persistence end-to-end task",
     "adapter": "app",
+    "agent_backend": "opensandbox",
     "persistence_backend": "postgres",
     "expected_task_kind": "coding",
     "agent_tools": ["hybrid_code_search"],

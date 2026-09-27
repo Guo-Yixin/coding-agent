@@ -8,6 +8,7 @@ import secrets
 import subprocess
 import sys
 import time
+import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
@@ -82,6 +83,11 @@ def main() -> int:
     parser.add_argument("--agent-ref", required=True)
     parser.add_argument("--image", default="postgres:18")
     parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument(
+        "--opensandbox-config",
+        type=Path,
+        help="Optional local OpenSandbox server TOML for cases declaring agent_backend=opensandbox",
+    )
     args = parser.parse_args()
 
     if not re.fullmatch(r"postgres:[0-9]+(?:-alpine)?", args.image):
@@ -101,6 +107,23 @@ def main() -> int:
     for case in cases:
         if case.metadata.get("adapter") != "app" or case.metadata.get("persistence_backend") != "postgres":
             raise SystemExit(f"Case {case.case_id} must declare adapter=app and persistence_backend=postgres")
+    needs_sandbox = any(case.metadata.get("agent_backend") == "opensandbox" for case in cases)
+    if needs_sandbox and not args.opensandbox_config:
+        raise SystemExit("PostgreSQL cases using OpenSandbox require --opensandbox-config")
+    if args.opensandbox_config:
+        sandbox_config = tomllib.loads(args.opensandbox_config.expanduser().resolve().read_text(encoding="utf-8"))
+        sandbox_server = sandbox_config.get("server", {})
+        sandbox_host = str(sandbox_server.get("host", "127.0.0.1")).strip().lower()
+        sandbox_port = int(sandbox_server.get("port", 8080))
+        sandbox_key = str(sandbox_server.get("api_key", "")).strip()
+        if sandbox_host not in {"127.0.0.1", "localhost", "::1"} or not 1 <= sandbox_port <= 65535:
+            raise SystemExit("PostgreSQL Eval requires a local-only OpenSandbox endpoint")
+        if needs_sandbox and not sandbox_key:
+            raise SystemExit("OpenSandbox API key is required for sandbox-backed PostgreSQL cases")
+        os.environ["OPEN_SANDBOX_DOMAIN"] = f"http://{sandbox_host}:{sandbox_port}"
+        if sandbox_key:
+            os.environ["OPEN_SANDBOX_API_KEY"] = sandbox_key
+        os.environ.setdefault("OPEN_SANDBOX_IMAGE", "coding-agent-eval/python:3.11-slim")
 
     output.mkdir(parents=True, exist_ok=True)
     suffix = uuid4().hex[:10]

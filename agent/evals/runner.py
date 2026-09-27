@@ -347,6 +347,20 @@ class EvalRunner:
         postgres_dsn = os.environ.get("CODING_AGENT_EVAL_POSTGRES_DSN", "").strip()
         if persistence_backend == "postgres" and not postgres_dsn:
             raise ValueError("PostgreSQL app Eval requires an ephemeral DSN from run_eval_postgres_app.py")
+        agent_backend = str(case.metadata.get("agent_backend", "local")).strip().lower()
+        if agent_backend not in {"local", "opensandbox"}:
+            raise ValueError(f"Unsupported real Agent backend for {case.case_id}: {agent_backend}")
+        if agent_backend == "opensandbox":
+            if os.environ.get("OPEN_SANDBOX_DOMAIN", "").strip() == "":
+                raise ValueError("OpenSandbox Eval requires OPEN_SANDBOX_DOMAIN")
+            for key in (
+                "OPEN_SANDBOX_DOMAIN", "OPEN_SANDBOX_API_KEY", "OPEN_SANDBOX_IMAGE",
+                "OPEN_SANDBOX_CPU", "OPEN_SANDBOX_MEMORY", "OPEN_SANDBOX_TIMEOUT_SECONDS",
+                "OPEN_SANDBOX_COMMAND_TIMEOUT_SECONDS", "OPEN_SANDBOX_MAX_UPLOAD_BYTES",
+                "OPEN_SANDBOX_USE_SERVER_PROXY",
+            ):
+                if os.environ.get(key):
+                    env[key] = os.environ[key]
         env.update({
             "CODING_AGENT_EVAL_MODE": "1",
             "EVAL_CASE_ID": case.case_id,
@@ -357,6 +371,7 @@ class EvalRunner:
             "EVAL_USAGE_FILE": str(usage_file),
             "EVAL_CASE_CONFIG": str(case_config),
             "EVAL_REPO_URL": repo_url,
+            "CODING_AGENT_EVAL_BACKEND": agent_backend,
             "EVAL_MODEL_CALL_LIMIT": str(min(max(int(case.metadata.get("model_call_limit", 24)), 1), 40)),
             "EVAL_TOOL_CALL_LIMIT": str(min(max(int(case.metadata.get("tool_call_limit", 24)), 1), 100)),
             "CODING_AGENT_EVAL_ALLOWED_TOOLS": ",".join(
@@ -521,6 +536,15 @@ class EvalRunner:
             )
         if adapter_kind == "app" and not app_e2e_ok:
             errors.append("App E2E evidence is incomplete: health, persisted thread, SSE, isolated storage, or required PostgreSQL reconnection check failed")
+        sandbox_evidence = runtime_result.get("sandbox")
+        if not isinstance(sandbox_evidence, dict):
+            sandbox_evidence = app_e2e.get("sandbox") if isinstance(app_e2e.get("sandbox"), dict) else {}
+        sandbox_e2e_ok = str(case.metadata.get("agent_backend", "local")) != "opensandbox" or all(
+            sandbox_evidence.get(key) is True
+            for key in ("host_patch_exported", "cleanup_succeeded")
+        )
+        if str(case.metadata.get("agent_backend", "local")) == "opensandbox" and not sandbox_e2e_ok:
+            errors.append("OpenSandbox E2E evidence is incomplete: candidate patch export or sandbox cleanup failed")
         case_pass = (
             agent_exit == 0
             and runtime_status == expected_status
@@ -539,6 +563,7 @@ class EvalRunner:
             and plan_rubric_ok
             and tool_recovery_ok
             and app_e2e_ok
+            and sandbox_e2e_ok
             and bool(retrieval_events)
             and metric["retrieval_hit_at_k"] == 1.0 if case.gold_files else
             agent_exit == 0 and runtime_status == expected_status and patch_apply
@@ -554,6 +579,7 @@ class EvalRunner:
             and plan_rubric_ok
             and tool_recovery_ok
             and app_e2e_ok
+            and sandbox_e2e_ok
         )
         if case.requires_patch and not case.target_tests:
             errors.append("Coding case requires at least one independent target test")
@@ -655,6 +681,8 @@ class EvalRunner:
                 "plan_rejection_ok": plan_rejection_ok,
                 "plan_rubric": plan_rubric_results,
                 "api_e2e": app_e2e or None,
+                "sandbox": sandbox_evidence or None,
+                "sandbox_e2e_passed": sandbox_e2e_ok,
                 "persistence_backend": persistence_backend,
                 "postgres_e2e": (app_e2e or {}).get("postgres_e2e") if persistence_backend == "postgres" else None,
                 "expected_status": expected_status,

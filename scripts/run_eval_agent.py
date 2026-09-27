@@ -499,6 +499,25 @@ def _blocks_eval_git_write(command: str) -> bool:
     return False
 
 
+def _eval_thread_backend(thread_id: str):
+    try:
+        from agent.server import _BACKENDS
+
+        return _BACKENDS.get(thread_id)
+    except Exception:
+        return None
+
+
+def _close_eval_sandboxes() -> list[dict[str, Any]]:
+    try:
+        from agent.server import _BACKENDS
+        from agent.sandbox.eval_backend import close_opensandbox_backends
+
+        return close_opensandbox_backends(list(_BACKENDS.values()))
+    except Exception:
+        return []
+
+
 def main() -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -557,16 +576,20 @@ def main() -> int:
             plan_pending_before_approval = pending_plan.get("status") == "pending"
             import subprocess
 
-            workspace_status = subprocess.run(
-                ["git", "status", "--porcelain", "--untracked-files=all"],
-                cwd=Path(os.environ["EVAL_CASE_REPO"]).resolve(),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                check=False,
-            )
-            workspace_clean_before_approval = workspace_status.returncode == 0 and not workspace_status.stdout.strip()
+            backend = _eval_thread_backend(thread_id)
+            if callable(getattr(backend, "workspace_is_clean", None)):
+                workspace_clean_before_approval = backend.workspace_is_clean()
+            else:
+                workspace_status = subprocess.run(
+                    ["git", "status", "--porcelain", "--untracked-files=all"],
+                    cwd=Path(os.environ["EVAL_CASE_REPO"]).resolve(),
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                )
+                workspace_clean_before_approval = workspace_status.returncode == 0 and not workspace_status.stdout.strip()
     if plan_id and config.get("metadata", {}).get("auto_approve_plan") is True:
         results.append(run_agent_task(
             repo_url=repo_url,
@@ -580,6 +603,7 @@ def main() -> int:
     result = results[-1]
     messages = [message for item in results for message in (item.get("messages", []) if isinstance(item, dict) else [])]
     _record_tool_messages(messages, record_eval_event)
+    sandbox_evidence = _close_eval_sandboxes()
     trace_path = Path(os.environ["EVAL_EVENT_FILE"]).expanduser().resolve()
     _finalize_tool_trace(trace_path)
     trace_events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines() if line.strip()] if trace_path.exists() else []
@@ -611,6 +635,7 @@ def main() -> int:
         "workspace_clean_before_approval": workspace_clean_before_approval,
         "plan_text": _sanitize_text(plan_text),
         "output": _sanitize_text(output_text),
+        "sandbox": sandbox_evidence[0] if sandbox_evidence else None,
     })
     print(_sanitize_text(output_text))
     print(json.dumps({"status": result.get("status"), "model_provider": "DeepSeek", "model_name": get_env("MAIN_MODEL", "configured-default"), "usage": usage}, ensure_ascii=False))
