@@ -12,6 +12,15 @@ def retrieval_hit_at_k(retrieval: list[dict[str, Any]], gold_files: list[str], k
     if not gold_files:
         return None
     expected = {_normal(path) for path in gold_files}
+    # Real Agent traces contain one ranked result list per retrieval query.
+    # Score each query independently; flattening the lists makes the first
+    # query consume the entire k budget and silently ignores later recovery.
+    grouped = [item.get("hits") for item in retrieval if isinstance(item.get("hits"), list)]
+    if grouped:
+        return 1.0 if any(
+            expected.intersection(_normal(str(hit.get("path", ""))) for hit in hits[:k])
+            for hits in grouped
+        ) else 0.0
     returned = {_normal(str(item.get("path", ""))) for item in retrieval[:k]}
     return 1.0 if expected.intersection(returned) else 0.0
 

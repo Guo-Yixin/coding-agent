@@ -4,8 +4,8 @@
   "repo_path": ".",
   "base_ref": "eb344e9e566f3c68176f0fc57d53686e47caedbf",
   "gold_files": [
-    "taskboard/tasks.py",
-    "taskboard/__init__.py"
+    "taskboard/__init__.py",
+    "taskboard/tasks.py"
   ],
   "gold_symbols": [],
   "target_tests": [

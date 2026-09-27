@@ -339,6 +339,14 @@ class EvalRunner:
         case_config = artifact_dir / "case-config.json"
         case_config.write_text(json.dumps(case_payload, ensure_ascii=False, indent=2), encoding="utf-8")
         env = self._safe_subprocess_env()
+        persistence_backend = str(case.metadata.get("persistence_backend", "sqlite")).strip().lower()
+        if persistence_backend not in {"sqlite", "postgres"}:
+            raise ValueError(f"Unsupported Eval persistence backend for {case.case_id}: {persistence_backend}")
+        if persistence_backend == "postgres" and adapter_kind != "app":
+            raise ValueError("PostgreSQL Eval is only supported by the isolated app adapter")
+        postgres_dsn = os.environ.get("CODING_AGENT_EVAL_POSTGRES_DSN", "").strip()
+        if persistence_backend == "postgres" and not postgres_dsn:
+            raise ValueError("PostgreSQL app Eval requires an ephemeral DSN from run_eval_postgres_app.py")
         env.update({
             "CODING_AGENT_EVAL_MODE": "1",
             "EVAL_CASE_ID": case.case_id,
@@ -357,8 +365,9 @@ class EvalRunner:
             "AGENT_CODING_MAX_TOOL_CALLS": str(min(max(int(case.metadata.get("tool_call_limit", 24)), 1), 100)),
             "AGENT_CODING_MAX_SECONDS": str(max(1, case.timeout_seconds)),
             "AI_WORKSPACE_ROOT": str(workspace_root),
-            "PERSISTENCE_BACKEND": "sqlite",
-            "POSTGRES_DSN": "",
+            "PERSISTENCE_BACKEND": persistence_backend,
+            "POSTGRES_DSN": postgres_dsn if persistence_backend == "postgres" else "",
+            "CODING_AGENT_EVAL_ALLOW_POSTGRES": "1" if persistence_backend == "postgres" else "",
             "CODING_DATA_DIR": str(state_dir),
             "CHECKPOINT_DB_PATH": str(db_paths[0]),
             "STORE_DB_PATH": str(db_paths[1]),
@@ -442,7 +451,7 @@ class EvalRunner:
             if event.get("type") == "task_intent" and (event.get("payload") or {}).get("task_kind")
         ]
         retrieval_events = [event.get("payload", {}) for event in trace_events if event.get("type") == "retrieval"]
-        retrieval = [hit for event in retrieval_events for hit in event.get("hits", [])]
+        retrieval = retrieval_events
         usage = self._read_json(usage_file, {})
         metric = calculate_metrics(retrieval=retrieval, events=trace_events, usage=usage, gold_files=case.gold_files)
         runtime_result = self._read_json(result_file, {})
@@ -491,9 +500,17 @@ class EvalRunner:
         if case.metadata.get("require_tool_recovery") and not tool_recovery_ok:
             errors.append("Injected tool failure was not followed by a verified successful recovery")
         app_e2e = runtime_result.get("api_e2e") if isinstance(runtime_result.get("api_e2e"), dict) else {}
-        app_e2e_ok = adapter_kind != "app" or all(
-            app_e2e.get(key) is True for key in ("health_passed", "thread_created", "sse_received", "sqlite_isolated")
+        persistence_isolated = app_e2e.get("persistence_isolated") is True or app_e2e.get("sqlite_isolated") is True
+        app_e2e_ok = adapter_kind != "app" or (
+            all(app_e2e.get(key) is True for key in ("health_passed", "thread_created", "sse_received"))
+            and persistence_isolated
         )
+        if persistence_backend == "postgres":
+            postgres_e2e = app_e2e.get("postgres_e2e") if isinstance(app_e2e.get("postgres_e2e"), dict) else {}
+            app_e2e_ok = app_e2e_ok and all(
+                postgres_e2e.get(key) is True
+                for key in ("identity_verified", "records_persisted", "reconnect_verified", "backend_restarted")
+            )
         browser_evidence = app_e2e.get("browser") if isinstance(app_e2e.get("browser"), dict) else {}
         if case.metadata.get("browser_e2e") is True:
             app_e2e_ok = app_e2e_ok and all(
@@ -503,7 +520,7 @@ class EvalRunner:
                 )
             )
         if adapter_kind == "app" and not app_e2e_ok:
-            errors.append("App E2E evidence is incomplete: health, persisted thread, SSE, or isolated SQLite check failed")
+            errors.append("App E2E evidence is incomplete: health, persisted thread, SSE, isolated storage, or required PostgreSQL reconnection check failed")
         case_pass = (
             agent_exit == 0
             and runtime_status == expected_status
@@ -638,6 +655,8 @@ class EvalRunner:
                 "plan_rejection_ok": plan_rejection_ok,
                 "plan_rubric": plan_rubric_results,
                 "api_e2e": app_e2e or None,
+                "persistence_backend": persistence_backend,
+                "postgres_e2e": (app_e2e or {}).get("postgres_e2e") if persistence_backend == "postgres" else None,
                 "expected_status": expected_status,
                 "model_call_limit": env["EVAL_MODEL_CALL_LIMIT"],
                 "tool_call_limit": env["EVAL_TOOL_CALL_LIMIT"],
