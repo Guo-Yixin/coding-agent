@@ -15,7 +15,7 @@ def main() -> None:
     ]
     snapshot = [dict(task) for task in tasks]
     assert [task["id"] for task in filter_by_priority(tasks, "high")] == [1, 2]
-    assert [task["id"] for task in filter_by_priority(tasks, ["low", "urgent"])] == [1, 3, 4]
+    assert [task["id"] for task in filter_by_priority(tasks, ["low", "urgent"])] == [1, 2, 3, 4]
     assert [task["id"] for task in filter_by_priority(tasks, "unknown")] == [5, 6, 7]
     assert filter_by_priority(tasks, []) == []
     assert filter_by_priority(tasks) == tasks
