@@ -82,6 +82,54 @@ def _latest_plan(thread: dict[str, Any]) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None
 
 
+def _postgres_thread_snapshot(dsn: str, thread_id: str) -> dict[str, Any]:
+    """Verify the app wrote this run to the expected disposable PostgreSQL database."""
+
+    from psycopg import connect
+    from psycopg.conninfo import conninfo_to_dict
+
+    parsed = conninfo_to_dict(dsn)
+    database = str(parsed.get("dbname") or "")
+    host = str(parsed.get("host") or "")
+    port = str(parsed.get("port") or "")
+    identity_ok = host in {"127.0.0.1", "localhost"} and database.startswith("coding_agent_eval_")
+    with connect(dsn, connect_timeout=5) as connection:
+        current = connection.execute("SELECT current_database(), current_user").fetchone()
+        identity_ok = identity_ok and current[0] == database and current[1] == "eval_runner"
+        counts: dict[str, int] = {}
+        for table in ("threads", "runs", "run_events", "thread_messages", "thread_plans"):
+            counts[table] = int(
+                connection.execute(
+                    f"SELECT count(*) FROM {table} WHERE thread_id = %s", (thread_id,)
+                ).fetchone()[0]
+            )
+        checkpoint_table = connection.execute("SELECT to_regclass('public.checkpoints')").fetchone()[0]
+        checkpoint_count = 0
+        if checkpoint_table:
+            checkpoint_count = int(
+                connection.execute(
+                    "SELECT count(*) FROM checkpoints WHERE thread_id = %s", (thread_id,)
+                ).fetchone()[0]
+            )
+    records_ok = (
+        counts["threads"] >= 1
+        and counts["runs"] >= 1
+        and counts["run_events"] >= 1
+        and counts["thread_messages"] >= 2
+        and counts["thread_plans"] >= 1
+        and checkpoint_count >= 1
+    )
+    return {
+        "identity_verified": bool(identity_ok),
+        "records_persisted": bool(records_ok),
+        "database_name": database,
+        "host": host,
+        "port": port,
+        "record_counts": counts,
+        "checkpoint_count": checkpoint_count,
+    }
+
+
 def _thread_text(thread: dict[str, Any]) -> str:
     chunks: list[str] = []
     for message in thread.get("messages", []) if isinstance(thread.get("messages"), list) else []:
@@ -256,6 +304,7 @@ def main() -> int:
     config = json.loads(Path(os.environ["EVAL_CASE_CONFIG"]).read_text(encoding="utf-8"))
     from agent.evals.telemetry import record_eval_event
     from agent.env_utils import get_env
+    from agent.core.settings import PERSISTENCE_BACKEND, POSTGRES_DSN
 
     injection = _instrument_retrieval(record_eval_event, config.get("metadata", {}).get("inject_tool_error_once"))
     _instrument_runtime_events(record_eval_event)
@@ -374,9 +423,72 @@ def main() -> int:
             workspace_clean_after_decision = (
                 final_workspace_status.returncode == 0 and not final_workspace_status.stdout.strip()
             )
-            # The app initializes SQLite lazily on its first persisted request.
-            # Check after task/approval traffic, not immediately after health.
+            # Persistence is initialized lazily on the first write, so verify only
+            # after the task and plan decision have traversed the app API.
             sqlite_isolated = all(path.is_relative_to(state_root) for path in db_paths) and all(path.is_file() for path in db_paths)
+            persistence_isolated = sqlite_isolated
+            postgres_e2e: dict[str, Any] | None = None
+            if PERSISTENCE_BACKEND == "postgres":
+                before_restart = _postgres_thread_snapshot(POSTGRES_DSN, thread_id)
+                if not before_restart["identity_verified"]:
+                    raise RuntimeError("PostgreSQL E2E refused a database outside the runner's loopback eval instance")
+                if not before_restart["records_persisted"]:
+                    raise RuntimeError("PostgreSQL E2E found incomplete thread/run/plan/checkpoint records")
+
+                # Stop and reconstruct the app's persistence singletons so the
+                # follow-up API read uses a newly opened PostgreSQL connection.
+                server.should_exit = True
+                thread.join(timeout=30)
+                if thread.is_alive():
+                    server.force_exit = True
+                    thread.join(timeout=5)
+                if thread.is_alive():
+                    raise RuntimeError("PostgreSQL E2E backend did not stop for its persistence restart check")
+                from agent.core import graph as graph_module
+                from agent.core.persistence import close_persistence
+
+                close_persistence()
+                graph_module._store = None
+                graph_module._checkpointer = None
+                graph_module._langgraph_store = None
+                server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", access_log=False))
+                thread = threading.Thread(target=server.run, name="eval-app-server-restarted", daemon=True)
+                thread.start()
+                ready_by = time.monotonic() + 30
+                while time.monotonic() < ready_by:
+                    try:
+                        if client.get(base_url + "/health", timeout=2).status_code == 200:
+                            break
+                    except httpx.HTTPError:
+                        pass
+                    time.sleep(0.25)
+                else:
+                    raise RuntimeError("PostgreSQL E2E app did not restart healthy")
+                restored_response = client.get(thread_url, timeout=15)
+                restored_response.raise_for_status()
+                restored_thread = restored_response.json()
+                after_restart = _postgres_thread_snapshot(POSTGRES_DSN, thread_id)
+                reconnect_ok = (
+                    restored_thread.get("thread_id") == thread_id
+                    and len(restored_thread.get("messages", [])) >= 2
+                    and restored_thread.get("status") == final_payload.get("status")
+                    and after_restart["records_persisted"]
+                )
+                postgres_e2e = {
+                    **before_restart,
+                    "reconnect_verified": bool(reconnect_ok),
+                    "backend_restarted": True,
+                    "api_thread_restored": restored_thread.get("thread_id") == thread_id,
+                    "api_message_count_after_restart": len(restored_thread.get("messages", [])),
+                    "status_after_restart": restored_thread.get("status"),
+                    "record_counts_after_restart": after_restart["record_counts"],
+                }
+                persistence_isolated = bool(
+                    postgres_e2e["identity_verified"]
+                    and postgres_e2e["records_persisted"]
+                    and postgres_e2e["reconnect_verified"]
+                    and postgres_e2e["backend_restarted"]
+                )
             result = {
                 "status": "completed" if final_payload.get("status") in {"completed", "finished"} else "error",
                 "model_provider": "DeepSeek",
@@ -400,6 +512,9 @@ def main() -> int:
                     "rejection_posted": bool(second_events and plan_decision == "reject"),
                     "workspace_clean_after_rejection": workspace_clean_after_decision if plan_decision == "reject" else None,
                     "sqlite_isolated": sqlite_isolated,
+                    "persistence_backend": PERSISTENCE_BACKEND,
+                    "persistence_isolated": persistence_isolated,
+                    "postgres_e2e": postgres_e2e,
                     "database_paths": [str(path) for path in db_paths],
                     "initial_event_count": len(first_events),
                     "approval_event_count": len(second_events) if plan_decision == "approve" else 0,

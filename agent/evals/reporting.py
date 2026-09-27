@@ -265,7 +265,17 @@ def _case_card(case: dict[str, Any], *, database_mode: bool = False) -> str:
             ])
         else:
             checks.append(("计划审批", api_e2e.get("approval_posted")))
-        checks.append(("SQLite 隔离", api_e2e.get("sqlite_isolated")))
+        backend = api_e2e.get("persistence_backend", "sqlite")
+        if backend == "postgres":
+            postgres = api_e2e.get("postgres_e2e", {})
+            checks.extend([
+                ("一次性 PostgreSQL 身份", postgres.get("identity_verified")),
+                ("业务数据和检查点写入", postgres.get("records_persisted")),
+                ("服务重启后恢复", postgres.get("reconnect_verified")),
+                ("后端重启验证", postgres.get("backend_restarted")),
+            ])
+        else:
+            checks.append(("SQLite 隔离", api_e2e.get("sqlite_isolated")))
         browser = api_e2e.get("browser", {})
         if browser:
             checks.extend([
