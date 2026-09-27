@@ -130,6 +130,23 @@ def _postgres_thread_snapshot(dsn: str, thread_id: str) -> dict[str, Any]:
     }
 
 
+def _postgres_reconnect_verified(
+    thread_id: str,
+    before_restart: dict[str, Any],
+    restored_thread: dict[str, Any],
+    after_restart: dict[str, Any],
+) -> bool:
+    """Check the public Thread DTO (whose key is `id`) after a backend restart."""
+
+    restored_id = restored_thread.get("thread_id") or restored_thread.get("id")
+    return bool(
+        restored_id == thread_id
+        and len(restored_thread.get("messages", [])) >= 2
+        and restored_thread.get("status") == before_restart.get("status")
+        and after_restart.get("records_persisted") is True
+    )
+
+
 def _thread_text(thread: dict[str, Any]) -> str:
     chunks: list[str] = []
     for message in thread.get("messages", []) if isinstance(thread.get("messages"), list) else []:
@@ -468,17 +485,14 @@ def main() -> int:
                 restored_response.raise_for_status()
                 restored_thread = restored_response.json()
                 after_restart = _postgres_thread_snapshot(POSTGRES_DSN, thread_id)
-                reconnect_ok = (
-                    restored_thread.get("thread_id") == thread_id
-                    and len(restored_thread.get("messages", [])) >= 2
-                    and restored_thread.get("status") == final_payload.get("status")
-                    and after_restart["records_persisted"]
+                reconnect_ok = _postgres_reconnect_verified(
+                    thread_id, final_payload, restored_thread, after_restart
                 )
                 postgres_e2e = {
                     **before_restart,
                     "reconnect_verified": bool(reconnect_ok),
                     "backend_restarted": True,
-                    "api_thread_restored": restored_thread.get("thread_id") == thread_id,
+                    "api_thread_restored": (restored_thread.get("thread_id") or restored_thread.get("id")) == thread_id,
                     "api_message_count_after_restart": len(restored_thread.get("messages", [])),
                     "status_after_restart": restored_thread.get("status"),
                     "record_counts_after_restart": after_restart["record_counts"],

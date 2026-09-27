@@ -5,7 +5,14 @@ import json
 import httpx
 import pytest
 
-from scripts.run_eval_app import _latest_plan, _run_browser_task, _sse_post, _submit_plan_decision, _thread_text
+from scripts.run_eval_app import (
+    _latest_plan,
+    _postgres_reconnect_verified,
+    _run_browser_task,
+    _sse_post,
+    _submit_plan_decision,
+    _thread_text,
+)
 
 
 def test_app_adapter_parses_real_sse_event_framing():
@@ -32,6 +39,21 @@ def test_app_adapter_reads_pending_plan_and_user_visible_text():
     }
     assert _latest_plan(thread) == thread["latestPlan"]
     assert _thread_text(thread) == "已完成\n\n测试通过"
+
+
+def test_postgres_app_e2e_recognizes_public_thread_dto_after_restart():
+    assert _postgres_reconnect_verified(
+        "thread-1",
+        {"id": "thread-1", "status": "finished"},
+        {"id": "thread-1", "status": "finished", "messages": [{}, {}]},
+        {"records_persisted": True},
+    )
+    assert not _postgres_reconnect_verified(
+        "thread-1",
+        {"id": "thread-1", "status": "finished"},
+        {"id": "thread-2", "status": "finished", "messages": [{}, {}]},
+        {"records_persisted": True},
+    )
 
 
 def test_app_adapter_can_reject_pending_plan_through_sse():
