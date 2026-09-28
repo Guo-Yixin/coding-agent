@@ -6,7 +6,7 @@
 
 从需求理解、代码检索、计划审批，到修改、测试、审查与交付；支持持久化会话和可复现的 Agent Eval。
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [快速开始](#快速开始) · [系统架构](#系统架构) · [Agent Eval](#agent-eval)
+[简体中文](README.md) · [English](README.en.md) · [快速开始](#快速开始) · [系统架构](#系统架构) · [Agent Eval](#agent-eval)
 
 [![Python](https://img.shields.io/badge/Python-3.14%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Vue](https://img.shields.io/badge/Vue-3-42B883?logo=vuedotjs&logoColor=white)](https://vuejs.org/)
@@ -38,12 +38,20 @@ CODING 是一个面向真实 Git 仓库的 AI 编码工作台。它把用户需�
 | **SQLite 与 PostgreSQL** | SQLite 是本地默认选项；PostgreSQL 可用于共享部署中的业务状态和 checkpoint 持久化。 |
 | **Agent Eval** | 固定 Agent 和目标版本，在隔离副本中执行真实编码题、目标/回归/隐藏验收，记录检索、工具轨迹、Token、耗时、补丁并生成 HTML 报告。 |
 
+## 工作台预览
+
+<p align="center"><img src="assets/demo/workspace-home.png" alt="CODING 工作台首页：最近聊天、按仓库分组的项目与会话、模型选择" width="100%"></p>
+<p align="center"><em>工作台首页：最近聊天、项目分组和当前会话。</em></p>
+
+<p align="center"><img src="assets/demo/create-project-dialog.png" alt="CODING 新建项目弹窗：设置项目名称、代码托管平台和仓库地址" width="100%"></p>
+<p align="center"><em>新建项目：指定项目名称、GitHub/Gitee 平台和仓库地址。</em></p>
+
 ## 系统架构
 
-实线表示当前应用和 Eval 的运行路径；虚线区域表示文档中的横向扩容目标，并非默认运行拓扑。
+实线表示当前应用和 Eval 的运行路径；架构图使用矢量 SVG 绘制，放大查看仍保持清晰。
 
-<p align="center"><a href="assets/architecture-zh.svg"><img src="assets/architecture-flow-zh.gif" alt="CODING 动态架构图：需求路由、Agent 执行、隔离评测与报告反馈" width="100%"></a></p>
-<p align="center">动态流程图 · <a href="assets/architecture-zh.svg">打开可缩放 SVG 源图</a></p>
+<p align="center"><a href="assets/architecture-zh.svg"><img src="assets/architecture-zh.svg" alt="CODING 高清矢量系统架构图：异步任务调度、Agent 执行、状态持久化与隔离评测" width="100%"></a></p>
+<p align="center">高清矢量架构图 · <a href="assets/architecture-zh.svg">打开原尺寸 SVG</a></p>
 
 部署设计描述了 **3 个 Agent Worker 和 2 个 ASGI 节点**，并给出约 **170 峰值并发请求、20–30 个 coding/review 并发任务**的容量估算。仓库目前没有包含验证这些数字的压测报告，因此应视为设计容量估算。图中的 Redis 队列、仓库锁和事件流是目标组件，不是当前应用服务。
 

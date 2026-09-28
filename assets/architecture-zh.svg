@@ -1,88 +1,89 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1260" viewBox="0 0 1440 1260" role="img" aria-labelledby="title desc">
-<title id="title">CODING · 项目系统架构</title><desc id="desc">面向真实代码仓库，形成可审查、可复现的研发闭环</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1420" viewBox="0 0 1920 1420" role="img" aria-labelledby="title desc">
+<title id="title">CODING 项目架构图</title>
+<desc id="desc">展示 CODING 从用户请求、异步任务调度、Agent 执行、仓库工具、持久化到隔离评测的完整架构。</desc>
 <defs>
- <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#17264f"/><stop offset="1" stop-color="#3558c7"/></linearGradient>
- <linearGradient id="evalbg" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#f7f8ff"/><stop offset="1" stop-color="#f4f7ff"/></linearGradient>
- <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#5975b4"/></marker>
- <marker id="arrowTeal" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#159d9a"/></marker>
- <style>text{font-family:Microsoft YaHei,Noto Sans CJK SC,Segoe UI,Arial,sans-serif;fill:#18233c} .title{font-size:34px;font-weight:760;fill:#fff} .sub{font-size:17px;fill:#d7e2ff} .section{font-size:17px;font-weight:750;letter-spacing:.5px;fill:#586987} .h{font-size:20px;font-weight:700} .b{font-size:15px;fill:#66738d} .small{font-size:13px;fill:#5f6f8b} .card{fill:#fff;stroke:#d9e1ee;stroke-width:1.6} .app{fill:#f5f8ff;stroke:#9aafe6;stroke-width:1.7} .teal{fill:#effaf9;stroke:#89cfc8;stroke-width:1.7} .amber{fill:#fff8ec;stroke:#e6c47b;stroke-width:1.7} .line{fill:none;stroke:#7185ae;stroke-width:2.5;marker-end:url(#arrow)} .flow{fill:none;stroke:#1a9b98;stroke-width:3;marker-end:url(#arrowTeal)} .future{fill:#fbfcff;stroke:#9aa6bd;stroke-width:2;stroke-dasharray:9 7} .tag{fill:#e9eefb} .tagtext{font-size:12px;font-weight:700;fill:#526790}</style>
+  <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#14213d"/><stop offset="1" stop-color="#3158a8"/></linearGradient>
+  <linearGradient id="eval" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#f7f8fc"/><stop offset="1" stop-color="#f0f5fb"/></linearGradient>
+  <filter id="shadow" x="-15%" y="-15%" width="130%" height="140%"><feDropShadow dx="0" dy="5" stdDeviation="8" flood-color="#23395b" flood-opacity=".08"/></filter>
+  <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M1 1L11 6L1 11Z" fill="#657da6"/></marker>
+  <marker id="tealArrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M1 1L11 6L1 11Z" fill="#168e91"/></marker>
+  <style>
+    text{font-family:"Microsoft YaHei","Noto Sans CJK SC","PingFang SC",Arial,sans-serif;fill:#192942}
+    .title{font-size:42px;font-weight:750;fill:#fff}.subtitle{font-size:21px;fill:#d8e5ff}.eyebrow{font-size:15px;font-weight:700;letter-spacing:2px;fill:#91a5cc}
+    .section{font-size:18px;font-weight:750;letter-spacing:1px;fill:#5b6d88}.head{font-size:22px;font-weight:720}.body{font-size:16px;fill:#66758e}.note{font-size:14px;fill:#74839a}.tag{font-size:13px;font-weight:700;fill:#286b70}
+    .panel{fill:#fff;stroke:#e1e7f0;stroke-width:1.5}.card{fill:#fff;stroke:#d8e1ee;stroke-width:1.7}.blue{fill:#f3f6ff;stroke:#aabce5;stroke-width:1.8}.mint{fill:#eff9f7;stroke:#9bd3ca;stroke-width:1.8}.amber{fill:#fff8ed;stroke:#e9c78f;stroke-width:1.8}.line{fill:none;stroke:#7286a8;stroke-width:3;marker-end:url(#arrow)}.flow{fill:none;stroke:#168e91;stroke-width:3.2;marker-end:url(#tealArrow)}.dash{fill:none;stroke:#aab6c8;stroke-width:2;stroke-dasharray:8 8}
+  </style>
 </defs>
-<rect width="1440" height="1260" fill="#f2f5fb"/>
-<rect x="32" y="26" width="1376" height="142" rx="24" fill="url(#hero)"/>
-<text x="68" y="78" class="title">CODING · 项目系统架构</text>
-<text x="68" y="111" class="sub">面向真实代码仓库，形成可审查、可复现的研发闭环</text>
-<text x="68" y="145" class="sub" style="font-size:14px;font-weight:700;letter-spacing:.4px">提交需求 → 意图路由 → Agent 执行 → 测试验证 → 评测报告</text>
+<rect width="1920" height="1420" fill="#f4f6fa"/>
+<rect x="40" y="32" width="1840" height="152" rx="28" fill="url(#hero)"/>
+<text x="88" y="91" class="title">CODING · 项目系统架构</text>
+<text x="90" y="128" class="subtitle">面向真实代码仓库的异步 AI 编码工作台 · 可追踪、可审查、可恢复</text>
+<text x="90" y="160" class="eyebrow" fill="#d8e5ff">请求接入 → 持久化排队 → 并行执行 → 流式反馈 → 验证交付</text>
 
-<rect x="48" y="192" width="1344" height="414" rx="22" fill="#ffffff" stroke="#dce4f0" stroke-width="1.4"/>
-<text x="76" y="226" class="section">应用运行链路</text>
-<rect x="70" y="260" width="230" height="112" rx="16" class="app"/>
-<text x="90" y="302" class="h">开发者 / 用户</text>
-<text x="90" y="333" class="b">需求 · 审批 · 代码审查</text>
-<rect x="370" y="260" width="230" height="112" rx="16" class="app"/>
-<text x="390" y="302" class="h">Web 工作台 · FastAPI</text>
-<text x="390" y="333" class="b">REST 接口 + SSE 事件流</text>
-<rect x="670" y="260" width="250" height="112" rx="16" class="app"/>
-<text x="690" y="302" class="h">意图路由</text>
-<text x="690" y="333" class="b">LLM 语义分类 + 规则兜底</text>
-<rect x="1010" y="260" width="330" height="112" rx="16" class="teal"/>
-<text x="1030" y="302" class="h">主 Agent</text>
-<text x="1030" y="333" class="b">计划 · 委派 · 编码 · 汇总</text>
-<rect x="70" y="460" width="330" height="112" rx="16" class="card"/>
-<text x="90" y="502" class="h">代码检索与工具</text>
-<text x="90" y="533" class="b">CodeGraph · grep · Git · 终端 · 测试</text>
-<rect x="450" y="460" width="330" height="112" rx="16" class="card"/>
-<text x="470" y="502" class="h">仓库工作区</text>
-<text x="470" y="533" class="b">受控文件访问 · 可审查 diff</text>
-<rect x="840" y="460" width="250" height="112" rx="16" class="amber"/>
-<text x="860" y="502" class="h">专业 SubAgent</text>
-<text x="860" y="533" class="b">分析 · 只读审查 · 专项子任务</text>
-<path id="p1" d="M300 316H370" class="line"/>
-<path id="p2" d="M600 316H670" class="line"/>
-<path id="p3" d="M920 316H1010" class="line"/>
-<path id="p4" d="M1175 372V410H965V460" class="line"/>
-<path id="p5" d="M1060 372V420H615V460" class="line"/>
-<path id="p6" d="M450 516H400" class="line"/>
-<text x="1000" y="430" class="small">任务委派 / 审查</text>
-<text x="730" y="444" class="small">读取 / 修改 / 测试</text>
-<text x="398" y="498" class="small">检索上下文</text>
-<rect x="48" y="638" width="1344" height="378" rx="22" fill="url(#evalbg)" stroke="#d6def0" stroke-width="1.4"/>
-<text x="76" y="677" class="section">AGENT EVAL · 可复现编码能力评测</text>
-<rect x="70" y="728" width="280" height="118" rx="16" class="app"/>
-<text x="90" y="771" class="h">评测运行器</text>
-<text x="90" y="803" class="b">固定题目 · Agent 版本 · 资源限制</text>
-<rect x="420" y="728" width="280" height="118" rx="16" class="teal"/>
-<text x="440" y="771" class="h">OpenSandbox</text>
-<text x="440" y="803" class="b">隔离的候选项目副本</text>
-<rect x="770" y="728" width="280" height="118" rx="16" class="amber"/>
-<text x="790" y="771" class="h">评分器与验收</text>
-<text x="790" y="803" class="b">目标测试 · 回归测试 · 隐藏验收</text>
-<rect x="1120" y="728" width="250" height="118" rx="16" class="app"/>
-<text x="1140" y="771" class="h">报告与证据</text>
-<text x="1140" y="803" class="b">补丁 · 事件 · Token · 耗时 · HTML</text>
-<path id="p7" d="M350 787H420" class="flow"/>
-<path id="p8" d="M700 787H770" class="flow"/>
-<path id="p9" d="M1050 787H1120" class="flow"/>
-<path id="p10" d="M1245 846V910H210V846" class="flow"/>
-<path id="p11" d="M1175 372V680H210V728" class="flow"/>
-<path id="p12" d="M1190 728V640H1175V372" class="flow"/>
-<text x="356" y="771" class="small">候选补丁</text>
-<text x="704" y="771" class="small">隔离运行测试</text>
-<text x="1054" y="771" class="small">评分与轨迹</text>
-<text x="560" y="900" class="small">可复现证据</text>
-<text x="1200" y="625" class="small">评测反馈</text>
-<rect x="48" y="1046" width="1344" height="174" rx="22" fill="#fff" stroke="#dce4f0" stroke-width="1.4"/>
-<rect x="80" y="1080" width="350" height="100" rx="15" class="card"/>
-<text x="98" y="1118" class="h" style="font-size:18px">SQLite / PostgreSQL</text>
-<text x="98" y="1148" class="b" style="font-size:14px">任务 · 消息 · 事件 · checkpoint</text>
-<rect x="500" y="1080" width="350" height="100" rx="15" class="card"/>
-<text x="518" y="1118" class="h" style="font-size:18px">仓库长期记忆</text>
-<text x="518" y="1148" class="b" style="font-size:14px">项目事实 · 技术决策 · 会话恢复</text>
-<rect x="1020" y="1080" width="300" height="100" rx="15" class="future"/>
-<text x="1038" y="1118" class="h" style="font-size:18px">横向扩容设计</text>
-<text x="1038" y="1148" class="b" style="font-size:14px">Redis 队列 · Worker 池 · 仓库锁</text>
-<path id="p13" d="M485 372V1040H255V1080" class="line"/>
-<path id="p14" d="M1120 572V1018H680V1080" class="line"/>
-<path id="p15" d="M1110 1080H850" class="future"/>
-<text x="420" y="1035" class="small">持久化与恢复</text>
-<text x="76" y="1204" class="small">虚线表示文档中的部署目标；并发数字为估算值，尚非压测结果。</text>
+<rect x="40" y="214" width="1840" height="510" rx="24" class="panel"/>
+<text x="78" y="256" class="section">01 · 应用运行链路</text>
+<text x="1580" y="256" class="note">当前实现</text>
+
+<!-- request ingress -->
+<g filter="url(#shadow)">
+  <rect x="78" y="290" width="300" height="112" rx="18" class="blue"/>
+  <rect x="458" y="290" width="330" height="112" rx="18" class="blue"/>
+  <rect x="868" y="290" width="360" height="112" rx="18" class="mint"/>
+  <rect x="1308" y="290" width="520" height="112" rx="18" class="mint"/>
+</g>
+<text x="108" y="337" class="head">开发者 / 用户</text><text x="108" y="371" class="body">创建会话 · 提交任务 · 查看结果</text>
+<text x="488" y="337" class="head">Vue 3 工作台</text><text x="488" y="371" class="body">项目 / 会话 · 模型选择 · 实时状态</text>
+<text x="898" y="337" class="head">FastAPI 接入层</text><text x="898" y="371" class="body">校验请求 · 创建 Run · SSE 流式响应</text>
+<text x="1338" y="337" class="head">持久化任务队列 + Worker Pool</text><text x="1338" y="371" class="body">原子领取 · 并发上限 · 心跳租约 · 失败恢复</text>
+<path d="M378 346H458" class="line"/><path d="M788 346H868" class="line"/><path d="M1228 346H1308" class="flow"/>
+
+<!-- execution pipeline -->
+<text x="80" y="456" class="section">任务执行</text>
+<g filter="url(#shadow)">
+  <rect x="78" y="480" width="340" height="142" rx="18" class="blue"/>
+  <rect x="488" y="480" width="380" height="142" rx="18" class="mint"/>
+  <rect x="938" y="480" width="400" height="142" rx="18" class="blue"/>
+  <rect x="1408" y="480" width="420" height="142" rx="18" class="amber"/>
+</g>
+<text x="108" y="526" class="head">并发 Run Worker</text><text x="108" y="560" class="body">每个任务独立运行 · 可取消 / 可恢复</text><text x="108" y="592" class="note">由持久化队列领取任务</text>
+<text x="518" y="526" class="head">主 Agent · LangGraph</text><text x="518" y="560" class="body">意图路由 · 计划 · 工具调用 · 汇总</text><text x="518" y="592" class="note">checkpoint 支持中断后续跑</text>
+<text x="968" y="526" class="head">仓库上下文与工具</text><text x="968" y="560" class="body">CodeGraph / grep · Git · 终端 · 测试</text><text x="968" y="592" class="note">受控文件访问 · 工作区隔离 · 可审查 diff</text>
+<text x="1438" y="526" class="head">专业 SubAgent</text><text x="1438" y="560" class="body">专项分析 · 只读审查 · 并行协作</text><text x="1438" y="592" class="note">结果由主 Agent 汇总</text>
+<path d="M418 551H488" class="flow"/><path d="M868 551H938" class="line"/><path d="M1338 551H1408" class="line"/>
+<path d="M1138 622V660H678V622" class="dash"/><text x="823" y="654" class="note">工具执行结果返回 Agent · 迭代直到完成</text>
+
+<!-- storage & events -->
+<rect x="40" y="752" width="1840" height="226" rx="24" class="panel"/>
+<text x="78" y="795" class="section">02 · 状态、事件与记忆</text>
+<g filter="url(#shadow)">
+  <rect x="78" y="822" width="390" height="112" rx="18" class="blue"/>
+  <rect x="528" y="822" width="390" height="112" rx="18" class="blue"/>
+  <rect x="978" y="822" width="390" height="112" rx="18" class="mint"/>
+  <rect x="1428" y="822" width="400" height="112" rx="18" class="card"/>
+</g>
+<text x="108" y="868" class="head">SQLite / PostgreSQL</text><text x="108" y="902" class="body">项目 · 会话 · Run · 消息 · 事件</text>
+<text x="558" y="868" class="head">LangGraph Checkpoint</text><text x="558" y="902" class="body">执行状态 · 恢复游标 · 长期记忆</text>
+<text x="1008" y="868" class="head">SSE 事件流</text><text x="1008" y="902" class="body">步骤 · 工具输出 · 心跳 · 完成 / 失败</text>
+<text x="1458" y="868" class="head">工作区与交付物</text><text x="1458" y="902" class="body">仓库文件 · 补丁 · 分支 / PR 状态</text>
+<path d="M248 822V784H1488V822" class="dash"/><text x="830" y="779" class="note">Run 状态与执行轨迹持久化，前端按会话订阅</text>
+
+<!-- eval lane -->
+<rect x="40" y="1006" width="1840" height="362" rx="24" fill="url(#eval)" stroke="#dce4ef" stroke-width="1.5"/>
+<text x="78" y="1050" class="section">03 · Agent Eval 可复现评测链路</text>
+<text x="1560" y="1050" class="note">独立于日常编码任务</text>
+<g filter="url(#shadow)">
+  <rect x="78" y="1100" width="300" height="132" rx="18" class="blue"/>
+  <rect x="458" y="1100" width="300" height="132" rx="18" class="blue"/>
+  <rect x="838" y="1100" width="300" height="132" rx="18" class="mint"/>
+  <rect x="1218" y="1100" width="270" height="132" rx="18" class="amber"/>
+  <rect x="1568" y="1100" width="260" height="132" rx="18" class="blue"/>
+</g>
+<text x="108" y="1148" class="head">固定案例集</text><text x="108" y="1182" class="body">目标版本 · 验收命令</text>
+<text x="488" y="1148" class="head">Eval Runner</text><text x="488" y="1182" class="body">固定 Agent · 复跑编排</text>
+<text x="868" y="1148" class="head">OpenSandbox</text><text x="868" y="1182" class="body">隔离候选仓库 · 执行测试</text>
+<text x="1248" y="1148" class="head">评分与检查</text><text x="1248" y="1182" class="body">目标 · 回归 · 隐藏验收</text>
+<text x="1598" y="1148" class="head">报告与证据</text><text x="1598" y="1182" class="body">补丁 · 轨迹 · Token · 耗时</text>
+<path d="M378 1166H458" class="line"/><path d="M758 1166H838" class="flow"/><path d="M1138 1166H1218" class="line"/><path d="M1488 1166H1568" class="line"/>
+<rect x="78" y="1270" width="1750" height="52" rx="14" fill="#fff" stroke="#e0e6ef"/>
+<circle cx="108" cy="1296" r="7" fill="#168e91"/><text x="128" y="1302" class="body">评测报告记录版本、测试结果和运行证据，用于复现与版本对比；OpenSandbox 是 Eval 隔离后端，不代表所有常规任务都在沙箱运行。</text>
 </svg>
