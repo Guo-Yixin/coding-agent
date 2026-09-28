@@ -1,88 +1,60 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1260" viewBox="0 0 1440 1260" role="img" aria-labelledby="title desc">
-<title id="title">CODING · SYSTEM ARCHITECTURE</title><desc id="desc">A repository-aware coding agent with a reviewable engineering loop</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1420" viewBox="0 0 1920 1420" role="img" aria-labelledby="title desc">
+<title id="title">CODING System Architecture</title>
+<desc id="desc">CODING request intake, asynchronous task scheduling, agent execution, persistence, and isolated evaluation.</desc>
 <defs>
- <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#17264f"/><stop offset="1" stop-color="#3558c7"/></linearGradient>
- <linearGradient id="evalbg" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#f7f8ff"/><stop offset="1" stop-color="#f4f7ff"/></linearGradient>
- <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#5975b4"/></marker>
- <marker id="arrowTeal" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#159d9a"/></marker>
- <style>text{font-family:Inter,Segoe UI,Arial,sans-serif;fill:#18233c} .title{font-size:34px;font-weight:760;fill:#fff} .sub{font-size:17px;fill:#d7e2ff} .section{font-size:17px;font-weight:750;letter-spacing:.5px;fill:#586987} .h{font-size:20px;font-weight:700} .b{font-size:15px;fill:#66738d} .small{font-size:13px;fill:#5f6f8b} .card{fill:#fff;stroke:#d9e1ee;stroke-width:1.6} .app{fill:#f5f8ff;stroke:#9aafe6;stroke-width:1.7} .teal{fill:#effaf9;stroke:#89cfc8;stroke-width:1.7} .amber{fill:#fff8ec;stroke:#e6c47b;stroke-width:1.7} .line{fill:none;stroke:#7185ae;stroke-width:2.5;marker-end:url(#arrow)} .flow{fill:none;stroke:#1a9b98;stroke-width:3;marker-end:url(#arrowTeal)} .future{fill:#fbfcff;stroke:#9aa6bd;stroke-width:2;stroke-dasharray:9 7} .tag{fill:#e9eefb} .tagtext{font-size:12px;font-weight:700;fill:#526790}</style>
+  <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#14213d"/><stop offset="1" stop-color="#3158a8"/></linearGradient>
+  <linearGradient id="eval" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#f7f8fc"/><stop offset="1" stop-color="#f0f5fb"/></linearGradient>
+  <filter id="shadow" x="-15%" y="-15%" width="130%" height="140%"><feDropShadow dx="0" dy="5" stdDeviation="8" flood-color="#23395b" flood-opacity=".08"/></filter>
+  <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M1 1L11 6L1 11Z" fill="#657da6"/></marker>
+  <marker id="tealArrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M1 1L11 6L1 11Z" fill="#168e91"/></marker>
+  <style>
+    text{font-family:Inter,"Segoe UI",Arial,sans-serif;fill:#192942}
+    .title{font-size:42px;font-weight:750;fill:#fff}.subtitle{font-size:21px;fill:#d8e5ff}.eyebrow{font-size:15px;font-weight:700;letter-spacing:2px;fill:#91a5cc}
+    .section{font-size:18px;font-weight:750;letter-spacing:1px;fill:#5b6d88}.head{font-size:22px;font-weight:720}.body{font-size:16px;fill:#66758e}.note{font-size:14px;fill:#74839a}
+    .panel{fill:#fff;stroke:#e1e7f0;stroke-width:1.5}.card{fill:#fff;stroke:#d8e1ee;stroke-width:1.7}.blue{fill:#f3f6ff;stroke:#aabce5;stroke-width:1.8}.mint{fill:#eff9f7;stroke:#9bd3ca;stroke-width:1.8}.amber{fill:#fff8ed;stroke:#e9c78f;stroke-width:1.8}.line{fill:none;stroke:#7286a8;stroke-width:3;marker-end:url(#arrow)}.flow{fill:none;stroke:#168e91;stroke-width:3.2;marker-end:url(#tealArrow)}.dash{fill:none;stroke:#aab6c8;stroke-width:2;stroke-dasharray:8 8}
+  </style>
 </defs>
-<rect width="1440" height="1260" fill="#f2f5fb"/>
-<rect x="32" y="26" width="1376" height="142" rx="24" fill="url(#hero)"/>
-<text x="68" y="78" class="title">CODING · SYSTEM ARCHITECTURE</text>
-<text x="68" y="111" class="sub">A repository-aware coding agent with a reviewable engineering loop</text>
-<text x="68" y="145" class="sub" style="font-size:14px;font-weight:700;letter-spacing:.4px">REQUEST → ROUTE → REASON → BUILD → VERIFY → REPORT</text>
+<rect width="1920" height="1420" fill="#f4f6fa"/>
+<rect x="40" y="32" width="1840" height="152" rx="28" fill="url(#hero)"/>
+<text x="88" y="91" class="title">CODING · SYSTEM ARCHITECTURE</text>
+<text x="90" y="128" class="subtitle">An asynchronous AI coding workspace for real Git repositories</text>
+<text x="90" y="160" class="eyebrow" fill="#d8e5ff">REQUEST INTAKE → DURABLE QUEUE → PARALLEL RUNS → STREAMING → VERIFIED DELIVERY</text>
 
-<rect x="48" y="192" width="1344" height="414" rx="22" fill="#ffffff" stroke="#dce4f0" stroke-width="1.4"/>
-<text x="76" y="226" class="section">APP RUNTIME</text>
-<rect x="70" y="260" width="230" height="112" rx="16" class="app"/>
-<text x="90" y="302" class="h">Developer / User</text>
-<text x="90" y="333" class="b">Task · approval · review</text>
-<rect x="370" y="260" width="230" height="112" rx="16" class="app"/>
-<text x="390" y="302" class="h">Web UI · FastAPI</text>
-<text x="390" y="333" class="b">REST + SSE event stream</text>
-<rect x="670" y="260" width="250" height="112" rx="16" class="app"/>
-<text x="690" y="302" class="h">Intent router</text>
-<text x="690" y="333" class="b">LLM classification + rule fallback</text>
-<rect x="1010" y="260" width="330" height="112" rx="16" class="teal"/>
-<text x="1030" y="302" class="h">Primary Agent</text>
-<text x="1030" y="333" class="b">Plan · delegate · code · summarize</text>
-<rect x="70" y="460" width="330" height="112" rx="16" class="card"/>
-<text x="90" y="502" class="h">Code intelligence &amp; tools</text>
-<text x="90" y="533" class="b">CodeGraph · grep · Git · terminal · tests</text>
-<rect x="450" y="460" width="330" height="112" rx="16" class="card"/>
-<text x="470" y="502" class="h">Repository workspace</text>
-<text x="470" y="533" class="b">Guarded file access · reviewable diffs</text>
-<rect x="840" y="460" width="250" height="112" rx="16" class="amber"/>
-<text x="860" y="502" class="h">Specialist SubAgents</text>
-<text x="860" y="533" class="b">Analysis · read-only review · focused tasks</text>
-<path id="p1" d="M300 316H370" class="line"/>
-<path id="p2" d="M600 316H670" class="line"/>
-<path id="p3" d="M920 316H1010" class="line"/>
-<path id="p4" d="M1175 372V410H965V460" class="line"/>
-<path id="p5" d="M1060 372V420H615V460" class="line"/>
-<path id="p6" d="M450 516H400" class="line"/>
-<text x="1000" y="430" class="small">delegate / review</text>
-<text x="730" y="444" class="small">read / edit / test</text>
-<text x="398" y="498" class="small">retrieve context</text>
-<rect x="48" y="638" width="1344" height="378" rx="22" fill="url(#evalbg)" stroke="#d6def0" stroke-width="1.4"/>
-<text x="76" y="677" class="section">AGENT EVAL · REPRODUCIBLE CODING BENCHMARK</text>
-<rect x="70" y="728" width="280" height="118" rx="16" class="app"/>
-<text x="90" y="771" class="h">Eval runner</text>
-<text x="90" y="803" class="b">Fixed task · agent revision · limits</text>
-<rect x="420" y="728" width="280" height="118" rx="16" class="teal"/>
-<text x="440" y="771" class="h">OpenSandbox</text>
-<text x="440" y="803" class="b">Isolated candidate repository</text>
-<rect x="770" y="728" width="280" height="118" rx="16" class="amber"/>
-<text x="790" y="771" class="h">Scorers &amp; checks</text>
-<text x="790" y="803" class="b">Target · regression · hidden oracle</text>
-<rect x="1120" y="728" width="250" height="118" rx="16" class="app"/>
-<text x="1140" y="771" class="h">Report &amp; evidence</text>
-<text x="1140" y="803" class="b">Patch · events · tokens · latency · HTML</text>
-<path id="p7" d="M350 787H420" class="flow"/>
-<path id="p8" d="M700 787H770" class="flow"/>
-<path id="p9" d="M1050 787H1120" class="flow"/>
-<path id="p10" d="M1245 846V910H210V846" class="flow"/>
-<path id="p11" d="M1175 372V680H210V728" class="flow"/>
-<path id="p12" d="M1190 728V640H1175V372" class="flow"/>
-<text x="356" y="771" class="small">candidate patch</text>
-<text x="704" y="771" class="small">run isolated tests</text>
-<text x="1054" y="771" class="small">scores + traces</text>
-<text x="560" y="900" class="small">reproducible evidence</text>
-<text x="1200" y="625" class="small">evaluation feedback</text>
-<rect x="48" y="1046" width="1344" height="174" rx="22" fill="#fff" stroke="#dce4f0" stroke-width="1.4"/>
-<rect x="80" y="1080" width="350" height="100" rx="15" class="card"/>
-<text x="98" y="1118" class="h" style="font-size:18px">SQLite / PostgreSQL</text>
-<text x="98" y="1148" class="b" style="font-size:14px">Tasks · messages · events · checkpoints</text>
-<rect x="500" y="1080" width="350" height="100" rx="15" class="card"/>
-<text x="518" y="1118" class="h" style="font-size:18px">Repository memory</text>
-<text x="518" y="1148" class="b" style="font-size:14px">Project facts · decisions · session resume</text>
-<rect x="1020" y="1080" width="300" height="100" rx="15" class="future"/>
-<text x="1038" y="1118" class="h" style="font-size:18px">Scale-out design</text>
-<text x="1038" y="1148" class="b" style="font-size:14px">Redis queue · worker pool · repo lock</text>
-<path id="p13" d="M485 372V1040H255V1080" class="line"/>
-<path id="p14" d="M1120 572V1018H680V1080" class="line"/>
-<path id="p15" d="M1110 1080H850" class="future"/>
-<text x="420" y="1035" class="small">persist &amp; resume</text>
-<text x="76" y="1204" class="small">Dashed = documented deployment target; capacity numbers are estimates, not load-test results.</text>
+<rect x="40" y="214" width="1840" height="510" rx="24" class="panel"/>
+<text x="78" y="256" class="section">01 · APPLICATION RUNTIME</text><text x="1580" y="256" class="note">Current implementation</text>
+<g filter="url(#shadow)"><rect x="78" y="290" width="300" height="112" rx="18" class="blue"/><rect x="458" y="290" width="330" height="112" rx="18" class="blue"/><rect x="868" y="290" width="360" height="112" rx="18" class="mint"/><rect x="1308" y="290" width="520" height="112" rx="18" class="mint"/></g>
+<text x="108" y="337" class="head">Developer / User</text><text x="108" y="371" class="body">Create chats · submit tasks · review results</text>
+<text x="488" y="337" class="head">Vue 3 Workspace</text><text x="488" y="371" class="body">Projects · chats · model selection · live status</text>
+<text x="898" y="337" class="head">FastAPI Ingress</text><text x="898" y="371" class="body">Validate · create runs · stream over SSE</text>
+<text x="1338" y="337" class="head">Durable Run Queue + Worker Pool</text><text x="1338" y="371" class="body">Atomic claims · concurrency limits · leases · recovery</text>
+<path d="M378 346H458" class="line"/><path d="M788 346H868" class="line"/><path d="M1228 346H1308" class="flow"/>
+
+<text x="80" y="456" class="section">TASK EXECUTION</text>
+<g filter="url(#shadow)"><rect x="78" y="480" width="340" height="142" rx="18" class="blue"/><rect x="488" y="480" width="380" height="142" rx="18" class="mint"/><rect x="938" y="480" width="400" height="142" rx="18" class="blue"/><rect x="1408" y="480" width="420" height="142" rx="18" class="amber"/></g>
+<text x="108" y="526" class="head">Concurrent Run Workers</text><text x="108" y="560" class="body">Independent runs · cancellable · resumable</text><text x="108" y="592" class="note">Claimed from the durable queue</text>
+<text x="518" y="526" class="head">Primary Agent · LangGraph</text><text x="518" y="560" class="body">Intent routing · planning · tools · synthesis</text><text x="518" y="592" class="note">Checkpoints support interrupted-run recovery</text>
+<text x="968" y="526" class="head">Repository Context &amp; Tools</text><text x="968" y="560" class="body">CodeGraph / grep · Git · terminal · tests</text><text x="968" y="592" class="note">Guarded files · isolated workspace · reviewable diff</text>
+<text x="1438" y="526" class="head">Specialist SubAgents</text><text x="1438" y="560" class="body">Focused analysis · read-only review · collaboration</text><text x="1438" y="592" class="note">Results are synthesized by the primary agent</text>
+<path d="M418 551H488" class="flow"/><path d="M868 551H938" class="line"/><path d="M1338 551H1408" class="line"/>
+<path d="M1138 622V660H678V622" class="dash"/><text x="823" y="654" class="note">Tool results return to the agent for the next step</text>
+
+<rect x="40" y="752" width="1840" height="226" rx="24" class="panel"/>
+<text x="78" y="795" class="section">02 · STATE, EVENTS &amp; MEMORY</text>
+<g filter="url(#shadow)"><rect x="78" y="822" width="390" height="112" rx="18" class="blue"/><rect x="528" y="822" width="390" height="112" rx="18" class="blue"/><rect x="978" y="822" width="390" height="112" rx="18" class="mint"/><rect x="1428" y="822" width="400" height="112" rx="18" class="card"/></g>
+<text x="108" y="868" class="head">SQLite / PostgreSQL</text><text x="108" y="902" class="body">Projects · chats · runs · messages · events</text>
+<text x="558" y="868" class="head">LangGraph Checkpoints</text><text x="558" y="902" class="body">Execution state · resume cursor · memory</text>
+<text x="1008" y="868" class="head">SSE Event Stream</text><text x="1008" y="902" class="body">Steps · tool output · heartbeat · terminal state</text>
+<text x="1458" y="868" class="head">Workspace &amp; Deliverables</text><text x="1458" y="902" class="body">Repository files · patches · branch / PR status</text>
+<path d="M248 822V784H1488V822" class="dash"/><text x="830" y="779" class="note">Run state and traces persist; clients subscribe by chat</text>
+
+<rect x="40" y="1006" width="1840" height="362" rx="24" fill="url(#eval)" stroke="#dce4ef" stroke-width="1.5"/>
+<text x="78" y="1050" class="section">03 · REPRODUCIBLE AGENT EVALUATION</text><text x="1560" y="1050" class="note">Separate from everyday coding runs</text>
+<g filter="url(#shadow)"><rect x="78" y="1100" width="300" height="132" rx="18" class="blue"/><rect x="458" y="1100" width="300" height="132" rx="18" class="blue"/><rect x="838" y="1100" width="300" height="132" rx="18" class="mint"/><rect x="1218" y="1100" width="270" height="132" rx="18" class="amber"/><rect x="1568" y="1100" width="260" height="132" rx="18" class="blue"/></g>
+<text x="108" y="1148" class="head">Pinned Cases</text><text x="108" y="1182" class="body">Target revisions · checks</text>
+<text x="488" y="1148" class="head">Eval Runner</text><text x="488" y="1182" class="body">Pinned agent · replay orchestration</text>
+<text x="868" y="1148" class="head">OpenSandbox</text><text x="868" y="1182" class="body">Isolated repo · test execution</text>
+<text x="1248" y="1148" class="head">Scorers &amp; Checks</text><text x="1248" y="1182" class="body">Target · regression · hidden tests</text>
+<text x="1598" y="1148" class="head">Report &amp; Evidence</text><text x="1598" y="1182" class="body">Patch · trace · tokens · latency</text>
+<path d="M378 1166H458" class="line"/><path d="M758 1166H838" class="flow"/><path d="M1138 1166H1218" class="line"/><path d="M1488 1166H1568" class="line"/>
+<rect x="78" y="1270" width="1750" height="52" rx="14" fill="#fff" stroke="#e0e6ef"/><circle cx="108" cy="1296" r="7" fill="#168e91"/><text x="128" y="1302" class="body">Reports capture revisions, test outcomes, and execution evidence for replay and comparison. OpenSandbox isolates Eval; it is not the runtime for every coding task.</text>
 </svg>
