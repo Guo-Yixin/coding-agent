@@ -17,10 +17,10 @@ Plan, search, implement, test, review, and deliver changes through a streaming w
 
 <p align="center">
   <a href="assets/demo/coding-agent-demo.mp4">
-    <img src="assets/demo/coding-agent-demo-preview.gif" alt="Preview: CODING searches a repository, edits code, runs checks, and prepares a pull request" width="92%">
+    <img src="assets/demo/coding-agent-demo-poster.png" alt="Watch the full HD CODING demo: repository search, code edits, checks, and pull request delivery" width="100%">
   </a>
 </p>
-<p align="center">▶ Animated preview · <a href="assets/demo/coding-agent-demo.mp4">Open the full 89-second video</a></p>
+<p align="center">▶ <a href="assets/demo/coding-agent-demo.mp4">Watch the full 89-second, 1080p demo</a></p>
 
 ## What is CODING?
 
