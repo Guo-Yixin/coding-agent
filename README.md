@@ -48,7 +48,6 @@ CODING 是一个面向真实 Git 仓库的 AI 编码工作台。它把用户需�
 
 ## 系统架构
 
-实线表示当前应用和 Eval 的运行路径；架构图使用矢量 SVG 绘制，放大查看仍保持清晰。
 
 <p align="center"><a href="assets/architecture-zh.svg"><img src="assets/architecture-zh.svg" alt="CODING 高清矢量系统架构图：异步任务调度、Agent 执行、状态持久化与隔离评测" width="100%"></a></p>
 <p align="center">高清矢量架构图 · <a href="assets/architecture-zh.svg">打开原尺寸 SVG</a></p>
