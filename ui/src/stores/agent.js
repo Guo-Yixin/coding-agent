@@ -1,9 +1,15 @@
 import { defineStore } from 'pinia'
 
 import { dashboardApi } from '../api/client'
-import { streamAgentMessage } from '../api/sse'
+import { resumeAgentRun, streamAgentMessage } from '../api/sse'
 
-const DEFAULT_REPO = 'https://github.com/Guo-Yixin/test-coding-repo'
+const TERMINAL_RUN_STATUSES = new Set(['completed', 'failed', 'cancelled', 'interrupted'])
+const draftTimers = new Map()
+let selectionRevision = 0
+
+function createId(prefix) {
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
 
 function nowIso() {
   return new Date().toISOString()
@@ -20,78 +26,52 @@ function createTextMessage(author, text, idPrefix = author) {
 
 function findLocalUserMessage(messages, text) {
   return [...messages].reverse().find((message) => {
-    if (message.author !== 'user' || !String(message.id || '').startsWith('local-user-')) {
-      return false
-    }
-    const content = (message.chunks || [])
-      .filter((chunk) => chunk.kind === 'text')
-      .map((chunk) => chunk.text || '')
-      .join('')
-      .trim()
+    if (message.author !== 'user' || !String(message.id || '').startsWith('local-user-')) return false
+    const content = (message.chunks || []).filter((chunk) => chunk.kind === 'text')
+      .map((chunk) => chunk.text || '').join('').trim()
     return content === text
   })
 }
 
 function normalizeThreadMessages(messages) {
   if (!Array.isArray(messages)) return []
-  return messages
-    .filter((message) => message && Array.isArray(message.chunks))
-    .map((message) => ({
-      id: String(message.id || `${message.author || 'message'}-${Date.now()}`),
-      author: message.author || 'agent',
-      timestamp: message.timestamp || nowIso(),
-      chunks: message.chunks,
-      hidden: !!message.hidden,
-      metadata: message.metadata || {},
-    }))
+  return messages.filter((message) => message && Array.isArray(message.chunks)).map((message) => ({
+    id: String(message.id || `${message.author || 'message'}-${Date.now()}`),
+    author: message.author || 'agent',
+    timestamp: message.timestamp || nowIso(),
+    chunks: message.chunks,
+    hidden: !!message.hidden,
+    metadata: message.metadata || {},
+  }))
 }
 
 function ensureAgentMessage(messages, messageId) {
   let message = messages.find((item) => item.id === messageId)
   if (!message) {
-    message = {
-      id: messageId,
-      author: 'agent',
-      timestamp: nowIso(),
-      chunks: [],
-    }
+    message = { id: messageId, author: 'agent', timestamp: nowIso(), chunks: [] }
     messages.push(message)
   }
   return message
-}
-
-function upsertTodoMessage(messages, messageId, todos) {
-  const message = ensureAgentMessage(messages, messageId)
-  message.author = 'agent'
-  message.chunks = [
-    { kind: 'text', text: '任务计划' },
-    { kind: 'todo', todos },
-  ]
 }
 
 function appendTextDelta(messages, messageId, content, mode = 'append') {
   if (!messageId || !content) return
   const message = ensureAgentMessage(messages, messageId)
   const chunk = message.chunks.find((item) => item.kind === 'text')
-  if (chunk) {
-    chunk.text = mode === 'replace' ? content : `${chunk.text || ''}${content}`
-  } else {
-    message.chunks.push({ kind: 'text', text: content })
-  }
+  if (chunk) chunk.text = mode === 'replace' ? content : `${chunk.text || ''}${content}`
+  else message.chunks.push({ kind: 'text', text: content })
 }
 
 function mergeThreadMeta(target, source) {
   if (!target || !source) return
-  target.title = source.title || target.title
-  target.status = source.status || target.status
-  target.branch = source.branch || target.branch
-  target.baseBranch = source.baseBranch || target.baseBranch
-  target.pr = source.pr || target.pr
-  target.provider = source.provider || target.provider
-  target.updatedAt = source.updatedAt || target.updatedAt
-  if (Object.hasOwn(source, 'pendingIntervention')) {
-    target.pendingIntervention = source.pendingIntervention
+  for (const field of ['title', 'status', 'branch', 'baseBranch', 'pr', 'provider', 'updatedAt']) {
+    if (source[field]) target[field] = source[field]
   }
+  if (Object.hasOwn(source, 'pendingIntervention')) target.pendingIntervention = source.pendingIntervention
+}
+
+function cursorKey(runId) {
+  return `coding.run-cursor.${runId}`
 }
 
 export const useAgentStore = defineStore('agent', {
@@ -99,45 +79,87 @@ export const useAgentStore = defineStore('agent', {
     user: null,
     options: null,
     threads: [],
+    projects: [],
     currentThread: null,
+    draftId: createId('draft'),
+    drafts: {},
     messages: [],
-    selectedRepo: DEFAULT_REPO,
-    selectedProvider: 'github',
+    threadMessages: {},
+    activeRuns: {},
+    controllers: {},
     selectedModel: '',
     selectedEffort: 'default',
-    streaming: false,
     loading: false,
     error: '',
-    controller: null,
-    activeRunThreadId: null,
     runActivityEvents: {},
     runActivityLoading: {},
   }),
   getters: {
     currentThreadId: (state) => state.currentThread?.id || null,
     modelOptions: (state) => state.options?.models || [],
-    canSend: (state) => !state.streaming,
+    streaming: (state) => !!state.activeRuns[state.currentThread?.id],
+    canSend: (state) => !!state.currentThread && !state.activeRuns[state.currentThread.id],
+    currentDraft: (state) => state.drafts[state.currentThread?.id || state.draftId] || '',
+    currentProject: (state) => state.projects.find((project) => project.id === state.currentThread?.projectId) || null,
+    standaloneThreads: (state) => state.threads.filter((thread) => !thread.projectId),
+    activeTasks: (state) => state.threads
+      .filter((thread) => ['queued', 'running', 'cancelling'].includes(thread.status) || !!state.activeRuns[thread.id])
+      .map((thread) => ({
+        ...thread,
+        status: state.activeRuns[thread.id]?.status || thread.status,
+        runId: state.activeRuns[thread.id]?.runId || null,
+      })),
   },
   actions: {
+    messagesFor(threadId) {
+      if (!this.threadMessages[threadId]) this.threadMessages[threadId] = []
+      return this.threadMessages[threadId]
+    },
+    setDraft(threadId, content) {
+      const targetId = threadId || this.draftId
+      if (!targetId) return
+      this.drafts[targetId] = content
+      if (targetId === this.draftId && !this.currentThread) return
+      const previous = draftTimers.get(targetId)
+      if (previous) clearTimeout(previous)
+      draftTimers.set(targetId, setTimeout(() => {
+        draftTimers.delete(targetId)
+        dashboardApi.saveDraft(targetId, this.drafts[targetId] || '').catch((error) => {
+          if (this.currentThread?.id === targetId) this.error = error.message || '草稿保存失败'
+        })
+      }, 350))
+    },
+    async flushDraft(threadId) {
+      if (!threadId) return
+      const timer = draftTimers.get(threadId)
+      if (timer) clearTimeout(timer)
+      draftTimers.delete(threadId)
+      await dashboardApi.saveDraft(threadId, this.drafts[threadId] || '')
+    },
+    syncVisibleMessages(threadId) {
+      if (this.currentThread?.id === threadId || (!this.currentThread && this.draftId === threadId)) {
+        this.messages = this.messagesFor(threadId)
+      }
+    },
     async bootstrap() {
       this.loading = true
       this.error = ''
       try {
-        const [user, options, threads] = await Promise.all([
-          dashboardApi.me(),
-          dashboardApi.options(),
-          dashboardApi.listThreads(),
+        const [user, options, threads, projects, activeRuns] = await Promise.all([
+          dashboardApi.me(), dashboardApi.options(), dashboardApi.listThreads(), dashboardApi.listProjects(), dashboardApi.listActiveRuns(),
         ])
         this.user = user
         this.options = options
         this.threads = threads
-        this.selectedRepo = options.default_repo || DEFAULT_REPO
-        this.selectedProvider = options.default_provider || 'github'
-        this.selectedModel = options.default_agent_model || options.models?.[0]?.id || ''
+        this.projects = projects
+        const savedModel = window.localStorage.getItem('coding.selected-model')
+        const validModels = (options.models || []).map((item) => item.id)
+        this.selectedModel = validModels.includes(savedModel)
+          ? savedModel
+          : options.default_agent_model || options.models?.[0]?.id || ''
         this.selectedEffort = options.default_agent_reasoning_effort || 'default'
-        if (!this.currentThread && threads.length) {
-          await this.selectThread(threads[0].id)
-        }
+        if (!this.currentThread && threads.length) await this.selectThread(threads[0].id)
+        for (const run of activeRuns) this.resumeRun(run)
       } catch (error) {
         this.error = error.message || '初始化前端失败'
       } finally {
@@ -146,39 +168,121 @@ export const useAgentStore = defineStore('agent', {
     },
     async refreshThreads() {
       try {
-        this.threads = await dashboardApi.listThreads()
+        const [threads, projects] = await Promise.all([dashboardApi.listThreads(), dashboardApi.listProjects()])
+        this.threads = threads
+        this.projects = projects
+      } catch { /* Keep the visible task usable. */ }
+    },
+    async refreshActiveRuns() {
+      try {
+        const [threads, projects, activeRuns] = await Promise.all([
+          dashboardApi.listThreads(), dashboardApi.listProjects(), dashboardApi.listActiveRuns(),
+        ])
+        this.threads = threads
+        this.projects = projects
+        for (const run of activeRuns) this.resumeRun(run)
       } catch {
-        // 侧边栏刷新失败不影响当前对话继续展示。
+        // Task streams remain available if a cross-window refresh misses one poll.
       }
     },
     async selectThread(threadId) {
-      if (this.streaming) {
-        this.controller?.abort()
-        this.streaming = false
-        this.activeRunThreadId = null
-        this.controller = null
+      const revision = ++selectionRevision
+      const previousId = this.currentThread?.id
+      if (previousId && this.drafts[previousId] !== undefined) {
+        try { await this.flushDraft(previousId) } catch { /* The local draft remains available. */ }
       }
       this.error = ''
       const thread = await dashboardApi.getThread(threadId)
+      if (revision !== selectionRevision) return
       this.currentThread = thread
-      this.selectedRepo = thread.repo || thread.repoFullName || DEFAULT_REPO
-      this.selectedProvider = thread.provider || this.selectedProvider || 'github'
-      this.messages = normalizeThreadMessages(thread.messages)
+      this.drafts[threadId] = this.drafts[threadId] ?? thread.draftContent ?? ''
+      this.threadMessages[threadId] = this.threadMessages[threadId]?.length
+        ? this.threadMessages[threadId]
+        : normalizeThreadMessages(thread.messages)
+      this.messages = this.threadMessages[threadId]
       this.runActivityEvents = {}
       this.runActivityLoading = {}
     },
-    async createThread() {
-      if (this.streaming) return
-      this.currentThread = null
-      this.messages = []
+    async createProject(name, provider, repo) {
+      const project = await dashboardApi.createProject({ name, provider, repo })
+      this.projects.unshift(project)
+      await this.createThread(project.id)
+      return project
+    },
+    async createThread(projectId) {
+      if (!projectId) throw new Error('请先选择项目或新建项目')
+      const thread = await dashboardApi.createProjectThread(projectId)
+      this.threads.unshift(thread)
+      const project = this.projects.find((item) => item.id === projectId)
+      if (project) project.conversations.unshift({
+        id: thread.id, projectId, title: thread.title, status: thread.status,
+        updatedAt: thread.updatedAt, repo: thread.repo,
+      })
+      this.drafts[thread.id] = thread.draftContent || ''
+      this.threadMessages[thread.id] = normalizeThreadMessages(thread.messages)
+      this.currentThread = thread
+      this.messages = this.threadMessages[thread.id]
       this.error = ''
-      this.activeRunThreadId = null
-      if (!this.selectedRepo) this.selectedRepo = DEFAULT_REPO
+    },
+    async createChatThread() {
+      const fromLanding = !this.currentThread
+      const landingDraftId = this.draftId
+      const landingDraft = fromLanding ? this.drafts[landingDraftId] || '' : ''
+      const thread = await dashboardApi.createChatThread()
+      this.threads.unshift(thread)
+      this.drafts[thread.id] = thread.draftContent || landingDraft
+      this.threadMessages[thread.id] = normalizeThreadMessages(thread.messages)
+      this.currentThread = thread
+      this.messages = this.threadMessages[thread.id]
+      if (fromLanding) {
+        delete this.drafts[landingDraftId]
+        this.draftId = createId('draft')
+      }
+      this.error = ''
+      return thread
+    },
+    setSelectedModel(modelId) {
+      if (!this.modelOptions.some((model) => model.id === modelId)) return
+      this.selectedModel = modelId
+      try { window.localStorage.setItem('coding.selected-model', modelId) } catch { /* optional preference */ }
+    },
+    async renameProject(projectId, name) {
+      const updated = await dashboardApi.renameProject(projectId, name)
+      const project = this.projects.find((item) => item.id === projectId)
+      if (project) project.name = updated.name
+      return updated
+    },
+    async deleteProject(projectId) {
+      const project = this.projects.find((item) => item.id === projectId)
+      if (!project) return
+      const removedIds = new Set((project.conversations || []).map((thread) => thread.id))
+      if ([...removedIds].some((id) => this.activeRuns[id])) {
+        throw new Error('项目中仍有运行中的任务，请先停止或等待任务完成。')
+      }
+      await dashboardApi.deleteProject(projectId)
+      this.projects = this.projects.filter((item) => item.id !== projectId)
+      this.threads = this.threads.filter((thread) => !removedIds.has(thread.id))
+      removedIds.forEach((id) => {
+        delete this.threadMessages[id]
+        delete this.drafts[id]
+      })
+      if (removedIds.has(this.currentThread?.id)) {
+        this.currentThread = null
+        this.messages = []
+        const next = this.threads[0]
+        if (next) await this.selectThread(next.id)
+      }
     },
     async deleteThread(threadId) {
-      if (this.streaming) return
+      if (this.activeRuns[threadId]) {
+        this.error = '运行中的任务请先取消，完成后再删除。'
+        return
+      }
       await dashboardApi.deleteThread(threadId)
       this.threads = this.threads.filter((thread) => thread.id !== threadId)
+      this.projects.forEach((project) => { project.conversations = project.conversations.filter((thread) => thread.id !== threadId) })
+      delete this.threadMessages[threadId]
+      delete this.drafts[threadId]
       if (this.currentThread?.id === threadId) {
         this.currentThread = null
         this.messages = []
@@ -187,12 +291,8 @@ export const useAgentStore = defineStore('agent', {
     },
     async renameThread(threadId, title) {
       const updated = await dashboardApi.updateThreadTitle(threadId, title)
-      this.threads = this.threads.map((thread) => (
-        thread.id === threadId ? { ...thread, title: updated.title } : thread
-      ))
-      if (this.currentThread?.id === threadId) {
-        this.currentThread = { ...this.currentThread, title: updated.title }
-      }
+      this.threads = this.threads.map((thread) => thread.id === threadId ? { ...thread, title: updated.title } : thread)
+      if (this.currentThread?.id === threadId) this.currentThread = { ...this.currentThread, title: updated.title }
       return updated
     },
     async loadRunActivity(runId) {
@@ -201,133 +301,199 @@ export const useAgentStore = defineStore('agent', {
       this.runActivityLoading[runId] = true
       try {
         const result = await dashboardApi.getRunActivity(threadId, runId)
-        if (this.currentThread?.id === threadId) {
-          this.runActivityEvents[runId] = Array.isArray(result.events) ? result.events : []
-        }
+        if (this.currentThread?.id === threadId) this.runActivityEvents[runId] = Array.isArray(result.events) ? result.events : []
       } catch (error) {
         this.error = error.message || '读取运行过程失败'
       } finally {
         this.runActivityLoading[runId] = false
       }
     },
+    async cancelRun(threadId, runId) {
+      if (!threadId || !runId) return
+      try {
+        await dashboardApi.cancelRun(threadId, runId)
+      } catch (error) {
+        this.error = error.message || '取消任务失败'
+      }
+    },
     stopStream() {
-      this.controller?.abort()
+      const threadId = this.currentThread?.id
+      const run = this.activeRuns[threadId]
+      if (run?.runId) this.cancelRun(threadId, run.runId)
     },
     async submit(content, interaction = null) {
       const prompt = content.trim()
       if (!prompt || this.streaming) return
-
       this.error = ''
-      this.streaming = true
-      this.controller = new AbortController()
-      const localUserMessage = createTextMessage('user', prompt, 'local-user')
-      this.messages.push(localUserMessage)
-
-      try {
-        const initialThreadId = this.currentThread?.id || null
-        this.activeRunThreadId = initialThreadId || 'pending'
-        await this.consumeMessageStream(initialThreadId, prompt, interaction)
-        if (this.currentThread?.id) {
-          const refreshed = await dashboardApi.getThread(this.currentThread.id)
-          this.currentThread = refreshed
-          this.messages = normalizeThreadMessages(refreshed.messages)
+      let initialThreadId = this.currentThread?.id
+      if (!initialThreadId) {
+        try {
+          await this.createChatThread()
+          initialThreadId = this.currentThread?.id
+        } catch (error) {
+          this.error = error.message || '创建聊天失败'
+          return
         }
+      }
+      const viewKey = initialThreadId
+      const controller = new AbortController()
+      const payload = {
+        content: prompt,
+        repo: this.currentThread.repo || this.currentThread.repoFullName || undefined,
+        provider: this.currentThread.provider,
+        model_id: this.selectedModel || null,
+        effort: this.selectedEffort || null,
+        interaction_action: interaction?.interaction_action || null,
+        plan_id: interaction?.plan_id || null,
+        intervention_id: interaction?.intervention_id || null,
+      }
+      const messages = this.messagesFor(viewKey)
+      this.drafts[viewKey] = ''
+      try { await this.flushDraft(viewKey) } catch { /* Task submission remains authoritative. */ }
+      messages.push(createTextMessage('user', prompt, 'local-user'))
+      this.syncVisibleMessages(viewKey)
+      this.activeRuns[viewKey] = { status: 'submitting', runId: null }
+      this.controllers[viewKey] = controller
+      try {
+        await streamAgentMessage(initialThreadId, payload, {
+          signal: controller.signal,
+          onEvent: (event, data, seq) => this.handleRunEvent(viewKey, event, data, seq),
+        })
       } catch (error) {
         if (error.name !== 'AbortError') {
           this.error = error.message || 'Agent 执行失败'
-          this.currentThread = {
-            ...(this.currentThread || {}),
-            status: 'error',
-          }
+          const entry = this.activeRuns[viewKey]
+          if (entry) entry.status = 'failed'
         }
       } finally {
-        this.streaming = false
-        this.controller = null
-        this.activeRunThreadId = null
+        for (const [key, activeController] of Object.entries(this.controllers)) {
+          if (activeController !== controller) continue
+          const entry = this.activeRuns[key]
+          if (!entry || TERMINAL_RUN_STATUSES.has(entry.status)) delete this.activeRuns[key]
+          delete this.controllers[key]
+        }
         await this.refreshThreads()
       }
     },
-    async consumeMessageStream(threadId, prompt, interaction = null) {
-      await streamAgentMessage(
-        threadId,
-        {
-          content: prompt,
-          repo: this.selectedRepo || DEFAULT_REPO,
-          provider: this.selectedProvider || 'github',
-          model_id: this.selectedModel || null,
-          effort: this.selectedEffort || null,
-          interaction_action: interaction?.interaction_action || null,
-          plan_id: interaction?.plan_id || null,
-          intervention_id: interaction?.intervention_id || null,
-        },
-        {
-          signal: this.controller.signal,
-          onEvent: (event, data) => {
-            const eventThreadId = data.thread_id || data.id || threadId
-            if (eventThreadId && this.currentThread?.id && this.currentThread.id !== eventThreadId) return
-
-            if (event === 'thread_snapshot' || event === 'thread_done') {
-              if (!this.currentThread) {
-                this.currentThread = data
-                this.selectedRepo = data.repo || data.repoFullName || this.selectedRepo || DEFAULT_REPO
-                this.selectedProvider = data.provider || this.selectedProvider || 'github'
-              } else {
-                mergeThreadMeta(this.currentThread, data)
-              }
-              this.activeRunThreadId = data.id || data.thread_id || eventThreadId || this.activeRunThreadId
-              return
+    async resumeRun(run) {
+      const { thread_id: threadId, run_id: runId, status } = run
+      if (!threadId || !runId || this.controllers[threadId]) return
+      const controller = new AbortController()
+      this.controllers[threadId] = controller
+      if (!this.threadMessages[threadId]) {
+        try {
+          const thread = await dashboardApi.getThread(threadId)
+          this.threadMessages[threadId] = normalizeThreadMessages(thread.messages)
+        } catch { this.threadMessages[threadId] = [] }
+      }
+      if (this.controllers[threadId] !== controller) return
+      let storedCursor = 0
+      try { storedCursor = Number(sessionStorage.getItem(cursorKey(runId)) || 0) } catch { /* Optional. */ }
+      this.activeRuns[threadId] = { runId, status, cursor: storedCursor }
+      resumeAgentRun(threadId, runId, {
+        signal: controller.signal,
+        after: storedCursor,
+        onEvent: (event, data, seq) => this.handleRunEvent(threadId, event, data, seq),
+      }).catch((error) => {
+        if (error.name !== 'AbortError' && this.currentThread?.id === threadId) {
+          this.error = error.message || '恢复运行事件失败'
+        }
+      }).finally(() => {
+        const entry = this.activeRuns[threadId]
+        if (!entry || TERMINAL_RUN_STATUSES.has(entry.status)) delete this.activeRuns[threadId]
+        if (this.controllers[threadId] === controller) delete this.controllers[threadId]
+        this.refreshThreads()
+      })
+    },
+    handleRunEvent(viewKey, event, data, seq) {
+      const eventThreadId = data.thread_id || data.id || viewKey
+      let key = viewKey
+      if (event === 'thread_snapshot' || event === 'thread_done') {
+        if (key !== eventThreadId) {
+          this.threadMessages[eventThreadId] = this.threadMessages[key] || []
+          delete this.threadMessages[key]
+          if (this.activeRuns[key]) {
+            this.activeRuns[eventThreadId] = this.activeRuns[key]
+            delete this.activeRuns[key]
+          }
+          if (this.controllers[key]) {
+            this.controllers[eventThreadId] = this.controllers[key]
+            delete this.controllers[key]
+          }
+          key = eventThreadId
+        }
+        if (data.run_id && this.activeRuns[key]) this.activeRuns[key].runId = data.run_id
+        if (this.activeRuns[key]) this.activeRuns[key].status = data.status || (event === 'thread_done' ? 'completed' : 'queued')
+        const thread = this.threads.find((item) => item.id === eventThreadId)
+        if (thread) mergeThreadMeta(thread, data)
+        else this.threads.unshift({ ...data, id: eventThreadId })
+        if (this.currentThread?.id === eventThreadId) mergeThreadMeta(this.currentThread, data)
+      }
+      const messages = this.messagesFor(eventThreadId)
+      if (event === 'user_message') {
+        const text = String(data.content || '').trim()
+        const local = findLocalUserMessage(messages, text)
+        if (local) {
+          local.id = data.message_id || local.id
+          local.timestamp = data.timestamp || local.timestamp
+        } else if (
+          text
+          && !messages.some((message) => message.id === data.message_id)
+          && (messages.findLast((message) => message.author === 'user')?.chunks || [])
+            .filter((chunk) => chunk.kind === 'text').map((chunk) => chunk.text || '').join('').trim() !== text
+        ) {
+          messages.push(createTextMessage('user', text, data.message_id || 'user'))
+        }
+      } else if (event === 'todo_delta') {
+        const message = ensureAgentMessage(messages, data.message_id || `todo-${Date.now()}`)
+        message.author = 'agent'
+        message.chunks = [{ kind: 'text', text: '任务计划' }, { kind: 'todo', todos: Array.isArray(data.todos) ? data.todos : [] }]
+      } else if (event === 'message_start') {
+        if (data.message_id) ensureAgentMessage(messages, data.message_id)
+      } else if (event === 'text_delta') {
+        appendTextDelta(messages, data.message_id || `assistant-${Date.now()}`, data.content || '', data.mode || 'append')
+      } else if (event === 'error') {
+        if (this.currentThread?.id === eventThreadId) this.error = data.message || data.detail || 'Agent 执行失败'
+        const thread = this.threads.find((item) => item.id === eventThreadId)
+        if (thread) thread.status = 'failed'
+      } else if (event === 'run_status' && this.activeRuns[eventThreadId]) {
+        this.activeRuns[eventThreadId].status = data.status
+        if (data.status === 'running') {
+          const runId = data.run_id || this.activeRuns[eventThreadId].runId
+          if (runId) {
+            appendTextDelta(
+              messages,
+              `${eventThreadId}-assistant-startup-${runId}`,
+              '任务已开始执行，正在准备工作区…\n\n',
+              'replace',
+            )
+          }
+        }
+      } else if (event === 'done') {
+        const run = this.activeRuns[eventThreadId]
+        if (run) run.status = data.status || 'completed'
+        if (TERMINAL_RUN_STATUSES.has(data.status || 'completed')) delete this.activeRuns[eventThreadId]
+        const thread = this.threads.find((item) => item.id === eventThreadId)
+        if (thread) thread.status = data.status || 'completed'
+        if (this.currentThread?.id === eventThreadId) {
+          dashboardApi.getThread(eventThreadId).then((threadDetail) => {
+            if (this.currentThread?.id === eventThreadId) {
+              this.currentThread = threadDetail
+              const normalized = normalizeThreadMessages(threadDetail.messages)
+              if (normalized.length) this.threadMessages[eventThreadId] = normalized
+              this.messages = this.threadMessages[eventThreadId] || []
             }
-
-            if (event === 'user_message') {
-              const text = String(data.content || '').trim()
-              const local = findLocalUserMessage(this.messages, text)
-              if (local) {
-                local.id = data.message_id || local.id
-                local.timestamp = data.timestamp || local.timestamp
-              } else if (text) {
-                this.messages.push(createTextMessage('user', text, data.message_id || 'user'))
-              }
-              return
-            }
-
-            if (event === 'todo_delta') {
-              upsertTodoMessage(
-                this.messages,
-                data.message_id || `todo-${Date.now()}`,
-                Array.isArray(data.todos) ? data.todos : [],
-              )
-              return
-            }
-
-            if (event === 'message_start') {
-              if (data.message_id) ensureAgentMessage(this.messages, data.message_id)
-              return
-            }
-
-            if (event === 'text_delta') {
-              appendTextDelta(
-                this.messages,
-                data.message_id || `assistant-${Date.now()}`,
-                data.content || '',
-                data.mode || 'append',
-              )
-              return
-            }
-
-            if (event === 'error') {
-              this.error = data.message || data.detail || 'Agent 执行失败'
-              if (this.currentThread) this.currentThread.status = 'error'
-              return
-            }
-
-            if (event === 'done') {
-              if (this.currentThread && this.currentThread.status === 'running') {
-                this.currentThread.status = 'finished'
-              }
-            }
-          },
-        },
-      )
+          }).catch(() => {})
+        }
+      }
+      if (seq) {
+        const runId = data.run_id || this.activeRuns[eventThreadId]?.runId
+        if (runId) {
+          if (this.activeRuns[eventThreadId]) this.activeRuns[eventThreadId].cursor = Number(seq)
+          try { sessionStorage.setItem(cursorKey(runId), String(seq)) } catch { /* Session storage is optional. */ }
+        }
+      }
+      this.syncVisibleMessages(eventThreadId)
     },
   },
 })

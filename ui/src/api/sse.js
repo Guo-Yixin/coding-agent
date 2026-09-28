@@ -1,10 +1,13 @@
 function parseBlock(block) {
   const dataLines = []
   let eventName = 'message'
+  let eventId = null
 
   for (const line of block.split(/\r?\n/)) {
     if (line.startsWith('event:')) {
       eventName = line.slice(6).trim()
+    } else if (line.startsWith('id:')) {
+      eventId = line.slice(3).trim()
     } else if (line.startsWith('data:')) {
       dataLines.push(line.slice(5).trimStart())
     }
@@ -17,31 +20,18 @@ function parseBlock(block) {
     return {
       event: payload.event,
       data: payload.data || {},
+      id: eventId,
     }
   }
 
   return {
     event: eventName,
     data: payload || {},
+    id: eventId,
   }
 }
 
-export async function streamAgentMessage(threadId, payload, { signal, onEvent }) {
-  const url = threadId
-    ? `/dashboard/api/threads/${encodeURIComponent(threadId)}/stream-message`
-    : '/dashboard/api/threads/stream-message'
-
-  const response = await fetch(url, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      Accept: 'text/event-stream',
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-    signal,
-  })
-
+async function consumeResponse(response, signal, onEvent) {
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
     throw new Error(body.detail || `SSE 请求失败：HTTP ${response.status}`)
@@ -62,7 +52,7 @@ export async function streamAgentMessage(threadId, payload, { signal, onEvent })
     buffer = blocks.pop() || ''
     for (const block of blocks) {
       const parsed = parseBlock(block)
-      if (parsed) onEvent(parsed.event, parsed.data)
+      if (parsed) onEvent(parsed.event, parsed.data, parsed.id)
     }
 
     if (done) break
@@ -70,6 +60,26 @@ export async function streamAgentMessage(threadId, payload, { signal, onEvent })
 
   if (buffer.trim()) {
     const parsed = parseBlock(buffer)
-    if (parsed) onEvent(parsed.event, parsed.data)
+    if (parsed) onEvent(parsed.event, parsed.data, parsed.id)
   }
+}
+
+export async function streamAgentMessage(threadId, payload, { signal, onEvent }) {
+  const url = threadId
+    ? `/dashboard/api/threads/${encodeURIComponent(threadId)}/stream-message`
+    : '/dashboard/api/threads/stream-message'
+  const response = await fetch(url, {
+    method: 'POST', credentials: 'include',
+    headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload), signal,
+  })
+  return consumeResponse(response, signal, onEvent)
+}
+
+export async function resumeAgentRun(threadId, runId, { signal, after = 0, onEvent }) {
+  const url = `/dashboard/api/threads/${encodeURIComponent(threadId)}/runs/${encodeURIComponent(runId)}/stream?after=${encodeURIComponent(after)}`
+  const response = await fetch(url, {
+    method: 'GET', credentials: 'include', headers: { Accept: 'text/event-stream' }, signal,
+  })
+  return consumeResponse(response, signal, onEvent)
 }

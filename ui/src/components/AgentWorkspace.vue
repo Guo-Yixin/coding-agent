@@ -1,21 +1,33 @@
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
 import ChatComposer from './ChatComposer.vue'
 import ChatMessage from './ChatMessage.vue'
+import ActiveTaskStrip from './ActiveTaskStrip.vue'
 import SessionSidebar from './SessionSidebar.vue'
+import CreateProjectDialog from './CreateProjectDialog.vue'
+import ConfirmProjectDeleteDialog from './ConfirmProjectDeleteDialog.vue'
 import { useSmartScroll } from '../composables/useSmartScroll'
 import { useAgentStore } from '../stores/agent'
 
 const agent = useAgentStore()
 const messageList = ref(null)
 const sidebarCollapsed = ref(false)
+const showProjectDialog = ref(false)
+const creatingProject = ref(false)
+const projectBeingEdited = ref(null)
+const projectPendingDelete = ref(null)
+const deletingProject = ref(false)
+const projectDeleteError = ref('')
+const collapsedProjectIds = ref([])
 const SIDEBAR_STORAGE_KEY = 'coding.sidebar.collapsed'
+const PROJECT_COLLAPSE_STORAGE_KEY = 'coding.sidebar.collapsed-projects'
 const isTitleEditing = ref(false)
 const titleDraft = ref('')
 const titleInput = ref(null)
 const titleSaving = ref(false)
 const titleError = ref('')
+let activeRunRefreshTimer = null
 const revisionPlan = ref(null)
 const pendingIntervention = computed(() => {
   if (agent.currentThread && Object.hasOwn(agent.currentThread, 'pendingIntervention')) {
@@ -62,6 +74,63 @@ const {
 
 function toggleSidebar() {
   sidebarCollapsed.value = !sidebarCollapsed.value
+}
+
+function onWorkspaceShortcut(event) {
+  if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'k') return
+  event.preventDefault()
+  createChatThread()
+}
+
+function openProjectDialog(project = null) {
+  projectBeingEdited.value = project
+  agent.error = ''
+  showProjectDialog.value = true
+}
+
+async function saveProject({ id, name, provider, repo }) {
+  creatingProject.value = true
+  agent.error = ''
+  try {
+    if (id) await agent.renameProject(id, name)
+    else await agent.createProject(name, provider, repo)
+    showProjectDialog.value = false
+    projectBeingEdited.value = null
+  } catch (error) {
+    agent.error = error.message || (id ? '重命名项目失败' : '创建项目失败')
+  } finally {
+    creatingProject.value = false
+  }
+}
+
+async function createChatThread() {
+  try { await agent.createChatThread() }
+  catch (error) { agent.error = error.message || '创建聊天失败' }
+}
+
+function toggleProject(projectId) {
+  const next = new Set(collapsedProjectIds.value)
+  next.has(projectId) ? next.delete(projectId) : next.add(projectId)
+  collapsedProjectIds.value = [...next]
+}
+
+async function confirmDeleteProject() {
+  if (!projectPendingDelete.value) return
+  deletingProject.value = true
+  projectDeleteError.value = ''
+  try {
+    await agent.deleteProject(projectPendingDelete.value.id)
+    projectPendingDelete.value = null
+  } catch (error) {
+    projectDeleteError.value = error.message || '删除项目失败'
+  } finally {
+    deletingProject.value = false
+  }
+}
+
+async function createProjectThread(projectId) {
+  try { await agent.createThread(projectId) }
+  catch (error) { agent.error = error.message || '创建会话失败' }
 }
 
 function startTitleEdit() {
@@ -120,7 +189,11 @@ function onTitleKeydown(event) {
 
 function statusLabel(status, streaming) {
   if (streaming || status === 'running') return '正在运行'
+  if (status === 'queued') return '排队中'
+  if (status === 'cancelling') return '正在取消'
   if (status === 'awaiting_approval') return '等待你介入'
+  if (status === 'cancelled') return '已取消'
+  if (status === 'interrupted') return '运行中断'
   if (status === 'error' || status === 'failed') return '运行失败'
   if (status === 'finished' || status === 'completed') return '已完成'
   return '等待任务'
@@ -184,10 +257,20 @@ function handleRunActivityExpand({ run_id }) {
 onMounted(() => {
   try {
     sidebarCollapsed.value = window.localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'true'
+    const savedCollapsedProjects = JSON.parse(window.localStorage.getItem(PROJECT_COLLAPSE_STORAGE_KEY) || '[]')
+    if (Array.isArray(savedCollapsedProjects)) collapsedProjectIds.value = savedCollapsedProjects
   } catch {
     // 本地存储不可用时保持默认展开状态。
   }
+  // Keep the empty workspace neutral: users may begin with a repository-free chat.
   agent.bootstrap()
+  window.addEventListener('keydown', onWorkspaceShortcut)
+  activeRunRefreshTimer = window.setInterval(() => agent.refreshActiveRuns(), 3000)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onWorkspaceShortcut)
+  if (activeRunRefreshTimer) window.clearInterval(activeRunRefreshTimer)
 })
 
 watch(sidebarCollapsed, (value) => {
@@ -197,18 +280,29 @@ watch(sidebarCollapsed, (value) => {
     // 本地存储不可用时不影响侧栏交互。
   }
 })
+
+watch(collapsedProjectIds, (value) => {
+  try { window.localStorage.setItem(PROJECT_COLLAPSE_STORAGE_KEY, JSON.stringify(value)) } catch { /* optional preference */ }
+})
 </script>
 
 <template>
   <main class="app-shell" :class="{ 'sidebar-collapsed': sidebarCollapsed }">
     <SessionSidebar
-      :threads="agent.threads"
+      :projects="agent.projects"
+      :standalone-threads="agent.standaloneThreads"
       :active-id="agent.currentThreadId"
-      :disabled="agent.streaming"
+      :disabled="false"
       :collapsed="sidebarCollapsed"
-      @new-thread="agent.createThread"
+      :collapsed-project-ids="collapsedProjectIds"
+      @new-chat="createChatThread"
+      @new-project="openProjectDialog()"
+      @new-thread="createProjectThread"
       @select-thread="agent.selectThread"
       @delete-thread="agent.deleteThread"
+      @rename-project="agent.renameProject($event.id, $event.name).catch(error => agent.error = error.message)"
+      @delete-project="projectPendingDelete = $event; projectDeleteError = ''"
+      @toggle-project="toggleProject"
       @toggle-collapse="toggleSidebar"
     />
     <button
@@ -251,8 +345,8 @@ watch(sidebarCollapsed, (value) => {
               <span v-if="titleSaving" class="title-save-state" aria-live="polite">保存中</span>
               <span v-else-if="titleError" class="title-save-error" :title="titleError">保存失败</span>
             </div>
-            <p class="workspace-repo">
-              {{ agent.currentThread?.repoFullName || agent.selectedRepo || '未选择仓库' }}
+            <p class="workspace-repo" :class="{ 'workspace-repo-chat': agent.currentThread?.chatOnly }">
+              {{ agent.currentThread?.chatOnly ? '普通聊天 · 未连接仓库' : agent.currentProject?.name ? `${agent.currentProject.name} · ${agent.currentThread?.repoFullName || agent.currentThread?.repo}` : agent.currentThread?.repoFullName || agent.currentThread?.repo || '选择一个项目，或新建普通聊天' }}
             </p>
           </div>
         </div>
@@ -261,20 +355,32 @@ watch(sidebarCollapsed, (value) => {
             <span class="status-pill-dot"></span>
             {{ statusLabel(agent.currentThread?.status, agent.streaming) }}
           </span>
-          <span v-if="agent.currentThread" class="branch-label" :title="agent.currentThread.branch ? '当前工作分支 → 基线分支' : '尚未记录实际工作分支'">
+          <span v-if="agent.currentThread && !agent.currentThread.chatOnly" class="branch-label" :title="agent.currentThread.branch ? '当前工作分支 → 基线分支' : '尚未记录实际工作分支'">
             {{ branchLabel }}
           </span>
           <a v-if="agent.currentThread?.pr?.url" :href="agent.currentThread.pr.url" target="_blank" rel="noreferrer">查看 PR</a>
         </div>
       </header>
 
+      <ActiveTaskStrip
+        :tasks="agent.activeTasks"
+        :active-id="agent.currentThreadId"
+        @select="agent.selectThread"
+        @cancel="agent.cancelRun($event.threadId, $event.runId)"
+      />
+
       <div ref="messageList" class="message-list" @scroll="onScroll">
         <div v-if="agent.loading" class="empty-state">正在加载会话...</div>
         <div v-else-if="!agent.messages.length" class="empty-state">
-          <img class="empty-mark" src="/coding-mark.svg" alt="CODING" />
-          <p class="eyebrow">开发工作台</p>
-          <h2>开始一个开发任务</h2>
-          <p>输入需求，CODING 会分析仓库、制定计划并执行验证。</p>
+          <div class="welcome-mark"><img class="empty-mark" src="/coding-mark.svg" alt="" /><span></span></div>
+          <p class="eyebrow">CODING · 开发工作台</p>
+          <h2>{{ agent.currentThread?.chatOnly ? '从一个好问题开始' : agent.currentProject ? `准备好继续构建${agent.currentProject.name}` : '让想法，开始成为产品' }}</h2>
+          <p>{{ agent.currentThread?.chatOnly ? '这是一个不连接仓库的独立聊天，可用于讨论方案、梳理思路与技术问答。' : agent.currentProject ? '描述你希望完成的工作，CODING 将围绕项目仓库分析、规划并推进任务。' : '开启一段自由对话，或创建一个绑定仓库的项目工作空间。' }}</p>
+          <div v-if="!agent.currentThread" class="welcome-actions">
+            <button type="button" class="welcome-primary" @click="createChatThread">开始新聊天</button>
+            <button type="button" class="welcome-secondary" @click="openProjectDialog()">创建项目</button>
+          </div>
+          <div v-else class="welcome-capabilities"><span>独立会话</span><span>{{ agent.currentThread.chatOnly ? '纯对话模式' : '仓库上下文' }}</span><span>{{ agent.selectedModel }}</span></div>
         </div>
 
         <ChatMessage
@@ -303,18 +409,38 @@ watch(sidebarCollapsed, (value) => {
       </button>
 
       <ChatComposer
-        v-model:repo="agent.selectedRepo"
-        v-model:provider="agent.selectedProvider"
-        :providers="agent.options?.providers || []"
+        :draft="agent.currentDraft"
+        @update:draft="agent.setDraft(agent.currentThreadId, $event)"
+        :repo="agent.currentThread?.repoFullName || agent.currentThread?.repo || ''"
+        :provider="agent.currentThread?.provider || 'github'"
+        :chat-only="!agent.currentThread || !!agent.currentThread.chatOnly"
         :disabled="agent.streaming"
         :locked="!!pendingIntervention"
         :locked-hint="pendingIntervention ? '此会话正在等待人工介入答复，请在上方确认卡片中提交答复后继续。' : ''"
         :model="agent.selectedModel"
+        :models="agent.modelOptions"
         :effort="agent.selectedEffort"
         :interaction-hint="revisionPlan ? `正在调整方案 V${revisionPlan.version || 1}` : ''"
         @send="submitMessage"
+        @update:model="agent.setSelectedModel"
         @cancel-interaction="revisionPlan = null"
         @stop="agent.stopStream"
+      />
+      <CreateProjectDialog
+        v-if="showProjectDialog"
+        :project="projectBeingEdited"
+        :busy="creatingProject"
+        :error-message="creatingProject ? '' : agent.error"
+        @close="showProjectDialog = false"
+        @save="saveProject"
+      />
+      <ConfirmProjectDeleteDialog
+        v-if="projectPendingDelete"
+        :project="projectPendingDelete"
+        :busy="deletingProject"
+        :error-message="projectDeleteError"
+        @close="projectPendingDelete = null"
+        @confirm="confirmDeleteProject"
       />
     </section>
   </main>

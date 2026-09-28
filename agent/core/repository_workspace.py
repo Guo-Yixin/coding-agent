@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,10 @@ from agent.core.repo_memory import repo_project_dir
 from agent.repository import Repository, parse_repo_url
 
 logger = logging.getLogger(__name__)
+_TRANSIENT_GIT_NETWORK_ERRORS = (
+    "failed to receive handshake", "ssl/tls connection", "connection reset",
+    "connection timed out", "could not resolve host", "early eof", "remote end hung up",
+)
 
 
 class RepositoryWorkspaceError(RuntimeError):
@@ -34,6 +39,16 @@ def task_branch_name(thread_id: str) -> str:
 
 def _run(backend: Any, command: str, *, cwd: str, timeout: int = 300) -> Any:
     result = backend.run(command, cwd=cwd, timeout=timeout)
+    if command.startswith("git fetch"):
+        for attempt in range(1, 4):
+            detail = f"{result.stderr}\n{result.stdout}".lower()
+            if result.exit_code == 0 or not any(token in detail for token in _TRANSIENT_GIT_NETWORK_ERRORS):
+                break
+            if attempt == 3:
+                break
+            logger.warning("Transient Git fetch network failure; retry %s/2 in %s second(s)", attempt, attempt)
+            time.sleep(attempt)
+            result = backend.run(command, cwd=cwd, timeout=timeout)
     combined_output = f"{result.stdout}\n{result.stderr}".lower()
     if result.exit_code != 0 and command.startswith("git fetch") and "cannot open .git/fetch_head" in combined_output:
         # Preserve the existing Windows recovery for a stale/locked FETCH_HEAD,
@@ -136,6 +151,7 @@ def prepare_repository_workspace(
     *,
     thread_id: str | None = None,
     create_task_branch: bool = False,
+    workspace_directory: str | None = None,
 ) -> PreparedRepositoryWorkspace:
     """Clone or validate the exact selected repository, then select a safe base.
 
@@ -144,13 +160,17 @@ def prepare_repository_workspace(
     its non-interactive provider credentials and token redaction remain in effect.
     """
 
-    directory = repo_project_dir(repo).replace("\\", "/")
+    directory = (workspace_directory or repo_project_dir(repo)).replace("\\", "/").strip("/")
+    if not directory or any(part in {".", ".."} for part in directory.split("/")):
+        raise RepositoryWorkspaceError("任务工作区路径不安全")
     target = backend.workspace.resolve(directory)
     project_root = backend.projects_dir
     project_root.mkdir(parents=True, exist_ok=True)
 
     if not target.exists():
-        clone = backend.run(f"git clone -- {repo.clone_url} {target.name}", cwd="projects", timeout=600)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        relative_target = target.relative_to(project_root).as_posix()
+        clone = backend.run(f"git clone -- {repo.clone_url} {relative_target}", cwd="projects", timeout=600)
         if clone.exit_code != 0:
             detail = (clone.stderr or clone.stdout or "克隆失败").strip()
             raise RepositoryWorkspaceError(f"无法克隆所选 {repo.provider} 仓库 {repo.full_name}：{detail}")

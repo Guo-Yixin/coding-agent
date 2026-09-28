@@ -6,10 +6,13 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  draft: { type: String, default: '' },
   model: {
     type: String,
     default: '',
   },
+  models: { type: Array, default: () => [] },
+  chatOnly: { type: Boolean, default: false },
   effort: {
     type: String,
     default: 'default',
@@ -21,10 +24,6 @@ const props = defineProps({
   provider: {
     type: String,
     default: 'github',
-  },
-  providers: {
-    type: Array,
-    default: () => [],
   },
   locked: {
     type: Boolean,
@@ -40,35 +39,14 @@ const props = defineProps({
   },
 })
 
-const emit = defineEmits(['send', 'stop', 'cancel-interaction', 'update:repo', 'update:provider'])
-const draft = shallowRef('')
+const emit = defineEmits(['send', 'stop', 'cancel-interaction', 'update:draft', 'update:model'])
 const inputRef = shallowRef(null)
+const draft = computed({ get: () => props.draft, set: (value) => emit('update:draft', value) })
 
-const modelLabel = computed(() => props.model || 'deepseek-v4-pro')
 const effortLabel = computed(() => props.effort || 'default')
 const canSend = computed(() => !props.disabled && !props.locked && Boolean(draft.value.trim()))
 
-const githubUrlPattern = /^https?:\/\/(?:www\.)?github\.com\/[\w.-]+\/[\w.-]+(?:\.git)?\/?$/i
-const giteeUrlPattern = /^https?:\/\/(?:www\.)?gitee\.com\/[\w.-]+\/[\w.-]+(?:\.git)?\/?$/i
-const shortRepoPattern = /^[\w.-]+\/[\w.-]+$/
-
-const providerLabel = computed(() => {
-  const selected = props.providers.find((item) => item.id === props.provider)
-  return selected?.label || (props.provider === 'gitee' ? 'Gitee' : 'GitHub')
-})
-const repoPlaceholder = computed(() => {
-  const selected = props.providers.find((item) => item.id === props.provider)
-  return selected?.url_placeholder || `${props.provider === 'gitee' ? 'https://gitee.com' : 'https://github.com'}/owner/repo`
-})
-
-const repoStatus = computed(() => {
-  const value = props.repo.trim()
-  if (!value) return { label: '待填写', className: 'empty' }
-  if (githubUrlPattern.test(value) || giteeUrlPattern.test(value) || shortRepoPattern.test(value)) {
-    return { label: '已识别', className: 'ready' }
-  }
-  return { label: '检查地址', className: 'warning' }
-})
+const providerLabel = computed(() => props.provider === 'gitee' ? 'Gitee' : 'GitHub')
 
 function resizeTextarea() {
   const element = inputRef.value
@@ -80,7 +58,6 @@ function resizeTextarea() {
 function send() {
   const content = draft.value.trim()
   if (!content || props.disabled || props.locked) return
-  draft.value = ''
   nextTick(resizeTextarea)
   emit('send', content)
 }
@@ -101,16 +78,6 @@ function stop() {
   emit('stop')
 }
 
-function changeProvider(event) {
-  const nextProvider = event.target.value
-  emit('update:provider', nextProvider)
-  const current = props.repo.trim().toLowerCase()
-  const isGithubUrl = current.includes('github.com/')
-  const isGiteeUrl = current.includes('gitee.com/')
-  if ((nextProvider === 'github' && isGiteeUrl) || (nextProvider === 'gitee' && isGithubUrl)) {
-    emit('update:repo', '')
-  }
-}
 </script>
 
 <template>
@@ -124,7 +91,7 @@ function changeProvider(event) {
       ref="inputRef"
       v-model="draft"
       :disabled="disabled || locked"
-      :placeholder="locked ? '请先在人工介入卡片中答复…' : interactionHint ? '描述你希望如何调整方案…' : '描述你希望 CODING 完成的任务…'"
+      :placeholder="locked ? '请先在人工介入卡片中答复…' : interactionHint ? '描述你希望如何调整方案…' : chatOnly ? '写下你的问题、想法，或想一起推敲的技术难题…' : '描述你希望 CODING 在仓库中完成的工作…'"
       aria-label="任务指令"
       @input="onDraftInput"
       @keydown="onKeydown"
@@ -132,37 +99,22 @@ function changeProvider(event) {
 
     <div class="composer-footer">
       <div class="composer-meta">
-        <span class="meta-chip"><span class="meta-label">模型</span>{{ modelLabel }}</span>
-        <span class="meta-chip"><span class="meta-label">推理</span>{{ effortLabel }}</span>
+        <label class="model-picker" aria-label="选择模型">
+          <span class="model-picker-orbit" aria-hidden="true">✳</span>
+          <select :value="model" :disabled="disabled || models.length < 2" aria-label="选择模型" @change="emit('update:model', $event.target.value)">
+            <option v-for="option in models" :key="option.id" :value="option.id">{{ option.label }}</option>
+          </select>
+          <span class="model-picker-chevron" aria-hidden="true">⌄</span>
+        </label>
+        <span class="meta-chip reasoning-meta"><span class="meta-label">推理</span>{{ effortLabel }}</span>
       </div>
-      <label class="repo-control">
+      <div v-if="chatOnly" class="composer-chat-context"><span class="chat-context-dot"></span>普通聊天</div>
+      <label v-else class="repo-control">
         <span class="repo-control-label">仓库</span>
-        <select
-          class="repo-provider-select"
-          :value="provider"
-          :disabled="disabled || locked"
-          aria-label="仓库平台"
-          @change="changeProvider"
-        >
-          <option v-for="item in providers" :key="item.id" :value="item.id">
-            {{ item.label }}
-          </option>
-          <option v-if="!providers.length" value="github">GitHub</option>
-          <option v-if="!providers.length" value="gitee">Gitee</option>
-        </select>
-        <span class="repo-control-input">
+        <span class="repo-control-input repo-control-fixed" :title="repo">
           <span class="sr-only">{{ providerLabel }} 仓库地址</span>
-          <input
-            :value="repo"
-            :disabled="disabled || locked"
-            :placeholder="repoPlaceholder"
-            :aria-label="`${providerLabel} 仓库地址`"
-            @input="emit('update:repo', $event.target.value)"
-          />
-          <span class="repo-status" :class="repoStatus.className">
-            <span class="repo-status-dot"></span>
-            <span class="sr-only">{{ repoStatus.label }}</span>
-          </span>
+          <span class="repo-provider-label">{{ providerLabel }}</span>
+          <span class="repo-fixed-name">{{ repo || '请先新建项目并选择仓库' }}</span>
         </span>
       </label>
       <button v-if="disabled" class="stop-button" type="button" @click="stop">

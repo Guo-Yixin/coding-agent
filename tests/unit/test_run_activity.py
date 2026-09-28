@@ -195,6 +195,11 @@ def test_run_activity_endpoint_returns_safe_run_scoped_events(monkeypatch):
                     "created_at": datetime(2026, 9, 25, 8, 0, 3, tzinfo=UTC),
                     "detail": "secret output should not be exposed",
                 },
+                {
+                    "id": "run-failure", "kind": "think", "title": "任务失败", "status": "error",
+                    "created_at": datetime(2026, 9, 25, 8, 0, 4, tzinfo=UTC),
+                    "detail": "git clone failed: schannel: failed to receive handshake",
+                },
             ]
 
         def list_thread_messages(self, _thread_id):
@@ -210,6 +215,9 @@ def test_run_activity_endpoint_returns_safe_run_scoped_events(monkeypatch):
     assert result["events"][1]["detail"] == {}
     assert result["events"][2]["detail"]["complete"] is False
     assert result["events"][3]["detail"] == {}
+    assert result["events"][4]["detail"]["text"] == (
+        "git clone failed: schannel: failed to receive handshake"
+    )
 
 
 def test_run_activity_endpoint_rejects_run_from_another_thread(monkeypatch):

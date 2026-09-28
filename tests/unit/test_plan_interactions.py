@@ -103,7 +103,7 @@ def test_runtime_resumes_interrupted_coding_run_instead_of_replanning(tmp_path, 
     ))
     monkeypatch.setattr(runtime, "_build_agent_for_runtime", lambda **_kwargs: object())
     monkeypatch.setattr(runtime, "WorkerLeaseManager", lambda _store: Lease())
-    monkeypatch.setattr(runtime, "_detect_current_branch", lambda _repo: "codex/task")
+    monkeypatch.setattr(runtime, "_detect_current_branch", lambda _repo, **_kwargs: "codex/task")
     monkeypatch.setattr(runtime, "run_agent_with_event_stream", lambda **kwargs: (
         captured.update(kwargs) or {"messages": [], "interrupts": []}
     ))

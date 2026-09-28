@@ -17,6 +17,7 @@ def test_dashboard_model_defaults_to_configured_model(monkeypatch):
 def test_dashboard_rejects_model_not_exposed_by_configuration(monkeypatch):
     monkeypatch.setattr(dashboard_routes, "get_env", lambda _name, default: "deepseek-flash")
 
+    monkeypatch.setattr(model, "get_env", lambda name, default: "deepseek-flash" if name == "MAIN_MODEL" else "deepseek-flash")
     with pytest.raises(HTTPException) as exc_info:
         dashboard_routes._normalize_dashboard_model_id("deepseek-v4-pro")
 
@@ -38,8 +39,28 @@ def test_main_model_factory_rejects_unconfigured_model(monkeypatch):
     monkeypatch.setattr(model, "get_env", lambda _name, default: "deepseek-flash")
     monkeypatch.setattr(model, "init_chat_model", lambda **_kwargs: pytest.fail("must not initialize"))
 
-    with pytest.raises(ValueError, match="MAIN_MODEL"):
+    with pytest.raises(ValueError, match="AGENT_AVAILABLE_MODELS"):
         model.make_main_model("unconfigured-model")
+
+
+def test_model_allow_list_always_includes_default_and_deduplicates(monkeypatch):
+    monkeypatch.setattr(model, "get_env", lambda name, default: {
+        "MAIN_MODEL": "deepseek-flash", "AGENT_AVAILABLE_MODELS": "deepseek-v4-pro, deepseek-flash,deepseek-v4-pro",
+    }.get(name, default))
+
+    assert model.available_agent_models() == ["deepseek-flash", "deepseek-v4-pro"]
+
+
+def test_dashboard_options_exposes_server_model_allow_list(monkeypatch):
+    monkeypatch.setattr(dashboard_routes, "get_env", lambda name, default: "deepseek-flash" if name == "MAIN_MODEL" else default)
+    monkeypatch.setattr(model, "get_env", lambda name, default: {
+        "MAIN_MODEL": "deepseek-flash", "AGENT_AVAILABLE_MODELS": "deepseek-v4-pro",
+    }.get(name, default))
+
+    options = dashboard_routes.dashboard_options()
+
+    assert [item["id"] for item in options["models"]] == ["deepseek-flash", "deepseek-v4-pro"]
+    assert options["default_agent_model"] == "deepseek-flash"
 
 
 def test_runtime_passes_model_id_to_agent_config(monkeypatch):
