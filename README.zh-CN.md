@@ -17,10 +17,10 @@
 
 <p align="center">
   <a href="assets/demo/coding-agent-demo.mp4">
-    <img src="assets/demo/coding-agent-demo-poster.png" alt="点击观看 CODING 1080p 演示：检索仓库、修改代码、运行检查并交付 Pull Request" width="100%">
+    <img src="assets/demo/coding-agent-demo-autoplay.webp" alt="自动播放的 CODING 1080p 演示：检索仓库、修改代码、运行检查并交付 Pull Request" width="100%">
   </a>
 </p>
-<p align="center">▶ <a href="assets/demo/coding-agent-demo.mp4">观看 89 秒 1080p 完整演示</a></p>
+<p align="center">▶ 89 秒 1080p 自动播放预览 · <a href="assets/demo/coding-agent-demo.mp4">打开带播放控件的高清完整视频</a></p>
 
 ## CODING 是什么
 
