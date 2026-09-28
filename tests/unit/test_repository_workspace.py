@@ -33,7 +33,7 @@ class FakeGitBackend:
         if command.startswith("git clone -- "):
             _, _, _, url, dirname = command.split(maxsplit=4)
             target = self.projects_dir / dirname
-            target.mkdir()
+            target.mkdir(parents=True)
             (target / ".git").mkdir()
             self.remote_url = url
             self.cloned = True
@@ -84,6 +84,44 @@ def test_prepares_selected_github_repo_in_isolated_directory(tmp_path: Path) -> 
     assert backend.cloned is True
     assert "git clone -- https://github.com/Guo-Yixin/test-coding-repo.git github-Guo-Yixin-test-coding-repo" in backend.commands
     assert not any(command.startswith("git remote set-url") for command in backend.commands)
+
+
+def test_retries_transient_fetch_tls_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = parse_repo_url("https://github.com/owner/repo")
+    backend = FakeGitBackend(tmp_path, remote_url=repo.clone_url)
+    original_run = backend.run
+    fetch_attempts = 0
+
+    def flaky_run(command: str, **kwargs):
+        nonlocal fetch_attempts
+        if command == "git fetch origin --prune":
+            fetch_attempts += 1
+            if fetch_attempts == 1:
+                return backend._result(128, stderr="fatal: SSL/TLS connection failed")
+        return original_run(command, **kwargs)
+
+    monkeypatch.setattr(backend, "run", flaky_run)
+    monkeypatch.setattr("agent.core.repository_workspace.time.sleep", lambda _seconds: None)
+    prepare_repository_workspace(repo, backend)
+    assert fetch_attempts == 2
+
+
+def test_prepares_same_repository_in_distinct_thread_directories(tmp_path: Path) -> None:
+    repo = parse_repo_url("https://github.com/owner/repo")
+    backend = FakeGitBackend(tmp_path)
+
+    first = prepare_repository_workspace(
+        repo, backend, thread_id="thread-a", workspace_directory="projects/.tasks/a/repo"
+    )
+    backend_two = FakeGitBackend(tmp_path)
+    second = prepare_repository_workspace(
+        repo, backend_two, thread_id="thread-b", workspace_directory="projects/.tasks/b/repo"
+    )
+
+    assert first.directory == "projects/.tasks/a/repo"
+    assert second.directory == "projects/.tasks/b/repo"
+    assert "git clone -- https://github.com/owner/repo.git .tasks/a/repo" in backend.commands
+    assert "git clone -- https://github.com/owner/repo.git .tasks/b/repo" in backend_two.commands
 
 
 def test_uses_remote_default_branch_instead_of_provider_guess(tmp_path: Path) -> None:
@@ -155,6 +193,34 @@ def test_local_shell_backend_defaults_to_thread_repository_directory(tmp_path: P
     assert backend.get_work_dir() == "/projects/github-owner-repo"
     cwd, _ = backend._prepare_run_command("git status", ".")
     assert cwd == tmp_path / "projects" / "github-owner-repo"
+
+
+def test_selected_repository_binds_isolated_checkout_to_virtual_projects_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from agent.core import runtime
+
+    repo = parse_repo_url("https://github.com/owner/repo")
+    prepared = runtime.PreparedRepositoryWorkspace(
+        directory="projects/.tasks/thread-hash/repo", default_branch="main", current_branch="main"
+    )
+    target = tmp_path / "projects" / ".tasks" / "thread-hash" / "repo"
+    target.mkdir(parents=True)
+    bound_backends: list[LocalShellBackend] = []
+
+    class CapturingLocalShellBackend(LocalShellBackend):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            bound_backends.append(self)
+
+    monkeypatch.setattr(runtime, "WORKSPACE_ROOT", tmp_path)
+    monkeypatch.setattr(runtime, "LocalShellBackend", CapturingLocalShellBackend)
+    monkeypatch.setattr(runtime, "get_env", lambda *_args: "")
+    monkeypatch.setattr(runtime, "prepare_repository_workspace", lambda *_args, **_kwargs: prepared)
+
+    runtime._prepare_selected_repository(repo, thread_id="thread-id")
+
+    assert bound_backends[0].get_work_dir() == "/projects/.tasks/thread-hash/repo"
 
 
 def test_local_shell_backend_rejects_working_directory_traversal(tmp_path: Path) -> None:

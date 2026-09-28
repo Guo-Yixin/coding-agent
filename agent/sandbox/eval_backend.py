@@ -31,19 +31,32 @@ class OpenSandboxEvalBackend(LocalShellBackend):
 
     _sandbox_root = ""
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(
+        self, *args: Any, runtime_case_repo: str | Path | None = None,
+        runtime_repo_url: str | None = None, runtime_branch: str | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(*args, **kwargs)
         from agent.sandbox.opensandbox_executor import OpenSandboxConfig
 
         self.executor = OpenSandboxExecutor(OpenSandboxConfig.from_env())
-        self.case_repo = Path(os.environ["EVAL_CASE_REPO"]).expanduser().resolve()
-        self.repo_url = os.environ["EVAL_REPO_URL"].strip()
+        self.runtime_mode = runtime_case_repo is not None
+        if self.runtime_mode:
+            self.case_repo = Path(runtime_case_repo).expanduser().resolve()
+            self.repo_url = str(runtime_repo_url or "").strip()
+            if not self.repo_url:
+                raise ValueError("OpenSandbox runtime requires a selected repository URL")
+            self.runtime_branch = runtime_branch or "codex/sandbox-task"
+        else:
+            self.case_repo = Path(os.environ["EVAL_CASE_REPO"]).expanduser().resolve()
+            self.repo_url = os.environ["EVAL_REPO_URL"].strip()
+            self.runtime_branch = "eval-baseline"
         self._closed = False
         self._uploaded_file_count = 0
         self._uploaded_bytes = 0
         self._execute_injection_remaining = 0
         self._pending_execute_recovery: str | None = None
-        case_config = os.environ.get("EVAL_CASE_CONFIG", "").strip()
+        case_config = "" if self.runtime_mode else os.environ.get("EVAL_CASE_CONFIG", "").strip()
         if case_config:
             try:
                 payload = json.loads(Path(case_config).read_text(encoding="utf-8"))
@@ -53,9 +66,25 @@ class OpenSandboxEvalBackend(LocalShellBackend):
             except (OSError, json.JSONDecodeError, AttributeError):
                 pass
         self._sandbox_id = self.executor.start()
-        atexit.register(self.close)
-        self._upload_snapshot()
-        self._initialize_candidate_repo()
+        atexit.register(self._close_at_exit)
+        try:
+            self._upload_snapshot()
+            self._initialize_candidate_repo()
+        except Exception:
+            self._closed = True
+            try:
+                self.executor.close()
+            except Exception:
+                pass
+            raise
+
+    def _close_at_exit(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            # Explicit runtime close surfaces export/cleanup errors to the worker;
+            # interpreter shutdown must not emit an unhandled atexit traceback.
+            pass
 
     @property
     def id(self) -> str:
@@ -78,7 +107,21 @@ class OpenSandboxEvalBackend(LocalShellBackend):
     def _upload_snapshot(self) -> None:
         from agent.sandbox.opensandbox_executor import collect_safe_workspace_files
 
-        files = collect_safe_workspace_files(self.root, max_file_bytes=self.executor.config.max_upload_bytes)
+        if self.runtime_mode:
+            roots = [self.case_repo, self.skills_dir, self.policies_dir]
+            files = []
+            for source_root in roots:
+                if not source_root.is_dir():
+                    continue
+                prefix = source_root.resolve().relative_to(self.root.resolve()).as_posix()
+                files.extend(
+                    type(item)(path=f"{prefix}/{item.path}", data=item.data, mode=item.mode)
+                    for item in collect_safe_workspace_files(
+                        source_root, max_file_bytes=self.executor.config.max_upload_bytes
+                    )
+                )
+        else:
+            files = collect_safe_workspace_files(self.root, max_file_bytes=self.executor.config.max_upload_bytes)
         total_bytes = sum(len(item.data) for item in files)
         if total_bytes > 32 * 1024 * 1024:
             raise ValueError("Eval workspace snapshot exceeds the 32 MiB OpenSandbox upload budget")
@@ -89,7 +132,7 @@ class OpenSandboxEvalBackend(LocalShellBackend):
         remote_repo = self._remote_path(self.working_dir)
         commands = [
             "mkdir -p " + shlex.quote(remote_repo),
-            "git init -b eval-baseline " + shlex.quote(remote_repo),
+            "git init -b " + shlex.quote(self.runtime_branch) + " " + shlex.quote(remote_repo),
             "git -C " + shlex.quote(remote_repo) + " config user.name 'Agent Eval'",
             "git -C " + shlex.quote(remote_repo) + " config user.email 'agent-eval@localhost'",
             "git -C " + shlex.quote(remote_repo) + " add -A",
@@ -101,7 +144,7 @@ class OpenSandboxEvalBackend(LocalShellBackend):
         )
         if provision.exit_code != 0:
             raise RuntimeError("Could not initialize isolated sandbox Git baseline")
-        tools = self.executor.execute("git --version && python -m pytest --version", cwd=remote_repo)
+        tools = self.executor.execute("git --version && python --version", cwd=remote_repo)
         if tools.exit_code != 0:
             raise RuntimeError("The configured OpenSandbox image must include git and pytest")
 
@@ -126,8 +169,8 @@ class OpenSandboxEvalBackend(LocalShellBackend):
             denied = self._deny_reason(command)
             if denied:
                 return ExecuteResponse(output=f"命令被拒绝：{denied}", exit_code=126, truncated=False)
-        if os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() == "1" and self._blocks_git_write(command):
-            return ExecuteResponse(output="Agent Eval blocks Git write and remote-sync commands", exit_code=126, truncated=False)
+        if (getattr(self, "runtime_mode", False) or os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() == "1") and self._blocks_git_write(command):
+            return ExecuteResponse(output="OpenSandbox blocks Git history and remote write commands", exit_code=126, truncated=False)
         remote_command = self._map_command_paths(command)
         try:
             result = self.executor.execute(
@@ -361,6 +404,44 @@ class OpenSandboxEvalBackend(LocalShellBackend):
                 evidence["cleanup_succeeded"] = True
             except Exception as exc:
                 evidence["cleanup_error"] = type(exc).__name__
+        return evidence
+
+    @staticmethod
+    def _record(event_type: str, payload: dict[str, Any]) -> None:
+        try:
+            from agent.evals.telemetry import record_eval_event
+
+            record_eval_event(event_type, payload)
+        except Exception:
+            pass
+
+
+class OpenSandboxRuntimeBackend(OpenSandboxEvalBackend):
+    """Per-run remote backend that exports only its checkout patch to the host."""
+
+    def __init__(
+        self, *, working_dir: str, case_repo: str | Path, repo_url: str,
+        branch_name: str, provider: str | None = None,
+    ) -> None:
+        super().__init__(
+            provider=provider,
+            working_dir=working_dir,
+            runtime_case_repo=case_repo,
+            runtime_repo_url=repo_url,
+            runtime_branch=branch_name,
+        )
+
+    def close(self) -> dict[str, Any]:
+        previous = getattr(self, "_runtime_close_evidence", None)
+        if previous is not None:
+            return previous
+        evidence = super().close()
+        self._runtime_close_evidence = evidence
+        if not evidence.get("host_patch_exported") or not evidence.get("cleanup_succeeded"):
+            raise RuntimeError(
+                "OpenSandbox runtime could not safely export the task patch or destroy its sandbox: "
+                + str(evidence.get("error") or evidence.get("cleanup_error") or "unknown failure")
+            )
         return evidence
 
     @staticmethod

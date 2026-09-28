@@ -53,6 +53,58 @@ logger = logging.getLogger("agent.run.runtime")
 RuntimeEventSink = Callable[[str, dict[str, Any]], None]
 
 
+def run_plain_chat_task(
+    *, thread_id: str, run_id: str, model_id: str | None, event_sink: RuntimeEventSink,
+) -> dict[str, Any]:
+    """Run a repository-free, multi-turn chat without tools or workspace access."""
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+    from agent.core.model import make_main_model
+
+    store = get_store()
+    thread = store.get_thread(thread_id)
+    if thread is None or thread.get("project_id") or thread.get("repo_url"):
+        raise ValueError("纯聊天会话不能关联项目或代码仓库")
+    history = store.list_thread_messages(thread_id)
+    model_messages = [SystemMessage(content=(
+        "你是 CODING 开发工作台中的通用助手。当前会话未连接代码仓库，也没有文件或命令工具；"
+        "请基于对话内容直接回答，不要声称已经检查或修改任何本地文件。"
+    ))]
+    for item in history[-40:]:
+        content = str(item.get("content") or "")
+        if not content:
+            continue
+        if item.get("author") == "user":
+            model_messages.append(HumanMessage(content=content))
+        elif item.get("author") == "agent":
+            model_messages.append(AIMessage(content=content))
+    message_id = f"{thread_id}-assistant-{run_id}"
+    event_sink("message_start", {"message_id": message_id, "author": "agent"})
+    response_parts: list[str] = []
+    for chunk in make_main_model(model_id).stream(model_messages):
+        value = chunk.content
+        if isinstance(value, str):
+            text = value
+        elif isinstance(value, list):
+            text = "".join(
+                str(part.get("text", "")) for part in value if isinstance(part, dict) and part.get("type") == "text"
+            )
+        else:
+            text = ""
+        if text:
+            response_parts.append(text)
+            event_sink("text_delta", {"message_id": message_id, "content": text, "mode": "append"})
+    response = "".join(response_parts).strip()
+    if not response:
+        raise RuntimeError("模型没有返回可显示的文本")
+    store.add_thread_message(
+        message_id=message_id, thread_id=thread_id, author="agent", content=response,
+        run_id=run_id, metadata={"source": "dashboard_chat", "model_id": model_id},
+    )
+    store.update_thread_status(thread_id, "completed")
+    return {"thread_id": thread_id, "run_id": run_id, "status": "completed", "content": response}
+
+
 def _record_todo_completion_guard(store: Any, *, thread_id: str, run_id: str) -> dict[str, int | bool] | None:
     """Persist a visible warning when a normal run ends with unfinished todos."""
 
@@ -84,6 +136,8 @@ def _build_agent_for_runtime(
     task_kind: str,
     repo_url: str | None = None,
     model_id: str | None = None,
+    workspace_dir: str | None = None,
+    run_id: str | None = None,
 ):
     """为 FastAPI runtime 构造 open-swe 风格的 Agent config。
 
@@ -111,6 +165,10 @@ def _build_agent_for_runtime(
         configurable["repo_url"] = repo_url
     if model_id:
         configurable["model_id"] = model_id
+    if workspace_dir:
+        configurable["workspace_dir"] = workspace_dir
+    if run_id:
+        configurable["run_id"] = run_id
     return get_agent({"configurable": configurable})
 
 
@@ -142,12 +200,24 @@ def _prepare_selected_repository(
             raise RepositoryWorkspaceError("Cannot read the isolated Eval repository branch")
         branch = branch_result.stdout.strip() or "eval"
         return PreparedRepositoryWorkspace(directory=directory, default_branch=branch, current_branch=branch)
-    return prepare_repository_workspace(
+    # A thread owns a stable checkout. Separate threads never switch branches in
+    # the same Git directory, so parallel writes cannot race through .git/index.
+    import hashlib
+    isolated_directory = (
+        f"projects/.tasks/{hashlib.sha256(thread_id.encode('utf-8')).hexdigest()[:20]}/"
+        f"{repo_project_dir(repo).split('/')[-1]}"
+    )
+    prepared = prepare_repository_workspace(
         repo,
         backend,
         thread_id=thread_id,
         create_task_branch=create_task_branch,
+        workspace_directory=isolated_directory,
     )
+    # PreparedRepositoryWorkspace stores a host-relative path ("projects/...").
+    # LocalShellBackend accepts only its virtual namespace rooted at "/projects".
+    backend.set_working_dir("/" + prepared.directory.replace("\\\\", "/").strip("/"))
+    return prepared
 
 
 def _ensure_repo_memory_for_repo(repo: Any, project_dir: str) -> None:
@@ -169,10 +239,10 @@ def _ensure_repo_memory_for_repo(repo: Any, project_dir: str) -> None:
         logger.info("已初始化仓库记忆：repo=%s/%s", repo.owner, repo.repo)
 
 
-def _detect_current_branch(repo: Any) -> str | None:
+def _detect_current_branch(repo: Any, *, workspace_directory: str | None = None) -> str | None:
     """读取当前仓库实际工作分支，供 Dashboard 会话元信息展示。"""
 
-    project_dir = repo_project_dir(repo)
+    project_dir = workspace_directory or repo_project_dir(repo)
     backend = LocalShellBackend(Workspace(WORKSPACE_ROOT), provider=repo.provider)
     target = backend.workspace.resolve(project_dir)
     if not (target / ".git").exists():
@@ -323,6 +393,7 @@ def _build_agent_user_content(
     display_prompt: str | None = None,
     approved_plan: str | None = None,
     thread_id: str | None = None,
+    workspace_directory: str | None = None,
 ) -> str:
     """构造发送给 DeepAgent 的用户内容，避免只读任务被误导去创建 PR。
 
@@ -344,7 +415,7 @@ def _build_agent_user_content(
 
     visible_prompt = (display_prompt or prompt).strip()
     repo = parse_repo_url(repo_url)
-    repo_working_dir = "/" + repo_project_dir(repo).replace("\\", "/")
+    repo_working_dir = "/" + (workspace_directory or repo_project_dir(repo)).replace("\\", "/")
     if task_kind == "coding":
         branch_instruction = (
             f"当前任务分支为 `{task_branch_name(thread_id)}`；请保留该分支，不要切回 main/master。"
@@ -359,6 +430,12 @@ def _build_agent_user_content(
                 "这是隔离评测中的开发实现任务。可以修改当前隔离仓库并运行验证；禁止提交、push、创建/评论 PR 或 Issue，"
                 "禁止访问当前仓库之外的文件。完成后说明改动和真实运行的验证结果。"
                 f"{plan_instruction}"
+            )
+        elif get_env("CODING_AGENT_RUNTIME_BACKEND", "local").strip().lower() == "opensandbox":
+            task_instruction = (
+                "本轮在一次性 OpenSandbox 中执行；请只修改当前任务仓库并运行验证。"
+                "不要提交、push 或创建 Pull Request；沙箱结束后系统会把变更导出到该任务分支供用户审阅。"
+                f"{branch_instruction}{plan_instruction}"
             )
         else:
             task_instruction = (
@@ -391,6 +468,7 @@ def _build_plan_user_content(
     prompt: str,
     previous_plan: str | None = None,
     revision_prompt: str | None = None,
+    workspace_directory: str | None = None,
 ) -> str:
     """构造专门用于生成技术方案的只读任务内容。
 
@@ -402,7 +480,7 @@ def _build_plan_user_content(
     """
 
     repo = parse_repo_url(repo_url)
-    repo_working_dir = "/" + repo_project_dir(repo).replace("\\", "/")
+    repo_working_dir = "/" + (workspace_directory or repo_project_dir(repo)).replace("\\", "/")
     workspace_instruction = (
         f"所选仓库唯一工作目录：{repo_working_dir}；命令默认 cwd 已是此仓库根。请只从该目录读取仓库内容；"
         "不要把 projects 下其他目录当成本轮仓库，也不要修改 origin。\n\n"
@@ -710,7 +788,7 @@ def initialize_task_record(
     return thread_id
 
 
-def run_workspace_listing_task(*, repo_url: str, prompt: str, thread_id: str | None = None) -> dict[str, Any]:
+def run_workspace_listing_task(*, repo_url: str, prompt: str, thread_id: str | None = None, run_id: str | None = None) -> dict[str, Any]:
     """直接列出本地工作区项目，不调用模型。
 
     这是一个“直达分支”：用户只是问本地工作区有哪些项目时，没有必要构建 Agent。
@@ -726,7 +804,7 @@ def run_workspace_listing_task(*, repo_url: str, prompt: str, thread_id: str | N
     )
     store = get_store()
     # run_id 区分同一个 thread 内的多轮运行，前端实时事件依赖它避免跨轮覆盖。
-    run_id = str(uuid.uuid4())
+    run_id = run_id or str(uuid.uuid4())
     store.record_run(run_id=run_id, thread_id=thread_id, status="running")
     workspace = Workspace(WORKSPACE_ROOT)
     backend = LocalShellBackend(workspace)
@@ -758,7 +836,7 @@ def run_workspace_listing_task(*, repo_url: str, prompt: str, thread_id: str | N
         raise
 
 
-def run_pull_only_task(*, repo_url: str, prompt: str, thread_id: str | None = None) -> dict[str, Any]:
+def run_pull_only_task(*, repo_url: str, prompt: str, thread_id: str | None = None, run_id: str | None = None) -> dict[str, Any]:
     """执行只拉取远程代码的轻量任务。
 
     这个分支不调用大模型，也不创建 PR。它只确保 GitHub/Gitee 仓库在本地工作区存在，
@@ -776,7 +854,7 @@ def run_pull_only_task(*, repo_url: str, prompt: str, thread_id: str | None = No
         record_user_message=should_record_user_message,
     )
     store = get_store()
-    run_id = str(uuid.uuid4())
+    run_id = run_id or str(uuid.uuid4())
     store.record_run(run_id=run_id, thread_id=thread_id, status="running")
     repo = parse_repo_url(repo_url)
     workspace = Workspace(WORKSPACE_ROOT)
@@ -825,6 +903,7 @@ def run_plan_response_task(
     revision_prompt: str | None = None,
     event_sink: RuntimeEventSink | None = None,
     model_id: str | None = None,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """为编码需求生成技术方案，并把方案作为普通回答直接展示。
 
@@ -870,7 +949,7 @@ def run_plan_response_task(
         content=display_prompt,
         metadata={"source": "dashboard"},
     )
-    run_id = str(uuid.uuid4())
+    run_id = run_id or str(uuid.uuid4())
     previous_metadata = _message_metadata(previous_plan_message or {})
     previous_proposal = previous_metadata.get("proposal") or {}
     supersedes_plan_id = previous_metadata.get("plan_id") or previous_proposal.get("plan_id")
@@ -893,28 +972,41 @@ def run_plan_response_task(
         )
         record_event(thread_id, "agent", "构建方案生成 Agent", status="in_progress")
         # 方案任务需要读取仓库结构，因此先确保加载的是用户所选仓库。
-        agent = _build_agent_for_runtime(
-            thread_id=thread_id, task_kind="planning", repo_url=repo.clone_url, model_id=model_id
-        )
+        try:
+            agent = _build_agent_for_runtime(
+                thread_id=thread_id, task_kind="planning", repo_url=repo.clone_url, model_id=model_id,
+                workspace_dir=prepared_workspace.directory, run_id=run_id,
+            )
+        except Exception:
+            from agent.server import close_runtime_backend
+
+            close_runtime_backend(run_id)
+            raise
         record_event(thread_id, "agent", "构建方案生成 Agent", status="completed")
         # 事件流消费由 streaming_runtime.py 负责。runtime 只关心最终是否成功、
         # 以及最终 messages 里是否能提取到一份可确认的技术方案。
-        result = run_agent_with_event_stream(
-            agent=agent,
-            thread_id=thread_id,
-            run_id=run_id,
-            content=_build_plan_user_content(
-                repo_url=repo.clone_url,
-                prompt=_plan_source_prompt(previous_plan_message, prompt)
-                if previous_plan_message is not None
-                else prompt,
-                previous_plan=previous_plan_text,
-                revision_prompt=revision_prompt,
-            ),
-            task_kind="planning",
-            event_sink=event_sink,
-            model_id=model_id,
-        )
+        try:
+            result = run_agent_with_event_stream(
+                agent=agent,
+                thread_id=thread_id,
+                run_id=run_id,
+                content=_build_plan_user_content(
+                    repo_url=repo.clone_url,
+                    prompt=_plan_source_prompt(previous_plan_message, prompt)
+                    if previous_plan_message is not None
+                    else prompt,
+                    previous_plan=previous_plan_text,
+                    revision_prompt=revision_prompt,
+                    workspace_directory=prepared_workspace.directory,
+                ),
+                task_kind="planning",
+                event_sink=event_sink,
+                model_id=model_id,
+            )
+        finally:
+            from agent.server import close_runtime_backend
+
+            close_runtime_backend(run_id)
         _record_todo_completion_guard(store, thread_id=thread_id, run_id=run_id)
         store.finish_open_run_events(thread_id, status="completed", run_id=run_id)
         messages = result.get("messages", [])
@@ -997,6 +1089,8 @@ def run_agent_task(
     plan_id: str | None = None,
     intervention_id: str | None = None,
     model_id: str | None = None,
+    run_id: str | None = None,
+    worker_id: str | None = None,
 ) -> dict[str, Any]:
     """运行一次普通 Agent 任务的总入口。
 
@@ -1015,6 +1109,7 @@ def run_agent_task(
 
     # 新任务创建新 thread；继续对话时使用前端已有 thread_id，确保 checkpoint 接上历史。
     thread_id = thread_id or str(uuid.uuid4())
+    run_id = run_id or str(uuid.uuid4())
     store = get_store()
     existing_thread = store.get_thread(thread_id)
     get_active_intervention = getattr(store, "get_latest_active_thread_intervention", None)
@@ -1027,9 +1122,9 @@ def run_agent_task(
     # 两个直达分支都不需要 LLM，能显著减少模型调用和等待时间；先检查待处理 HITL，
     # 避免任何普通消息（包括看似只读的快捷任务）绕过当前中断。
     if not interaction_action and is_workspace_listing_task(prompt):
-        return run_workspace_listing_task(repo_url=repo_url, prompt=prompt, thread_id=thread_id)
+        return run_workspace_listing_task(repo_url=repo_url, prompt=prompt, thread_id=thread_id, run_id=run_id)
     if not interaction_action and is_pull_only_task(prompt):
-        return run_pull_only_task(repo_url=repo_url, prompt=prompt, thread_id=thread_id)
+        return run_pull_only_task(repo_url=repo_url, prompt=prompt, thread_id=thread_id, run_id=run_id)
     # 恢复动作不做普通意图分类：“1/确认/继续”等只能作为 checkpoint 的 resume 值，
     # 不能重新被判为 qa 并启动一轮新任务。
     task_kind = (
@@ -1118,6 +1213,7 @@ def run_agent_task(
                     revision_prompt=prompt,
                     event_sink=event_sink,
                     model_id=model_id,
+                    run_id=run_id,
                 )
             except Exception:
                 store.transition_thread_plan(
@@ -1167,6 +1263,7 @@ def run_agent_task(
                 revision_prompt=prompt,
                 event_sink=event_sink,
                 model_id=model_id,
+                run_id=run_id,
             )
     if existing_thread and approved_plan_text is None and not interaction_action and _is_approval_prompt(prompt):
         # 没有可确认的技术方案时，把“确认”当作普通问题处理，避免误执行旧任务。
@@ -1181,7 +1278,8 @@ def run_agent_task(
         # 这个判断在 runtime 层完成，而不是只写在 Prompt 里，目的是把“先方案、再实施”
         # 做成确定性的产品流程，降低 Agent 首轮直接误改代码的风险。
         return run_plan_response_task(
-            repo_url=repo_url, prompt=prompt, thread_id=thread_id, event_sink=event_sink, model_id=model_id
+            repo_url=repo_url, prompt=prompt, thread_id=thread_id, event_sink=event_sink, model_id=model_id,
+            run_id=run_id,
         )
 
     # 到这里说明本轮不是直达任务，也不是“未确认的 coding 需求”。
@@ -1210,7 +1308,6 @@ def run_agent_task(
         metadata={"source": "runtime", "task_kind": task_kind},
     )
     # 每轮 Agent 执行都有独立 run_id。前端事件列表按 run_id 追加，不能复用上一轮 id。
-    run_id = str(uuid.uuid4())
     store.record_run(run_id=run_id, thread_id=thread_id, status="running")
     logger.info("业务 Store 已记录运行：thread_id=%s run_id=%s", thread_id, run_id)
     try:
@@ -1233,33 +1330,51 @@ def run_agent_task(
         )
         record_event(thread_id, "agent", "构建 Agent 运行图", status="in_progress")
         # Agent 在仓库校验成功后才创建，backend 默认 cwd 已绑定到本轮仓库。
-        agent = _build_agent_for_runtime(
-            thread_id=thread_id, task_kind=task_kind, repo_url=repo.clone_url, model_id=model_id
-        )
+        try:
+            agent = _build_agent_for_runtime(
+                thread_id=thread_id, task_kind=task_kind, repo_url=repo.clone_url, model_id=model_id,
+                workspace_dir=prepared_workspace.directory, run_id=run_id,
+            )
+        except Exception:
+            from agent.server import close_runtime_backend
+
+            close_runtime_backend(run_id)
+            raise
         logger.info("Agent 图已构建：thread_id=%s", thread_id)
         record_event(thread_id, "agent", "构建 Agent 运行图", status="completed")
         logger.info("开始通过官方事件流调用 Agent：thread_id=%s", thread_id)
         # runtime 只负责“决定跑什么”和“最终状态落库”。
         # 运行过程中的 text delta、write_todos、tool call、subagent 事件解析，
         # 统一交给 streaming_runtime.py，避免调度层和事件解析层混在一起。
-        with WorkerLeaseManager(store).hold(run_id):
-            result = run_agent_with_event_stream(
-                agent=agent,
-                thread_id=thread_id,
-                run_id=run_id,
-                content=_build_agent_user_content(
-                    repo_url=repo.clone_url,
-                    task_kind=task_kind,
-                    prompt=coding_prompt,
-                    display_prompt=display_prompt,
-                    approved_plan=approved_plan_text,
-                    thread_id=thread_id,
-                ),
-                task_kind=task_kind,
-                event_sink=event_sink,
-                resume_value=resume_value,
-                model_id=model_id,
+        try:
+            lease_manager = (
+                WorkerLeaseManager(store, worker_id=worker_id)
+                if worker_id is not None
+                else WorkerLeaseManager(store)
             )
+            with lease_manager.hold(run_id):
+                result = run_agent_with_event_stream(
+                    agent=agent,
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    content=_build_agent_user_content(
+                        repo_url=repo.clone_url,
+                        task_kind=task_kind,
+                        prompt=coding_prompt,
+                        display_prompt=display_prompt,
+                        approved_plan=approved_plan_text,
+                        thread_id=thread_id,
+                        workspace_directory=prepared_workspace.directory,
+                    ),
+                    task_kind=task_kind,
+                    event_sink=event_sink,
+                    resume_value=resume_value,
+                    model_id=model_id,
+                )
+        finally:
+            from agent.server import close_runtime_backend
+
+            close_runtime_backend(run_id)
         if interaction_action == "resume_intervention":
             store.finish_thread_intervention(intervention_id, thread_id=thread_id)
         interrupts = result.get("interrupts") or []
@@ -1280,14 +1395,14 @@ def run_agent_task(
                     metadata={"source": "human_intervention", "intervention_id": intervention_id},
                 )
             store.finish_open_run_events(thread_id, status="completed", run_id=run_id)
-            current_branch = _detect_current_branch(repo)
+            current_branch = _detect_current_branch(repo, workspace_directory=prepared_workspace.directory)
             store.update_thread_status(thread_id, "awaiting_approval", branch_name=current_branch)
             store.record_run(run_id=run_id, thread_id=thread_id, status="awaiting_approval", finished=True)
             record_event(thread_id, "human:intervention", "等待你答复后继续", status="completed")
             return {"thread_id": thread_id, "run_id": run_id, "status": "awaiting_approval", "interrupts": interrupts}
         todo_summary = _record_todo_completion_guard(store, thread_id=thread_id, run_id=run_id)
         store.finish_open_run_events(thread_id, status="completed", run_id=run_id)
-        current_branch = _detect_current_branch(repo)
+        current_branch = _detect_current_branch(repo, workspace_directory=prepared_workspace.directory)
         store.update_thread_status(thread_id, "completed", branch_name=current_branch)
         store.record_run(run_id=run_id, thread_id=thread_id, status="completed", finished=True)
         run_title = "任务完成" if not todo_summary or todo_summary["complete"] else "任务运行结束（清单未完成）"
@@ -1324,12 +1439,6 @@ def run_agent_task(
         # 如果漏掉其中任何一项，前端可能会一直停留在“ 运行中”。
         store.finish_open_run_events(thread_id, status="error", run_id=run_id)
         store.update_thread_status(thread_id, "failed")
-        record_event(
-            thread_id,
-            "model",
-            f"调用 {model_id or get_env('MAIN_MODEL', 'deepseek-v4-pro').strip()}",
-            status="error",
-        )
         record_event(thread_id, "failed", "任务失败", status="error", detail=mask_token(str(exc)))
         store.record_run(
             run_id=run_id,

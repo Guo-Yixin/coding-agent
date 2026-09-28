@@ -110,6 +110,8 @@ def ensure_backend_for_thread(
     *,
     provider: str | None = None,
     working_dir: str | None = None,
+    run_id: str | None = None,
+    repo_url: str | None = None,
 ) -> LocalShellBackend:
     """获取或创建绑定到 thread 的本地 backend。
 
@@ -120,9 +122,29 @@ def ensure_backend_for_thread(
     - 只负责复用当前机器上的 `AI_WORKSPACE_ROOT` 工作区。
     """
 
-    backend = _BACKENDS.get(thread_id)
+    runtime_backend = os.environ.get("CODING_AGENT_RUNTIME_BACKEND", "local").strip().lower()
+    if runtime_backend == "opensandbox" and not run_id:
+        raise RuntimeError("OpenSandbox runtime requires a run_id so the sandbox is isolated per run")
+    backend_key = run_id if runtime_backend == "opensandbox" and run_id else thread_id
+    backend = _BACKENDS.get(backend_key)
     if backend is None:
-        if os.environ.get("CODING_AGENT_EVAL_BACKEND", "local").strip().lower() == "opensandbox":
+        if runtime_backend == "opensandbox" and run_id:
+            from agent.core.settings import WORKSPACE_ROOT
+            from agent.sandbox.eval_backend import OpenSandboxRuntimeBackend
+            from agent.core.repository_workspace import task_branch_name
+
+            if not working_dir or not repo_url:
+                raise RuntimeError("OpenSandbox runtime requires a prepared task checkout and repository URL")
+            task_repo_path = (WORKSPACE_ROOT / working_dir.lstrip("/")).resolve()
+            backend = OpenSandboxRuntimeBackend(
+                working_dir=working_dir,
+                case_repo=task_repo_path,
+                repo_url=repo_url,
+                branch_name=task_branch_name(thread_id),
+                provider=provider,
+            )
+            logger.info("为 run 创建 OpenSandboxRuntimeBackend：thread_id=%s run_id=%s", thread_id, run_id)
+        elif os.environ.get("CODING_AGENT_EVAL_BACKEND", "local").strip().lower() == "opensandbox":
             if os.environ.get("CODING_AGENT_EVAL_MODE", "").strip() != "1":
                 raise RuntimeError("OpenSandbox Eval backend is only available in isolated Agent Eval runs")
             from agent.sandbox.eval_backend import OpenSandboxEvalBackend
@@ -132,7 +154,7 @@ def ensure_backend_for_thread(
         else:
             logger.info("为 thread 创建 LocalShellBackend：%s", thread_id)
             backend = LocalShellBackend(provider=provider, working_dir=working_dir)
-        _BACKENDS[thread_id] = backend
+        _BACKENDS[backend_key] = backend
     else:
         logger.info("复用 thread 的 LocalShellBackend：%s", thread_id)
         if provider:
@@ -140,6 +162,13 @@ def ensure_backend_for_thread(
         if working_dir:
             backend.set_working_dir(working_dir)
     return backend
+
+
+def close_runtime_backend(run_id: str) -> None:
+    """Export a run's sandbox patch and destroy its isolated runtime."""
+    backend = _BACKENDS.pop(run_id, None)
+    if backend is not None and backend.__class__.__name__ == "OpenSandboxRuntimeBackend":
+        backend.close()
 
 
 def _general_purpose_subagent(model: BaseChatModel) -> SubAgent:
@@ -321,17 +350,25 @@ def get_agent(config: RunnableConfig):
     task_kind = _task_kind_from_config(configurable)
 
     repo_url = configurable.get("repo_url")
+    configured_workspace_dir = configurable.get("workspace_dir")
+    run_id = configurable.get("run_id")
     repo_provider = None
     repo_working_dir = None
     if isinstance(repo_url, str) and repo_url.strip():
         repo = parse_repo_url(repo_url)
         repo_provider = repo.provider
-        repo_working_dir = "/" + repo_project_dir(repo).replace("\\", "/")
+        repo_working_dir = (
+            "/" + str(configured_workspace_dir).replace("\\", "/").strip("/")
+            if isinstance(configured_workspace_dir, str) and configured_workspace_dir.strip()
+            else "/" + repo_project_dir(repo).replace("\\", "/")
+        )
     # backend 按 thread 复用，避免同一个会话内反复初始化 Windows 工作区封装。
     backend = ensure_backend_for_thread(
         thread_id,
         provider=repo_provider,
         working_dir=repo_working_dir,
+        run_id=run_id if isinstance(run_id, str) else None,
+        repo_url=repo_url if isinstance(repo_url, str) else None,
     )
     langgraph_store = get_langgraph_store()
     # server.py 在创建 Agent 之前，已经顺手读到了当前仓库记忆内容；
@@ -403,6 +440,20 @@ def get_agent(config: RunnableConfig):
         if configured_tools:
             eval_safe_tools.intersection_update(configured_tools)
         tools = [tool for tool in tools if getattr(tool, "name", getattr(tool, "__name__", "")) in eval_safe_tools]
+    elif os.environ.get("CODING_AGENT_RUNTIME_BACKEND", "local").strip().lower() == "opensandbox" and run_id:
+        # Sandbox edits are exported only after the Agent turn. External Git/PR
+        # and issue mutations therefore stay disabled until a verified patch is
+        # present in the host checkout.
+        external_write_tools = {
+            "open_gitee_pull_request", "publish_gitee_pr_comment", "create_gitee_issue",
+            "publish_gitee_issue_comment", "open_github_pull_request", "publish_github_pr_comment",
+            "create_github_issue", "publish_github_issue_comment", "rerun_github_actions",
+            "cancel_github_actions",
+        }
+        tools = [
+            tool for tool in tools
+            if getattr(tool, "name", getattr(tool, "__name__", "")) not in external_write_tools
+        ]
     system_prompt = get_system_prompt(task_kind)
     if eval_mode and task_kind == "coding":
         system_prompt += (

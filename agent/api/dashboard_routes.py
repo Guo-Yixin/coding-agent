@@ -23,18 +23,17 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import threading
 import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agent.core.checkpoint_history import visible_checkpoint_messages
 from agent.core.graph import get_store
-from agent.core.runtime import delete_task, get_task, initialize_task_record, list_tasks, run_agent_task
+from agent.core.runtime import delete_task, get_task, initialize_task_record, list_tasks
 from agent.core.settings import PERSISTENCE_BACKEND
 from agent.env_utils import get_env
 from agent.repository import parse_repo_url
@@ -85,12 +84,15 @@ def _normalize_dashboard_repo_url(
 def _normalize_dashboard_model_id(model_id: str | None) -> str:
     """只允许使用服务端当前暴露给前端的模型，避免接受任意模型名。"""
 
+    from agent.core.model import available_agent_models
+
     configured_model = get_env("MAIN_MODEL", "deepseek-v4-pro").strip()
     selected_model = (model_id or configured_model).strip()
-    if selected_model != configured_model:
+    available = available_agent_models()
+    if selected_model not in available:
         raise HTTPException(
             status_code=422,
-            detail=f"所选模型未启用：{selected_model}。当前可用模型为 {configured_model}。",
+            detail=f"所选模型未启用：{selected_model}。当前可用模型为 {', '.join(available)}。",
         )
     return selected_model
 
@@ -120,7 +122,21 @@ class DashboardThreadTitleRequest(BaseModel):
     title: str
 
 
-def _sse_part(event: str, data: dict[str, Any]) -> str:
+class DashboardProjectRequest(BaseModel):
+    name: str
+    provider: str
+    repo: str
+
+
+class DashboardProjectRenameRequest(BaseModel):
+    name: str
+
+
+class DashboardThreadDraftRequest(BaseModel):
+    content: str
+
+
+def _sse_part(event: str, data: dict[str, Any], *, event_id: int | None = None) -> str:
     """输出标准命名 SSE 事件。
 
     新的 POST SSE 主链路采用 `event: xxx` + `data: json`，与
@@ -128,7 +144,8 @@ def _sse_part(event: str, data: dict[str, Any]) -> str:
     不再需要把 event 包在 data JSON 里面。
     """
 
-    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
+    id_line = f"id: {event_id}\n" if event_id is not None else ""
+    return f"{id_line}event: {event}\ndata: {json.dumps(data, ensure_ascii=False, default=str)}\n\n"
 
 
 def _timestamp_ms(value: str | datetime | None) -> int:
@@ -145,12 +162,18 @@ def _timestamp_ms(value: str | datetime | None) -> int:
 def _status_for_frontend(status: str | None) -> str:
     """把项目后端状态映射成 open-swe 前端 AgentStatus。"""
 
-    if status in {"running", "pushed", "pr_created"}:
+    if status in {"running", "pushed", "pr_created", "cancelling"}:
         return "running"
+    if status == "queued":
+        return "queued"
     if status in {"completed", "awaiting_approval"}:
         return "awaiting_approval" if status == "awaiting_approval" else "finished"
     if status == "failed":
         return "error"
+    if status == "cancelled":
+        return "cancelled"
+    if status == "interrupted":
+        return "interrupted"
     return "idle"
 
 
@@ -371,6 +394,8 @@ def _thread_payload(thread: dict[str, Any]) -> dict[str, Any]:
         })
     return {
         "id": thread["thread_id"],
+        "projectId": thread.get("project_id"),
+        "chatOnly": not bool(thread.get("project_id") or thread.get("repo_url")),
         "title": thread.get("title") or "CODING Task",
         "repo": repo_full_name,
         "repoFullName": repo_full_name,
@@ -384,6 +409,7 @@ def _thread_payload(thread: dict[str, Any]) -> dict[str, Any]:
         "status": _status_for_frontend(thread.get("latest_run_status")),
         "createdAt": _timestamp_ms(thread.get("created_at")),
         "updatedAt": _timestamp_ms(thread.get("updated_at")),
+        "draftContent": (getattr(store, "get_thread_draft", lambda _thread_id: None)(thread_id) or {}).get("content", ""),
         "messages": messages,
         "pendingIntervention": pending_intervention,
         "pr": _pr_payload(thread),
@@ -430,7 +456,10 @@ def dashboard_options() -> dict[str, Any]:
     前端只展示这些选项，真正创建模型对象仍由 `agent.core.model` 负责。
     """
 
+    from agent.core.model import available_agent_models
+
     model = get_env("MAIN_MODEL", "deepseek-v4-pro")
+    models = available_agent_models()
     return {
         "default_repo": DEFAULT_REPO_URL,
         "default_provider": DEFAULT_REPO_PROVIDER,
@@ -439,15 +468,11 @@ def dashboard_options() -> dict[str, Any]:
             {"id": "gitee", "label": "Gitee", "url_placeholder": "https://gitee.com/owner/repo.git"},
         ],
         "repo_placeholder": "https://github.com/owner/repo.git",
-        "models": [
-            {
-                "id": model,
-                "label": model,
-                "efforts": ["default"],
-                "default_effort": "default",
-                "supports_images": False,
-            }
-        ],
+        "models": [{
+            "id": model_id, "label": model_id,
+            "efforts": ["default"], "default_effort": "default",
+            "supports_images": False,
+        } for model_id in models],
         "default_agent_model": model,
         "default_agent_reasoning_effort": "default",
         "default_agent_subagent_model": model,
@@ -464,6 +489,117 @@ def dashboard_threads(limit: int = 50) -> list[dict[str, Any]]:
     """
 
     return [_thread_payload(thread) for thread in list_tasks(limit=limit)]
+
+
+@dashboard_router.get("/projects")
+def dashboard_projects() -> list[dict[str, Any]]:
+    """Return projects with their conversations, grouped for the workspace sidebar."""
+    store = get_store()
+    projects = store.list_projects()
+    threads = list_tasks(limit=2000)
+    by_project: dict[str, list[dict[str, Any]]] = {}
+    for thread in threads:
+        project_id = thread.get("project_id")
+        if project_id:
+            by_project.setdefault(str(project_id), []).append({
+                "id": thread["thread_id"], "projectId": project_id,
+                "title": thread.get("title") or "CODING Task",
+                "status": _status_for_frontend(thread.get("latest_run_status")),
+                "updatedAt": _timestamp_ms(thread.get("updated_at")),
+                "repo": _repo_full_name(thread),
+            })
+    return [{
+        "id": project["project_id"], "name": project["name"],
+        "provider": project.get("provider"), "repo": project.get("repo_url"),
+        "repoFullName": "/".join(part for part in (project.get("repo_owner"), project.get("repo_name")) if part),
+        "legacy": bool(project.get("is_legacy")),
+        "conversations": by_project.get(project["project_id"], []),
+    } for project in projects]
+
+
+@dashboard_router.post("/projects")
+def dashboard_create_project(body: DashboardProjectRequest) -> dict[str, Any]:
+    name = body.name.strip()
+    provider = body.provider.strip().lower()
+    if not name or len(name) > 80:
+        raise HTTPException(status_code=422, detail="项目名称须为 1 到 80 个字符")
+    if provider not in {"github", "gitee"}:
+        raise HTTPException(status_code=422, detail="仅支持 GitHub 和 Gitee")
+    try:
+        repository = parse_repo_url(body.repo, provider=provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    store = get_store()
+    project = store.create_project(
+        project_id=str(uuid.uuid4()), name=name, provider=repository.provider,
+        repo_url=repository.clone_url, repo_owner=repository.owner, repo_name=repository.repo,
+    )
+    return {
+        "id": project["project_id"], "name": project["name"],
+        "provider": project["provider"], "repo": project["repo_url"],
+        "repoFullName": repository.full_name, "legacy": False, "conversations": [],
+    }
+
+
+@dashboard_router.patch("/projects/{project_id}")
+def dashboard_rename_project(project_id: str, body: DashboardProjectRenameRequest) -> dict[str, Any]:
+    name = body.name.strip()
+    if not name or len(name) > 80:
+        raise HTTPException(status_code=422, detail="项目名称须为 1 到 80 个字符")
+    project = get_store().update_project_name(project_id, name)
+    if not project:
+        raise HTTPException(status_code=404, detail="project not found")
+    return {"id": project["project_id"], "name": project["name"]}
+
+
+@dashboard_router.post("/projects/{project_id}/threads")
+def dashboard_create_project_thread(project_id: str) -> dict[str, Any]:
+    thread = get_store().create_thread_for_project(thread_id=str(uuid.uuid4()), project_id=project_id)
+    if not thread:
+        if get_store().get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="project not found")
+        raise HTTPException(status_code=409, detail="该历史项目没有可用仓库，不能创建新会话")
+    return _thread_payload(thread)
+
+
+@dashboard_router.post("/threads")
+def dashboard_create_chat_thread() -> dict[str, Any]:
+    """Create a standalone chat thread that is not bound to a repository project."""
+    thread = get_store().create_chat_thread(thread_id=str(uuid.uuid4()))
+    return _thread_payload(thread)
+
+
+@dashboard_router.delete("/projects/{project_id}", status_code=204)
+def dashboard_delete_project(project_id: str) -> None:
+    """Delete a project and all of its conversation records after UI confirmation."""
+    store = get_store()
+    project = store.get_project(project_id)
+    if project is None:
+        raise HTTPException(status_code=404, detail="project not found")
+    thread_ids = store.list_project_thread_ids(project_id)
+    active = {
+        str(run.get("thread_id"))
+        for run in store.list_active_runs()
+        if str(run.get("thread_id")) in set(thread_ids)
+    }
+    if active:
+        raise HTTPException(status_code=409, detail="项目中仍有运行中的任务，请先停止或等待任务完成后再删除。")
+    for thread_id in thread_ids:
+        if not delete_task(thread_id):
+            raise HTTPException(status_code=409, detail="部分会话已变化，请刷新后重试删除项目。")
+    if not store.delete_project(project_id):
+        raise HTTPException(status_code=409, detail="项目仍有关联会话，请刷新后重试。")
+    return None
+
+
+@dashboard_router.put("/threads/{thread_id}/draft")
+def dashboard_save_thread_draft(thread_id: str, body: DashboardThreadDraftRequest) -> dict[str, Any]:
+    if len(body.content) > 100_000:
+        raise HTTPException(status_code=413, detail="草稿不能超过 100 KB")
+    draft = get_store().save_thread_draft(thread_id=thread_id, content=body.content)
+    if draft is None:
+        raise HTTPException(status_code=404, detail="thread not found")
+    return {"content": draft["content"], "revision": draft["revision"], "updatedAt": draft["updated_at"]}
 
 
 @dashboard_router.patch("/threads/{thread_id}")
@@ -547,6 +683,17 @@ def dashboard_run_activity_events(thread_id: str, run_id: str) -> dict[str, Any]
             progress_text = detail["text"].strip()
             if progress_text and progress_text not in final_texts:
                 safe_detail["text"] = progress_text[:12000]
+        elif (
+            event.get("title") in {"任务失败", "技术方案生成失败"}
+            and event.get("status") == "error"
+        ):
+            # Runtime 仅在这里写入经过 mask_token 脱敏的最终异常；普通工具错误
+            # 可能包含仓库内容或凭据，继续按默认策略隐藏。
+            failure_text = raw_detail.strip() if isinstance(raw_detail, str) else ""
+            if not failure_text and isinstance(detail.get("text"), str):
+                failure_text = detail["text"].strip()
+            if failure_text:
+                safe_detail["text"] = failure_text[:4000]
         visible_events.append({
             "id": event.get("id"),
             "kind": event.get("kind"),
@@ -560,217 +707,150 @@ def dashboard_run_activity_events(thread_id: str, run_id: str) -> dict[str, Any]
 
 
 def _post_streaming_response(
-    *, thread_id: str, repo_url: str, content: str,
+    *, thread_id: str, repo_url: str | None, content: str,
     model_id: str | None = None,
     interaction_action: str | None = None, plan_id: str | None = None,
     intervention_id: str | None = None,
 ) -> StreamingResponse:
-    """直接执行本轮 Agent，并把过程事件作为同一个 POST SSE 响应返回。
-
-    旧版链路是“POST 创建后台任务 + GET 轮询 run_events”。这种两段式链路在多轮
-    对话里容易出现时序竞争：用户输入由前端本地追加，任务计划来自 run_events，
-    历史正文来自 checkpoint，三者不是同一个顺序源。
-
-    新链路参考 `finqa_deepagent_observability`：请求体中携带本轮用户输入，后端
-    在同一条 StreamingResponse 中先发送 user_message，再直接运行 Agent。Store
-    仍会记录任务摘要、PR、run_events 和仓库记忆，但前端实时正文不再依赖 Store
-    轮询。
-    """
-
-    # 先创建或更新 thread 业务记录。
-    # 注意：这里不负责把用户消息写入 Store；用户消息展示由 SSE 的 user_message 事件负责，
-    # 稳定历史恢复由 LangGraph checkpoint 负责。
-    initialize_task_record(repo_url=repo_url, prompt=content, thread_id=thread_id)
-
-    # 立即读取刚刚创建或更新后的 thread 摘要，后面要用它生成首个 thread_snapshot 事件。
-    initial_task = get_task(thread_id)
-
-    # 如果业务 Store 没有读到 thread，说明初始化失败；此时不能继续建立 SSE，否则前端会拿到残缺状态。
-    if initial_task is None:
-        # 用 HTTP 500 明确告诉前端：不是用户输入问题，而是后端持久化异常。
+    """Persist a run first, then stream its durable event log to this client."""
+    store = get_store()
+    if any(run.get("thread_id") == thread_id for run in store.list_active_runs()):
+        raise HTTPException(status_code=409, detail="此会话已有运行中的任务，请切换会话或等待完成。")
+    if repo_url is None:
+        task = store.get_thread(thread_id)
+        if task is None or task.get("project_id") or task.get("repo_url"):
+            raise HTTPException(status_code=409, detail="无仓库聊天会话状态已变化，请重新打开会话。")
+        if task.get("title") in {None, "新聊天", "新会话"}:
+            store.update_thread_title(thread_id, content.strip().replace("\n", " ")[:80] or "新聊天")
+        store.add_thread_message(
+            message_id=f"{thread_id}-user-{uuid.uuid4()}", thread_id=thread_id,
+            author="user", content=content, metadata={"source": "dashboard_chat"},
+        )
+    else:
+        initialize_task_record(repo_url=repo_url, prompt=content, thread_id=thread_id)
+        task = get_task(thread_id)
+    if task is None:
         raise HTTPException(status_code=500, detail="task was not persisted")
-
-    async def event_iter():
-        """StreamingResponse 的异步事件生成器。
-
-        Agent 本身在工作线程中同步运行；SSE 响应在 asyncio 事件循环中异步发送。
-        二者通过 `asyncio.Queue` 桥接，保证后端边运行边把事件推给前端。
-        """
-
-        # 获取当前 FastAPI 请求所在的 asyncio 事件循环；worker 线程投递事件时需要回到这个 loop。
-        loop = asyncio.get_running_loop()
-
-        # 创建本轮 SSE 的内存队列。worker 线程负责生产事件，event_iter 负责消费并 yield 给浏览器。
-        queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue()
-
-        def enqueue(event: str, data: dict[str, Any]) -> None:
-            """线程安全地把 worker 线程中的事件投递回 asyncio 队列。"""
-
-            # 复制一份事件数据，避免调用方后续修改原 dict 时影响已经进入队列的 payload。
-            payload = dict(data)
-
-            # 所有发给前端的事件都补齐 thread_id，前端可以据此判断事件属于哪个会话。
-            payload.setdefault("thread_id", thread_id)
-
-            # worker 运行在普通线程，不能直接 await queue.put；必须通过事件循环线程安全投递。
-            loop.call_soon_threadsafe(queue.put_nowait, (event, payload))
-
-        def event_sink(event: str, data: dict[str, Any]) -> None:
-            """runtime/streaming_runtime 使用的统一实时事件出口。
-
-            `text_delta` 会先过滤空白，避免前端创建没有内容的 assistant 消息；
-            其它事件会原样进入 SSE 队列。
-            """
-
-            # 复制事件数据，避免 streaming_runtime 复用同一个 dict 时产生副作用。
-            payload = dict(data)
-
-            # 文本增量是用户最敏感的展示内容，需要先做空白过滤和可见文本规整。
-            if event == "text_delta":
-                # 当前实现不再过滤英文/中文，只做统一字符串化，保留模型真实 assistant 输出。
-                payload["content"] = _user_visible_stream_text(str(payload.get("content") or ""))
-
-                # 空字符串或纯空白不推给前端，避免创建空 AIMessage。
-                if not payload["content"].strip():
-                    return
-
-            # 其它事件，例如 message_start、todo_delta、thread_done，直接进入 SSE 队列。
-            enqueue(event, payload)
-
-        def worker() -> None:
-            """在后台线程中运行一次 Agent 任务。
-
-            不能直接在 event_iter 中同步调用 `run_agent_task`，否则 FastAPI 无法边运行边
-            yield SSE 数据。worker 结束后发送 `thread_done` 和 `done`，通知前端收尾。
-            """
-
-            # worker 线程内部必须捕获异常，否则线程异常只会写到后端日志，前端收不到失败事件。
-            try:
-                # 真正运行 Agent 的入口。runtime 会做任务分类、方案确认、Agent 构建和事件流消费。
-                run_agent_task(
-                    # 本轮任务绑定的 Gitee 仓库地址，已经在外层 API 边界做过规范化。
-                    repo_url=repo_url,
-                    # 用户本轮真实输入，runtime 会根据任务类型决定是否包装内部执行上下文。
-                    prompt=content,
-                    # 当前会话 id，用于绑定 Store、checkpoint、SSE 和 Agent config。
-                    thread_id=thread_id,
-                    # 把 runtime/streaming_runtime 产生的实时事件送回本函数的 SSE 队列。
-                    event_sink=event_sink,
-                    interaction_action=interaction_action,
-                    plan_id=plan_id,
-                    intervention_id=intervention_id,
-                    model_id=model_id,
-                )
-
-                # Agent 正常结束后，重新读取最新 thread 摘要，里面可能已经包含分支、PR、状态等新信息。
-                latest = get_task(thread_id) or initial_task
-
-                # 告诉前端本轮任务最终元信息；注意该 payload 不带 messages，不覆盖前端已有正文。
-                enqueue("thread_done", _thread_meta_payload(latest))
-
-                # 发送 done 事件，通知 event_iter 结束 while 循环，也通知前端结束 streaming 状态。
-                enqueue("done", {})
-            except Exception as exc:
-                # 失败时也尽量读取最新 thread，保证前端能看到 failed 状态或错误后的元信息。
-                latest = get_task(thread_id) or initial_task
-
-                # 把异常转成 SSE error 事件。这里不做复杂格式化，详细堆栈仍然看后端日志。
-                enqueue("error", {"message": str(exc), "detail": str(exc)})
-
-                # 即使失败，也推送最终 thread 元信息，避免前端状态停留在 running。
-                enqueue("thread_done", _thread_meta_payload(latest))
-
-                # 失败路径同样必须发送 done，否则浏览器会一直等待 SSE 结束。
-                enqueue("done", {})
-
-        # 第一个事件只发送 thread 元信息，不发送 messages。
-        # 前端当前轮用户输入和 assistant 流式正文必须由后续事件追加，不能被 snapshot 覆盖。
-        # 这一步对应“先告诉前端当前会话是谁、状态是什么、仓库是什么”。
-        yield _sse_part("thread_snapshot", _thread_meta_payload(initial_task))
-
-        # 先把用户真实输入立即推给前端。这样即使 Agent 初始化较慢，页面也能立刻看到本轮输入。
-        # 前端会用这个正式 user_message 稳定或追加本轮用户气泡。
-        yield _sse_part(
-            "user_message",
-            {
-                # 明确事件归属的会话 id。
-                "thread_id": thread_id,
-                # 为本轮用户消息生成稳定 id，避免刷新或后续事件合并时没有主键。
-                "message_id": f"{thread_id}-user-{uuid.uuid4()}",
-                # author=user 表示前端应按用户消息样式渲染。
-                "author": "user",
-                # content 必须是用户真实输入，不能替换成 runtime 内部包装后的 prompt。
-                "content": content,
-            },
-        )
-
-        # 启动占位 assistant 消息，用于给用户一个明确的“任务已开始”反馈。
-        # 后续真正的模型 token 会通过 streaming_runtime.py 继续创建或更新 assistant 消息。
-        # 这个启动消息可以降低 Agent 初始化阶段的“页面无响应”感。
-        startup_message_id = f"{thread_id}-assistant-startup-{uuid.uuid4()}"
-
-        # 先告诉前端创建一条 agent 消息容器。
-        yield _sse_part(
-            "message_start",
-            {
-                # message_start 也携带 thread_id，方便前端在多会话状态下做归属判断。
-                "thread_id": thread_id,
-                # 后续启动提示 text_delta 会写入这条 message。
-                "message_id": startup_message_id,
-                # author=agent 表示这是 AI/assistant 侧消息。
-                "author": "agent",
-            },
-        )
-
-        # 再给刚创建的启动消息写入一段简短提示文本。
-        yield _sse_part(
-            "text_delta",
-            {
-                # 当前会话 id。
-                "thread_id": thread_id,
-                # 对应上面的启动 assistant message。
-                "message_id": startup_message_id,
-                # 用户可见启动提示，说明后端已经收到任务并正在准备运行上下文。
-                "content": "正在理解需求并准备仓库上下文...\n\n",
-                # append 表示前端把这段文本追加到当前 message。
-                "mode": "append",
-            },
-        )
-
-        # 创建后台线程执行 Agent。线程名带 thread_id，方便从日志或调试工具定位。
-        thread = threading.Thread(target=worker, name=f"coding-stream-{thread_id}", daemon=True)
-
-        # 启动 worker 后，Agent 才真正开始运行；event_iter 继续留在 asyncio loop 里发送 SSE。
-        thread.start()
-
-        # 持续消费 worker/event_sink 投递到 queue 中的事件。
-        while True:
-            # 持续从队列取事件并写入 SSE 响应。收到 done 后结束本次 HTTP 连接。
-            event, data = await queue.get() # 阻塞等待事件。
-
-            # 把内部事件名和 payload 转成标准 SSE 文本块。
-            yield _sse_part(event, data)
-
-            # done 是本轮流式响应的终止事件，收到后退出生成器。
-            if event == "done":
-                break
-
-    # 返回 FastAPI StreamingResponse，让浏览器可以边接收边渲染本轮 Agent 输出。
-    return StreamingResponse(
-        # event_iter 是异步生成器，每次 yield 都会向 HTTP 响应体写入一段 SSE。
-        event_iter(),
-        # SSE 必须使用 text/event-stream，前端才会按事件流处理。
-        media_type="text/event-stream",
-        # 这些 header 用来降低代理和浏览器缓冲对实时输出的影响。
-        headers={
-            # 禁止缓存，并提示代理不要对响应做转换。
-            "Cache-Control": "no-cache, no-transform",
-            # 保持长连接，Agent 未结束前不要主动关闭。
-            "Connection": "keep-alive",
-            # Nginx 识别该 header 后会关闭响应缓冲，让 SSE 更实时。
-            "X-Accel-Buffering": "no",
+    run_id = str(uuid.uuid4())
+    payload = {
+        "repo_url": repo_url,
+        "chat_only": repo_url is None,
+        "content": content,
+        "model_id": model_id,
+        "interaction_action": interaction_action,
+        "plan_id": plan_id,
+        "intervention_id": intervention_id,
+    }
+    try:
+        store.enqueue_run(run_id=run_id, thread_id=thread_id, payload=payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="此会话已有运行中的任务，请切换会话或等待完成。") from exc
+    store.update_thread_status(thread_id, "queued")
+    initial = _thread_meta_payload(get_task(thread_id) or task)
+    initial.update({"thread_id": thread_id, "run_id": run_id, "status": "queued"})
+    store.append_run_stream_event(thread_id=thread_id, run_id=run_id, event="thread_snapshot", payload=initial)
+    store.append_run_stream_event(
+        thread_id=thread_id,
+        run_id=run_id,
+        event="user_message",
+        payload={
+            "thread_id": thread_id,
+            "run_id": run_id,
+            "message_id": f"{thread_id}-user-{run_id}",
+            "author": "user",
+            "content": content,
         },
     )
+    startup_message_id = f"{thread_id}-assistant-startup-{run_id}"
+    store.append_run_stream_event(
+        thread_id=thread_id, run_id=run_id, event="message_start",
+        payload={"thread_id": thread_id, "run_id": run_id, "message_id": startup_message_id, "author": "agent"},
+    )
+    store.append_run_stream_event(
+        thread_id=thread_id, run_id=run_id, event="text_delta",
+        payload={"thread_id": thread_id, "run_id": run_id, "message_id": startup_message_id,
+                 "content": "任务已加入队列，等待执行…\n\n", "mode": "append"},
+    )
+
+    async def event_iter(after_seq: int = 0):
+        cursor = max(0, after_seq)
+        heartbeat_at = asyncio.get_running_loop().time() + 15
+        while True:
+            rows = store.list_run_stream_events(thread_id=thread_id, run_id=run_id, after_seq=cursor)
+            for row in rows:
+                cursor = int(row["seq"])
+                yield _sse_part(row["event"], row["payload"], event_id=cursor)
+                if row["event"] == "done":
+                    return
+            run = store.get_run(thread_id, run_id) or {}
+            if run.get("status") in {"completed", "failed", "cancelled", "interrupted"} and not rows:
+                yield _sse_part("done", {"run_id": run_id, "thread_id": thread_id, "status": run["status"]})
+                return
+            await asyncio.sleep(0.25)
+            if asyncio.get_running_loop().time() >= heartbeat_at:
+                yield ": keep-alive\n\n"
+                heartbeat_at = asyncio.get_running_loop().time() + 15
+
+    return StreamingResponse(
+        event_iter(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@dashboard_router.get("/threads/{thread_id}/runs/{run_id}/stream")
+async def dashboard_resume_run_stream(
+    thread_id: str, run_id: str, after: int = Query(default=0, ge=0),
+) -> StreamingResponse:
+    store = get_store()
+    if not store.get_run(thread_id, run_id):
+        raise HTTPException(status_code=404, detail="运行记录不存在")
+
+    async def event_iter():
+        cursor = after
+        heartbeat_at = asyncio.get_running_loop().time() + 15
+        while True:
+            rows = store.list_run_stream_events(thread_id=thread_id, run_id=run_id, after_seq=cursor)
+            for row in rows:
+                cursor = int(row["seq"])
+                yield _sse_part(row["event"], row["payload"], event_id=cursor)
+                if row["event"] == "done":
+                    return
+            run = store.get_run(thread_id, run_id) or {}
+            if run.get("status") in {"completed", "failed", "cancelled", "interrupted"} and not rows:
+                yield _sse_part("done", {"status": run["status"]})
+                return
+            await asyncio.sleep(0.25)
+            if asyncio.get_running_loop().time() >= heartbeat_at:
+                yield ": keep-alive\n\n"
+                heartbeat_at = asyncio.get_running_loop().time() + 15
+
+    return StreamingResponse(
+        event_iter(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache, no-transform", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+    )
+
+
+@dashboard_router.post("/threads/{thread_id}/runs/{run_id}/cancel")
+async def dashboard_cancel_run(thread_id: str, run_id: str) -> dict[str, Any]:
+    store = get_store()
+    status = store.request_run_cancel(thread_id=thread_id, run_id=run_id)
+    if status is None:
+        raise HTTPException(status_code=409, detail="运行已结束或不存在")
+    if status == "cancelled":
+        store.append_run_stream_event(
+            thread_id=thread_id, run_id=run_id, event="error",
+            payload={"thread_id": thread_id, "run_id": run_id, "message": "任务已取消"},
+        )
+        store.append_run_stream_event(
+            thread_id=thread_id, run_id=run_id, event="done", payload={"status": "cancelled"},
+        )
+        store.update_thread_status(thread_id, "cancelled")
+    return {"thread_id": thread_id, "run_id": run_id, "status": status}
+
+
+@dashboard_router.get("/runs/active")
+async def dashboard_active_runs() -> list[dict[str, Any]]:
+    return get_store().list_active_runs()
 
 
 @dashboard_router.post("/threads/stream-message")
@@ -779,9 +859,11 @@ async def dashboard_stream_new_message(body: DashboardThreadMessageRequest) -> S
 
     if body.interaction_action is not None:
         raise HTTPException(status_code=422, detail="方案与人工介入操作必须来自已有会话。")
-    repo_url = _normalize_dashboard_repo_url(body.repo, provider=body.provider)
     model_id = _normalize_dashboard_model_id(body.model_id)
+    repo_url = _normalize_dashboard_repo_url(body.repo, provider=body.provider) if body.repo else None
     thread_id = str(uuid.uuid4())
+    if repo_url is None:
+        get_store().create_chat_thread(thread_id=thread_id)
     return _post_streaming_response(
         thread_id=thread_id, repo_url=repo_url, content=body.content,
         model_id=model_id,
@@ -801,19 +883,18 @@ async def dashboard_stream_existing_message(
     """
 
     task = get_task(thread_id)
+    chat_only = bool(task and not task.get("project_id") and not task.get("repo_url"))
     model_id = _normalize_dashboard_model_id(body.model_id)
-    repo_url = _normalize_dashboard_repo_url(
-        body.repo,
-        provider=body.provider,
-        fallback=(task or {}).get("repo_url"),
+    repo_url = None if chat_only else _normalize_dashboard_repo_url(
+        body.repo, provider=body.provider, fallback=(task or {}).get("repo_url"),
     )
     existing_repo = (task or {}).get("repo_url")
-    if existing_repo and _repository_identity(str(existing_repo)) != _repository_identity(repo_url):
+    if existing_repo and (repo_url is None or _repository_identity(str(existing_repo)) != _repository_identity(repo_url)):
         raise HTTPException(
             status_code=409,
             detail="同一会话不能切换 GitHub/Gitee 仓库；请新建会话后选择目标仓库。",
         )
-    if existing_repo:
+    if existing_repo and repo_url:
         # Keep the persisted canonical casing/URL stable for case-insensitive providers.
         repo_url = parse_repo_url(str(existing_repo)).clone_url
     store = get_store()

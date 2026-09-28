@@ -11,12 +11,24 @@ DEEPSEEK_V4_MAX_TOKENS = 25600
 INTENT_MODEL_MAX_TOKENS = 200
 
 
+def available_agent_models() -> list[str]:
+    """Return the allow-listed model IDs offered by the Dashboard.
+
+    DeepSeek model IDs share the configured OpenAI-compatible endpoint and key.
+    Deployments may narrow or extend the list with AGENT_AVAILABLE_MODELS.
+    """
+
+    configured = get_env("MAIN_MODEL", "deepseek-v4-pro").strip()
+    raw_models = get_env("AGENT_AVAILABLE_MODELS", "deepseek-flash,deepseek-v4-pro")
+    models = [item.strip() for item in raw_models.split(",") if item.strip()]
+    return list(dict.fromkeys([configured, *models]))
+
+
 def make_main_model(model_id: str | None = None) -> BaseChatModel:
     """创建编码智能体使用的 DeepSeek 模型。
 
-    本地部署版只保留一个主模型，默认对齐 open-swe 使用的 `deepseek-v4-pro`。
-    这里不引入多模型 profile、fallback、路由器等生产级能力，
-    让开发者先理解“模型配置”和“Agent 编排”之间的关系。
+    默认支持 DeepSeek 当前的 Flash 与 Pro 模型；部署可以通过
+    `AGENT_AVAILABLE_MODELS` 限制选择范围。模型 ID 仍由服务端 allow-list 校验。
 
     `thinking: disabled` 与 open-swe 的 DeepSeek 调用方式保持一致，
     避免模型输出额外思考内容影响工具调用和最终回复。
@@ -29,8 +41,8 @@ def make_main_model(model_id: str | None = None) -> BaseChatModel:
 
     configured_model = get_env("MAIN_MODEL", "deepseek-v4-pro").strip()
     selected_model = (model_id or configured_model).strip()
-    if selected_model != configured_model:
-        raise ValueError(f"请求模型 {selected_model!r} 未在服务端 MAIN_MODEL 配置中启用")
+    if selected_model not in available_agent_models():
+        raise ValueError(f"请求模型 {selected_model!r} 未在服务端 AGENT_AVAILABLE_MODELS 配置中启用")
 
     return init_chat_model(
         model=selected_model,

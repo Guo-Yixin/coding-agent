@@ -47,19 +47,42 @@ def _sqlite_rows(path: Path, table: str) -> list[dict[str, Any]]:
 def migrate_business_store(source: Path, target: PostgresBusinessStore, report: MigrationReport) -> None:
     """Idempotently copy platform-owned SQLite tables."""
     with target._connection() as conn:  # noqa: SLF001 - migration is a storage boundary
+        for row in _sqlite_rows(source, "projects"):
+            conn.execute(
+                """INSERT INTO projects (project_id, tenant_id, user_id, name, provider, repo_url,
+                   repo_owner, repo_name, is_legacy, created_at, updated_at)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(project_id) DO NOTHING""",
+                (row["project_id"], target.tenant_id, target.user_id, row["name"], row.get("provider"),
+                 row.get("repo_url"), row.get("repo_owner"), row.get("repo_name"), bool(row.get("is_legacy")),
+                 row["created_at"], row["updated_at"]),
+            )
+        report.tables["projects"] = len(_sqlite_rows(source, "projects"))
         for row in _sqlite_rows(source, "threads"):
             conn.execute(
                 """INSERT INTO threads (thread_id, tenant_id, user_id, title, user_prompt, repo_url, repo_owner,
-                   repo_name, branch_name, pr_url, latest_run_status, created_at, updated_at)
+                   repo_name, project_id, branch_name, pr_url, latest_run_status, created_at, updated_at)
                    VALUES (%(thread_id)s, %(tenant_id)s, %(user_id)s, %(title)s, %(user_prompt)s, %(repo_url)s,
-                   %(repo_owner)s, %(repo_name)s, %(branch_name)s, %(pr_url)s, %(status)s, %(created_at)s, %(updated_at)s)
+                   %(repo_owner)s, %(repo_name)s, %(project_id)s, %(branch_name)s, %(pr_url)s, %(status)s, %(created_at)s, %(updated_at)s)
                    ON CONFLICT(thread_id) DO UPDATE SET title=EXCLUDED.title, user_prompt=EXCLUDED.user_prompt,
                    repo_url=EXCLUDED.repo_url, repo_owner=EXCLUDED.repo_owner, repo_name=EXCLUDED.repo_name,
-                   branch_name=EXCLUDED.branch_name, pr_url=EXCLUDED.pr_url, latest_run_status=EXCLUDED.latest_run_status,
+                   project_id=COALESCE(EXCLUDED.project_id, threads.project_id), branch_name=EXCLUDED.branch_name,
+                   pr_url=EXCLUDED.pr_url, latest_run_status=EXCLUDED.latest_run_status,
                    updated_at=EXCLUDED.updated_at""",
-                {**row, "tenant_id": row.get("tenant_id", target.tenant_id), "user_id": row.get("user_id", target.user_id), "status": row.get("latest_run_status", "pending")},
+                {**row, "tenant_id": target.tenant_id, "user_id": target.user_id,
+                 "project_id": row.get("project_id"), "status": row.get("latest_run_status", "pending")},
             )
         report.tables["threads"] = len(_sqlite_rows(source, "threads"))
+        target._backfill_legacy_projects(conn)
+
+        for row in _sqlite_rows(source, "thread_drafts"):
+            conn.execute(
+                """INSERT INTO thread_drafts (thread_id, tenant_id, user_id, content, revision, updated_at)
+                   VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT(thread_id) DO UPDATE SET
+                   content=EXCLUDED.content, revision=EXCLUDED.revision, updated_at=EXCLUDED.updated_at""",
+                (row["thread_id"], target.tenant_id, target.user_id, row.get("content", ""),
+                 row.get("revision", 1), row["updated_at"]),
+            )
+        report.tables["thread_drafts"] = len(_sqlite_rows(source, "thread_drafts"))
 
         for row in _sqlite_rows(source, "runs"):
             conn.execute(

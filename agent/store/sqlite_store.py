@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +60,116 @@ class LocalSqliteStore:
         with self._lock:
             self._conn.close()
 
+    def create_project(
+        self, *, project_id: str, name: str, provider: str, repo_url: str,
+        repo_owner: str, repo_name: str,
+    ) -> dict[str, Any]:
+        now = utc_now()
+        with self._lock:
+            self._conn.execute(
+                """INSERT INTO projects
+                   (project_id, name, provider, repo_url, repo_owner, repo_name, is_legacy, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)""",
+                (project_id, name, provider, repo_url, repo_owner, repo_name, now, now),
+            )
+            self._conn.commit()
+            return self.get_project(project_id)
+
+    def create_chat_thread(self, *, thread_id: str) -> dict[str, Any]:
+        """Create a general chat thread without attaching it to a repository project."""
+        self.upsert_thread(thread_id=thread_id, title="新聊天", latest_run_status="pending")
+        return self.get_thread(thread_id)
+
+    def list_project_thread_ids(self, project_id: str) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT thread_id FROM threads WHERE project_id=? ORDER BY updated_at DESC",
+                (project_id,),
+            ).fetchall()
+            return [str(row["thread_id"]) for row in rows]
+
+    def delete_project(self, project_id: str) -> bool:
+        with self._lock:
+            if self._conn.execute("SELECT 1 FROM projects WHERE project_id=?", (project_id,)).fetchone() is None:
+                return False
+            if self._conn.execute("SELECT 1 FROM threads WHERE project_id=? LIMIT 1", (project_id,)).fetchone():
+                return False
+            self._conn.execute("DELETE FROM projects WHERE project_id=?", (project_id,))
+            self._conn.commit()
+            return True
+
+    def list_projects(self) -> list[dict[str, Any]]:
+        with self._lock:
+            return [dict(row) for row in self._conn.execute(
+                "SELECT * FROM projects ORDER BY updated_at DESC, name COLLATE NOCASE"
+            ).fetchall()]
+
+    def get_project(self, project_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            return self._row_to_dict(self._conn.execute(
+                "SELECT * FROM projects WHERE project_id=?", (project_id,)
+            ).fetchone())
+
+    def update_project_name(self, project_id: str, name: str) -> dict[str, Any] | None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE projects SET name=?, updated_at=? WHERE project_id=?",
+                (name, utc_now(), project_id),
+            )
+            self._conn.commit()
+            return self.get_project(project_id)
+
+    def create_thread_for_project(self, *, thread_id: str, project_id: str) -> dict[str, Any] | None:
+        now = utc_now()
+        with self._lock:
+            project = self._conn.execute(
+                "SELECT * FROM projects WHERE project_id=?", (project_id,)
+            ).fetchone()
+            if not project or not project["repo_url"]:
+                return None
+            self._conn.execute(
+                """INSERT INTO threads
+                   (thread_id, title, repo_url, repo_owner, repo_name, project_id,
+                    latest_run_status, created_at, updated_at)
+                   VALUES (?, '新会话', ?, ?, ?, ?, 'pending', ?, ?)""",
+                (thread_id, project["repo_url"], project["repo_owner"], project["repo_name"], project_id, now, now),
+            )
+            self._conn.execute(
+                "INSERT INTO thread_drafts (thread_id, content, revision, updated_at) VALUES (?, '', 1, ?)",
+                (thread_id, now),
+            )
+            self._conn.commit()
+            return self.get_thread(thread_id)
+
+    def get_thread_draft(self, thread_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            exists = self._conn.execute("SELECT 1 FROM threads WHERE thread_id=?", (thread_id,)).fetchone()
+            if not exists:
+                return None
+            return self._row_to_dict(self._conn.execute(
+                "SELECT content, revision, updated_at FROM thread_drafts WHERE thread_id=?",
+                (thread_id,),
+            ).fetchone()) or {"content": "", "revision": 0, "updated_at": None}
+
+    def save_thread_draft(self, *, thread_id: str, content: str) -> dict[str, Any] | None:
+        now = utc_now()
+        with self._lock:
+            exists = self._conn.execute("SELECT 1 FROM threads WHERE thread_id=?", (thread_id,)).fetchone()
+            if not exists:
+                return None
+            self._conn.execute(
+                """INSERT INTO thread_drafts (thread_id, content, revision, updated_at)
+                   VALUES (?, ?, 1, ?)
+                   ON CONFLICT(thread_id) DO UPDATE SET content=excluded.content,
+                     revision=thread_drafts.revision+1, updated_at=excluded.updated_at""",
+                (thread_id, content, now),
+            )
+            self._conn.commit()
+            return self._row_to_dict(self._conn.execute(
+                "SELECT content, revision, updated_at FROM thread_drafts WHERE thread_id=?",
+                (thread_id,),
+            ).fetchone())
+
     def _init_schema(self) -> None:
         """初始化业务表。
 
@@ -69,6 +180,18 @@ class LocalSqliteStore:
         with self._lock:
             self._conn.executescript(
                 """
+            CREATE TABLE IF NOT EXISTS projects (
+              project_id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              provider TEXT,
+              repo_url TEXT,
+              repo_owner TEXT,
+              repo_name TEXT,
+              is_legacy INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS threads (
               thread_id TEXT PRIMARY KEY,
               title TEXT NOT NULL,
@@ -76,12 +199,21 @@ class LocalSqliteStore:
               repo_url TEXT,
               repo_owner TEXT,
               repo_name TEXT,
+              project_id TEXT,
               branch_name TEXT,
               pr_url TEXT,
               latest_run_status TEXT NOT NULL,
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS thread_drafts (
+              thread_id TEXT PRIMARY KEY,
+              content TEXT NOT NULL DEFAULT '',
+              revision INTEGER NOT NULL DEFAULT 1,
+              updated_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_projects_updated ON projects(updated_at DESC);
 
             CREATE TABLE IF NOT EXISTS runs (
               run_id TEXT PRIMARY KEY,
@@ -90,8 +222,26 @@ class LocalSqliteStore:
               started_at TEXT NOT NULL,
               finished_at TEXT,
               error TEXT,
+              worker_id TEXT,
+              lease_expires_at TEXT,
+              heartbeat_at TEXT,
+              attempt INTEGER NOT NULL DEFAULT 0,
+              payload TEXT,
+              queued_at TEXT,
+              cancel_requested INTEGER NOT NULL DEFAULT 0,
               FOREIGN KEY(thread_id) REFERENCES threads(thread_id)
             );
+
+            CREATE TABLE IF NOT EXISTS run_stream_events (
+              seq INTEGER PRIMARY KEY AUTOINCREMENT,
+              thread_id TEXT NOT NULL,
+              run_id TEXT NOT NULL,
+              event TEXT NOT NULL,
+              payload TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_run_stream_events_run_seq
+              ON run_stream_events(thread_id, run_id, seq);
 
             CREATE TABLE IF NOT EXISTS run_events (
               id TEXT PRIMARY KEY,
@@ -167,6 +317,22 @@ class LocalSqliteStore:
             """
             )
             self._ensure_column("threads", "user_prompt", "TEXT")
+            self._ensure_column("threads", "project_id", "TEXT")
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_threads_project_updated ON threads(project_id, updated_at DESC)"
+            )
+            self._ensure_column("runs", "worker_id", "TEXT")
+            self._ensure_column("runs", "lease_expires_at", "TEXT")
+            self._ensure_column("runs", "heartbeat_at", "TEXT")
+            self._ensure_column("runs", "attempt", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column("runs", "payload", "TEXT")
+            self._ensure_column("runs", "queued_at", "TEXT")
+            self._ensure_column("runs", "cancel_requested", "INTEGER NOT NULL DEFAULT 0")
+            self._conn.execute(
+                """CREATE INDEX IF NOT EXISTS idx_runs_queue_claim
+                   ON runs(queued_at, run_id)
+                   WHERE status='queued' AND payload IS NOT NULL AND cancel_requested=0"""
+            )
             self._ensure_column("run_events", "run_id", "TEXT")
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_run_events_thread_run_created "
@@ -175,7 +341,35 @@ class LocalSqliteStore:
             self._ensure_column("thread_plans", "version", "INTEGER NOT NULL DEFAULT 1")
             self._ensure_column("thread_plans", "supersedes_plan_id", "TEXT")
             self._ensure_column("thread_plans", "decision_feedback", "TEXT")
+            self._backfill_legacy_projects()
             self._conn.commit()
+
+    def _backfill_legacy_projects(self) -> None:
+        rows = self._conn.execute(
+            """SELECT thread_id, title, repo_url, repo_owner, repo_name, created_at, updated_at
+               FROM threads WHERE project_id IS NULL ORDER BY created_at, thread_id"""
+        ).fetchall()
+        for row in rows:
+            repo_url = str(row["repo_url"] or "").strip()
+            if repo_url:
+                lowered = repo_url.lower().rstrip("/")
+                provider = "github" if "github.com/" in lowered else "gitee" if "gitee.com/" in lowered else None
+                identity = f"{provider or 'legacy'}:{lowered.removesuffix('.git')}"
+            else:
+                provider = None
+                identity = f"thread:{row['thread_id']}"
+            project_id = "legacy-" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:32]
+            repo_label = "/".join(part for part in (row["repo_owner"], row["repo_name"]) if part)
+            project_name = repo_label or f"历史会话 · {str(row['title'] or '未命名')[:48]}"
+            created_at = row["created_at"] or utc_now()
+            updated_at = row["updated_at"] or created_at
+            self._conn.execute(
+                """INSERT OR IGNORE INTO projects
+                   (project_id, name, provider, repo_url, repo_owner, repo_name, is_legacy, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)""",
+                (project_id, project_name, provider, repo_url or None, row["repo_owner"], row["repo_name"], created_at, updated_at),
+            )
+            self._conn.execute("UPDATE threads SET project_id=? WHERE thread_id=?", (project_id, row["thread_id"]))
 
     @staticmethod
     def _row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -317,6 +511,192 @@ class LocalSqliteStore:
                 (run_id, thread_id, status, now, now if finished else None, error),
             )
             self._conn.commit()
+
+    def enqueue_run(self, *, run_id: str, thread_id: str, payload: dict[str, Any]) -> None:
+        now = utc_now()
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                active = self._conn.execute(
+                    "SELECT 1 FROM runs WHERE thread_id=? AND status IN ('queued','running','cancelling') LIMIT 1",
+                    (thread_id,),
+                ).fetchone()
+                if active:
+                    raise ValueError("this thread already has an active run")
+                self._conn.execute(
+                    """INSERT INTO runs (run_id, thread_id, status, started_at, queued_at, payload)
+                       VALUES (?, ?, 'queued', ?, ?, ?)""",
+                    (run_id, thread_id, now, now, json.dumps(payload, ensure_ascii=False)),
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    def get_run(self, thread_id: str, run_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM runs WHERE thread_id=? AND run_id=?", (thread_id, run_id)
+            ).fetchone()
+        result = dict(row) if row else None
+        if result and result.get("payload"):
+            result["payload"] = json.loads(result["payload"])
+        return result
+
+    def list_active_runs(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT run_id, thread_id, status, queued_at, started_at
+                   FROM runs WHERE status IN ('queued','running','cancelling')
+                   ORDER BY COALESCE(queued_at, started_at), run_id LIMIT ?""",
+                (max(1, min(limit, 200)),),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def claim_next_run(
+        self, *, worker_id: str, ttl_seconds: int = 300, max_active: int | None = None
+    ) -> dict[str, Any] | None:
+        now = datetime.now(UTC)
+        expires = (now + timedelta(seconds=ttl_seconds)).isoformat()
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                if max_active is not None:
+                    active = self._conn.execute(
+                        "SELECT COUNT(*) FROM runs WHERE status IN ('running','cancelling') AND worker_id IS NOT NULL"
+                    ).fetchone()[0]
+                    if int(active) >= max_active:
+                        self._conn.commit()
+                        return None
+                row = self._conn.execute(
+                    """SELECT run_id FROM runs WHERE status='queued' AND payload IS NOT NULL
+                       AND cancel_requested=0 ORDER BY queued_at, run_id LIMIT 1"""
+                ).fetchone()
+                if row is None:
+                    self._conn.commit()
+                    return None
+                self._conn.execute(
+                    """UPDATE runs SET status='running', worker_id=?, lease_expires_at=?,
+                       heartbeat_at=?, started_at=?, attempt=attempt+1 WHERE run_id=? AND status='queued'""",
+                    (worker_id, expires, now.isoformat(), now.isoformat(), row["run_id"]),
+                )
+                claimed = self._conn.execute("SELECT * FROM runs WHERE run_id=?", (row["run_id"],)).fetchone()
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        result = dict(claimed)
+        result["payload"] = json.loads(result["payload"])
+        return result
+
+    def request_run_cancel(self, *, thread_id: str, run_id: str) -> str | None:
+        now = utc_now()
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT status FROM runs WHERE thread_id=? AND run_id=?", (thread_id, run_id)
+            ).fetchone()
+            if not row or row["status"] not in {"queued", "running", "cancelling"}:
+                return None
+            status = "cancelled" if row["status"] == "queued" else "cancelling"
+            self._conn.execute(
+                """UPDATE runs SET status=?, cancel_requested=1,
+                   finished_at=CASE WHEN ?='cancelled' THEN ? ELSE finished_at END
+                   WHERE thread_id=? AND run_id=?""",
+                (status, status, now, thread_id, run_id),
+            )
+            self._conn.commit()
+        return status
+
+    def is_run_cancel_requested(self, run_id: str) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT cancel_requested FROM runs WHERE run_id=?", (run_id,)
+            ).fetchone()
+        return bool(row and row["cancel_requested"])
+
+    def renew_run_lease(self, *, run_id: str, worker_id: str, ttl_seconds: int = 300) -> bool:
+        now = datetime.now(UTC)
+        with self._lock:
+            cursor = self._conn.execute(
+                """UPDATE runs SET heartbeat_at=?, lease_expires_at=?
+                   WHERE run_id=? AND worker_id=? AND status IN ('running','cancelling')""",
+                (now.isoformat(), (now + timedelta(seconds=ttl_seconds)).isoformat(), run_id, worker_id),
+            )
+            self._conn.commit()
+        return cursor.rowcount == 1
+
+    def finish_queued_run(self, *, thread_id: str, run_id: str, status: str, error: str | None = None) -> bool:
+        if status not in {"completed", "failed", "cancelled", "interrupted"}:
+            raise ValueError(f"invalid terminal run status: {status}")
+        with self._lock:
+            cursor = self._conn.execute(
+                """UPDATE runs SET status=?, error=?, finished_at=?, worker_id=NULL,
+                   lease_expires_at=NULL, heartbeat_at=NULL WHERE thread_id=? AND run_id=?""",
+                (status, error, utc_now(), thread_id, run_id),
+            )
+            self._conn.commit()
+        return cursor.rowcount == 1
+
+    def append_run_stream_event(
+        self, *, thread_id: str, run_id: str, event: str, payload: dict[str, Any]
+    ) -> int:
+        with self._lock:
+            cursor = self._conn.execute(
+                """INSERT INTO run_stream_events (thread_id, run_id, event, payload, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (thread_id, run_id, event, json.dumps(payload, ensure_ascii=False), utc_now()),
+            )
+            self._conn.commit()
+            return int(cursor.lastrowid)
+
+    def list_run_stream_events(
+        self, *, thread_id: str, run_id: str, after_seq: int = 0, limit: int = 200
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT seq, event, payload, created_at FROM run_stream_events
+                   WHERE thread_id=? AND run_id=? AND seq>? ORDER BY seq LIMIT ?""",
+                (thread_id, run_id, max(0, after_seq), max(1, min(limit, 1000))),
+            ).fetchall()
+        result = [dict(row) for row in rows]
+        for row in result:
+            row["payload"] = json.loads(row["payload"])
+        return result
+
+    def interrupt_stale_runs(self) -> list[str]:
+        now = datetime.now(UTC).isoformat()
+        stale_without_lease_before = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
+        with self._lock:
+            rows = self._conn.execute(
+                """SELECT run_id, thread_id FROM runs WHERE status IN ('running','cancelling')
+                   AND ((lease_expires_at IS NOT NULL AND lease_expires_at < ?)
+                        OR (lease_expires_at IS NULL AND started_at < ?))""",
+                (now, stale_without_lease_before),
+            ).fetchall()
+            self._conn.execute(
+                """UPDATE runs SET status='interrupted', error='Worker lease expired; retry explicitly',
+                   finished_at=?, worker_id=NULL, lease_expires_at=NULL, heartbeat_at=NULL
+                   WHERE status IN ('running','cancelling') AND (
+                     (lease_expires_at IS NOT NULL AND lease_expires_at < ?)
+                     OR (lease_expires_at IS NULL AND started_at < ?)
+                   )""",
+                (now, now, stale_without_lease_before),
+            )
+            for row in rows:
+                self._conn.execute(
+                    "UPDATE threads SET latest_run_status='interrupted', updated_at=? WHERE thread_id=?",
+                    (now, row["thread_id"]),
+                )
+            self._conn.commit()
+        for row in rows:
+            self.append_run_stream_event(
+                thread_id=row["thread_id"], run_id=row["run_id"], event="error",
+                payload={"message": "Worker lease expired; this run was interrupted. Retry it explicitly."},
+            )
+            self.append_run_stream_event(
+                thread_id=row["thread_id"], run_id=row["run_id"], event="done", payload={"status": "interrupted"}
+            )
+        return [row["run_id"] for row in rows]
 
     def add_run_event(
         self,
@@ -716,7 +1096,9 @@ class LocalSqliteStore:
             self._conn.execute("DELETE FROM thread_plans WHERE thread_id = ?", (thread_id,))
             self._conn.execute("DELETE FROM thread_interventions WHERE thread_id = ?", (thread_id,))
             self._conn.execute("DELETE FROM thread_messages WHERE thread_id = ?", (thread_id,))
+            self._conn.execute("DELETE FROM thread_drafts WHERE thread_id = ?", (thread_id,))
             self._conn.execute("DELETE FROM run_events WHERE thread_id = ?", (thread_id,))
+            self._conn.execute("DELETE FROM run_stream_events WHERE thread_id = ?", (thread_id,))
             self._conn.execute("DELETE FROM runs WHERE thread_id = ?", (thread_id,))
             self._conn.execute("DELETE FROM threads WHERE thread_id = ?", (thread_id,))
             self._conn.commit()

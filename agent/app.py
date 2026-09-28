@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -33,9 +35,22 @@ from agent.api import dashboard_router, router  # noqa: E402
 # ---------------------------------------------------------------
 # 创建 FastAPI 应用实例
 # ---------------------------------------------------------------
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    from agent.core.run_queue import get_run_worker_pool
+
+    pool = get_run_worker_pool()
+    pool.start()
+    try:
+        yield
+    finally:
+        pool.stop()
+
+
 app = FastAPI(
     title="CODING Backend",  # 应用名称
     version="0.1.0",                     # 应用版本号
+    lifespan=lifespan,
 )
 
 # ---------------------------------------------------------------
