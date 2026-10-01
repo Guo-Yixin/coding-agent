@@ -25,6 +25,14 @@ __pycache__/
 *.egg-info/
 ui/node_modules/
 ui/dist/
+ui/shots/
+# 一次性脚本与截图落点：迁移过程中用完即弃，不进仓库。
+# 需要留证的产物放 docs/design/baseline/，不靠 tmp/。
+tmp/
+# 参照物截图（Cursor / Linear / GitHub / Vercel / Notion / Raycast 的产品截图）。
+# 是别人的版权素材、体积 1.8 MB、重跑 capture.mjs 就能再取一份；
+# 项目自己的设计证据都在 docs/design/baseline/。
+docs/design/reference/
 ui/.tanstack/tmp/
 ui/tsconfig.tsbuildinfo
 ui/.output/
