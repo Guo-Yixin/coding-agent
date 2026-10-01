@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>边界态矩阵预览</title>
+    <style>
+      /* 预览专用：把整屏应用塞进固定尺寸的盒子里逐格展示，并对每格跑一次横向溢出探测。
+         探测只问一个问题：「有没有元素跑到 1440 视口之外」。有 → 真实用户会看到内容被切掉，
+         或者整页出现横向滚动条。 .box 是 overflow: hidden 的，跑出去的部分就是会被切掉的部分。 */
+      body { margin: 0; padding: 16px; background: #e9ece9; font: 13px/1.5 system-ui, sans-serif; }
+      :root { --box-w: 1440px; --box-h: 900px; }
+      .sheet { display: flex; flex-direction: column; gap: 20px; }
+      .cell { width: var(--box-w); }
+      .cell > h3 { margin: 0 0 4px; font-size: 14px; color: #222; }
+      .cell > .note { margin: 0 0 6px; font-size: 12px; color: #666; }
+      .box { width: var(--box-w); height: var(--box-h); overflow: hidden; border: 1px solid #c9d0cb; background: #fff; }
+      .panel { width: 1440px; height: 900px; }
+      body .app-shell { height: 900px; }
+
+      .report { margin: 6px 0 0; width: 100%; border-collapse: collapse; font: 12px/1.5 ui-monospace, Consolas, monospace; }
+      .report th, .report td { border: 1px solid #cdd5d0; padding: 3px 7px; text-align: left; vertical-align: top; }
+      .report th { background: #dfe5e1; font-weight: 700; }
+      .report tr.ok td { background: #eef7f1; }
+      .report tr.bad td { background: #fdeee9; }
+      .report .verdict { font-weight: 700; white-space: nowrap; }
+      .report tr.bad .verdict { color: #a33; }
+      .report tr.ok .verdict { color: #1f7667; }
+      .summary { margin: 4px 0 0; font: 700 12px/1.6 ui-monospace, Consolas, monospace; }
+    </style>
+  </head>
+  <body>
+    <div class="sheet" id="sheet"></div>
+    <script type="module" src="/preview/edges.js"></script>
+  </body>
+</html>

@@ -1,6 +1,8 @@
 <script setup>
 import { computed, onUnmounted, shallowRef } from 'vue'
 
+import UiButton from './ui/UiButton.vue'
+
 const props = defineProps({
   text: { type: String, required: true },
   timestamp: { type: [String, Number], default: null },
@@ -40,9 +42,11 @@ async function copyMessage() {
 
 <template>
   <div class="message-actions">
-    <button
+    <UiButton
       class="message-copy-button"
-      type="button"
+      variant="ghost"
+      size="sm"
+      icon
       :aria-label="copyError ? '复制失败' : copied ? '已复制消息' : '复制消息'"
       :title="copyError ? '复制失败' : copied ? '已复制' : '复制消息'"
       @click="copyMessage"
@@ -52,7 +56,7 @@ async function copyMessage() {
         <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke="currentColor" stroke-width="1.7" />
       </svg>
       <span v-else aria-hidden="true">{{ copyError ? '!' : '✓' }}</span>
-    </button>
+    </UiButton>
     <span class="message-copy-feedback" aria-live="polite">
       {{ copyError ? '复制失败' : copied ? '已复制' : '' }}
     </span>

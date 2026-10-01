@@ -1,12 +1,21 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 
+import UiButton from './ui/UiButton.vue'
+import UiInput from './ui/UiInput.vue'
+import UiSelect from './ui/UiSelect.vue'
+
 const props = defineProps({
   project: { type: Object, default: null },
   busy: { type: Boolean, default: false },
   errorMessage: { type: String, default: '' },
 })
 const emit = defineEmits(['close', 'save'])
+
+const PROVIDERS = [
+  { value: 'github', label: 'GitHub' },
+  { value: 'gitee', label: 'Gitee' },
+]
 
 const name = ref(props.project?.name || '')
 const provider = ref(props.project?.provider || 'github')
@@ -48,24 +57,21 @@ function onKeydown(event) {
       </div>
 
       <label class="field-label" for="project-name">项目名称</label>
-      <input id="project-name" v-model="name" class="dialog-input" maxlength="80" autofocus placeholder="例如：产品官网重构" />
+      <UiInput id="project-name" v-model="name" maxlength="80" autofocus placeholder="例如：产品官网重构" />
 
       <template v-if="!editing">
         <label class="field-label" for="project-provider">代码托管平台</label>
-        <select id="project-provider" v-model="provider" class="dialog-input">
-          <option value="github">GitHub</option>
-          <option value="gitee">Gitee</option>
-        </select>
+        <UiSelect id="project-provider" v-model="provider" :options="PROVIDERS" />
         <label class="field-label" for="project-repo">仓库地址</label>
-        <input id="project-repo" v-model="repo" class="dialog-input" :placeholder="repoPlaceholder" />
+        <UiInput id="project-repo" v-model="repo" :placeholder="repoPlaceholder" />
         <p class="dialog-hint">项目创建后，仓库地址将固定应用于项目中的所有会话。</p>
       </template>
       <div v-else class="bound-repository"><span class="bound-repository-mark">{{ project.provider === 'gitee' ? 'G' : 'GH' }}</span><span><strong>{{ project.provider === 'gitee' ? 'Gitee' : 'GitHub' }}</strong><small>{{ project.repoFullName || project.repo }}</small></span><span class="lock-mark" aria-label="仓库固定">⌑</span></div>
 
       <p v-if="error || errorMessage" class="dialog-error" role="alert">{{ error || errorMessage }}</p>
       <div class="dialog-actions">
-        <button class="button-secondary" type="button" :disabled="busy" @click="emit('close')">取消</button>
-        <button class="button-primary" type="submit" :disabled="busy">{{ busy ? '正在保存…' : editing ? '保存名称' : '创建项目' }}</button>
+        <UiButton variant="secondary" type="button" :disabled="busy" @click="emit('close')">取消</UiButton>
+        <UiButton variant="primary" type="submit" :disabled="busy">{{ busy ? '正在保存…' : editing ? '保存名称' : '创建项目' }}</UiButton>
       </div>
     </form>
   </div>

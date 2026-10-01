@@ -1,6 +1,9 @@
 <script setup>
 import { computed, ref } from 'vue'
 
+import UiButton from './ui/UiButton.vue'
+import UiTextarea from './ui/UiTextarea.vue'
+
 const props = defineProps({
   intervention: { type: Object, required: true },
   disabled: { type: Boolean, default: false },
@@ -29,18 +32,26 @@ function submit() {
     </header>
     <h4>{{ intervention.question }}</h4>
     <div v-if="intervention.options?.length" class="intervention-options">
-      <button
+      <UiButton
         v-for="option in intervention.options"
         :key="option"
-        type="button"
+        variant="secondary"
+        size="sm"
         :disabled="!canRespond"
         @click="response = option"
-      >{{ option }}</button>
+      >{{ option }}</UiButton>
     </div>
     <p v-if="props.intervention.status === 'resuming'" class="intervention-complete">答复已收到，正在从原任务断点继续。</p>
     <form v-else-if="pending" class="intervention-reply" @submit.prevent="submit">
-      <textarea v-model="response" :disabled="!canRespond" rows="2" placeholder="输入你的决定或补充说明…" aria-label="人工介入答复" />
-      <button type="submit" :disabled="!response.trim() || !canRespond">答复并继续</button>
+      <UiTextarea
+        v-model="response"
+        class="intervention-input"
+        :disabled="!canRespond"
+        :rows="2"
+        placeholder="输入你的决定或补充说明…"
+        aria-label="人工介入答复"
+      />
+      <UiButton type="submit" variant="primary" :disabled="!response.trim() || !canRespond">答复并继续</UiButton>
     </form>
     <p v-else class="intervention-complete">已收到答复，Agent 已继续处理。</p>
   </section>

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>ChatComposer 底栏 · 只读仓库展示</title>
+    <style>
+      body { margin: 0; padding: 16px; background: var(--c-bg-subtle); font-family: system-ui, sans-serif; }
+      h2 { margin: 0 0 6px; font-size: 13px; }
+      .case { margin-bottom: 18px; }
+      .case p { margin: 0 0 6px; color: var(--c-text-muted); font-size: 11px; }
+      /* 单独挂 ChatComposer：它本身是 <footer class="composer">，需要父级给宽度 */
+      .host { width: 620px; }
+      .host .composer { width: 100%; }
+    </style>
+  </head>
+  <body>
+    <div class="case">
+      <h2>① 有仓库（长名，会触发 ellipsis）</h2>
+      <p>期望：只有模型选择器有边框；「仓库 GitHub …」是纯文字，不该看起来能点。</p>
+      <div class="host" id="case-long"></div>
+    </div>
+    <div class="case">
+      <h2>② 有仓库（短名）</h2>
+      <div class="host" id="case-short"></div>
+    </div>
+    <div class="case">
+      <h2>③ 没有仓库（未新建项目）</h2>
+      <div class="host" id="case-none"></div>
+    </div>
+    <div class="case">
+      <h2>④ 普通聊天（chatOnly，不显示仓库那一组）</h2>
+      <div class="host" id="case-chat"></div>
+    </div>
+    <script type="module" src="/preview/composer-footer.js"></script>
+  </body>
+</html>

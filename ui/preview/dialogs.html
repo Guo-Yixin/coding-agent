@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>弹窗状态预览</title>
+    <style>
+      /* 预览专用：把 fixed 遮罩改成流式排布，以便一张截图同时看到多个弹窗形态。
+         用 body 前缀提高特异性，才压得住后加载的 main.css。 */
+      body { margin: 0; background: var(--c-bg-subtle); }
+      body .grid { display: grid; grid-template-columns: repeat(3, 1fr); align-items: start; gap: 20px; padding: 20px; }
+      body .dialog-backdrop { position: static; inset: auto; padding: 0; background: transparent; backdrop-filter: none; }
+      body .surface-dialog { width: 100%; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/preview/dialogs.js"></script>
+  </body>
+</html>

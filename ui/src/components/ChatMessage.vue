@@ -8,6 +8,7 @@ import TodoPlan from './TodoPlan.vue'
 import RunActivityCard from './RunActivityCard.vue'
 import ProposalCard from './ProposalCard.vue'
 import HumanInterventionCard from './HumanInterventionCard.vue'
+import { formatFullTime, formatRelativeTime, useNow } from '../composables/useRelativeTime.js'
 
 const props = defineProps({
   message: {
@@ -21,6 +22,19 @@ const props = defineProps({
 const emit = defineEmits(['plan-action', 'intervention-response', 'run-activity-expand'])
 
 const userExpanded = shallowRef(false)
+
+/**
+ * 消息头的时间。
+ *
+ * 近期用相对时间（"刚刚" / "12 分钟前"），超过一小时退回绝对时刻，
+ * 跨天再往前缀"昨天"、月和日。规则和理由在 `useRelativeTime.js` 里。
+ *
+ * 这里额外挂一个 `title` 给出精确到分钟的完整时刻 —— 相对时间的代价是丢掉准确值，
+ * 悬停补回来，这样"扫读快"和"查得到"两件事都成立。
+ */
+const now = useNow()
+const timeLabel = computed(() => formatRelativeTime(props.message?.timestamp, now.value))
+const timeTitle = computed(() => formatFullTime(props.message?.timestamp))
 
 const markdown = new MarkdownIt({
   html: false,
@@ -105,6 +119,7 @@ function handleCodeClick(event) {
           </svg>
         </span>
         <span>USER</span>
+        <time v-if="timeLabel" class="message-time" :title="timeTitle">{{ timeLabel }}</time>
       </div>
       <div class="user-bubble">
         <div class="plain-text">{{ visibleUserText }}</div>
@@ -130,6 +145,7 @@ function handleCodeClick(event) {
       <div class="message-meta">
         <img class="message-avatar" src="/coding-mark.svg" alt="CODING" />
         <span>CODING</span>
+        <time v-if="timeLabel" class="message-time" :title="timeTitle">{{ timeLabel }}</time>
       </div>
       <div class="assistant-message-body" @click="handleCodeClick">
         <div
