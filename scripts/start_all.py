@@ -112,7 +112,7 @@ def main() -> None:
         stopped = stop_ports((2024, 3000))
         if stopped:
             print(f"已清理残留服务进程：{stopped}")
-        sys.exit(0)
+    sys.exit(0)
 
 
 if __name__ == "__main__":
