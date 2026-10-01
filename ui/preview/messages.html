@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>消息块状态预览</title>
+    <style>
+      /* 预览专用排布。用 body 前缀提高特异性，才压得住后加载的 main.css。 */
+      body { margin: 0; background: var(--c-bg-subtle); }
+      body .grid { display: grid; grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr)); align-items: start; gap: 18px; padding: 18px; }
+      body .cell { border: 1px solid var(--c-border); border-radius: var(--radius-lg); background: var(--c-surface); padding: 14px; overflow: hidden; }
+      body .cell-label { margin: 0 0 10px; color: var(--c-text-muted); font-size: var(--text-xs); font-weight: 700; letter-spacing: .06em; }
+      /* 消息本来占满主区宽度，这里收进格子 */
+      body .message { width: 100%; margin-bottom: 0; }
+      body .message-assistant { padding-right: 0; }
+      body .message-user { padding-left: 80px; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/preview/messages.js"></script>
+  </body>
+</html>

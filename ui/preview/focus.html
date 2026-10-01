@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>焦点可见性检查</title>
+    <style>
+      body { margin: 0; padding: 20px; background: #fff; font-family: Inter, "Microsoft YaHei", "PingFang SC", Arial, sans-serif; color: #1c2321; }
+      h1 { margin: 0 0 4px; font-size: 17px; }
+      p { margin: 0 0 16px; color: #5a6561; font-size: 13px; }
+      #cases { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; margin-bottom: 18px; }
+      .case { padding: 4px; }
+      table { border-collapse: collapse; font-size: 12px; width: 100%; }
+      td { border-bottom: 1px solid #e4e7e6; padding: 5px 8px; vertical-align: top; }
+      td:nth-child(2) { font-family: Consolas, monospace; white-space: nowrap; }
+      tr.bad td { background: #fbefee; }
+      tr.ok td:first-child { color: #2f7d5b; }
+    </style>
+  </head>
+  <body>
+    <h1>焦点可见性检查</h1>
+    <p id="summary">…</p>
+    <div id="cases"></div>
+    <table><tbody id="table"></tbody></table>
+    <script type="module" src="/preview/focus.js"></script>
+  </body>
+</html>

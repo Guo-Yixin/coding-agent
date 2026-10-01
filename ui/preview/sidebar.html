@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>侧栏状态预览 + 键盘可达性检查</title>
+    <style>
+      /* 预览专用：把侧栏的 fixed/absolute 定位改成流式，并排展示展开态与收起态。
+         用 body 前缀提高特异性，才压得住后加载的 main.css。 */
+      body { margin: 0; background: var(--c-bg-subtle); font: 13px/1.5 system-ui, sans-serif; }
+      body .grid { display: grid; grid-template-columns: 340px 96px 1fr; align-items: start; gap: 20px; padding: 20px; }
+      body .sidebar { position: static; height: 640px; }
+      body .sidebar.collapsed { width: 76px; }
+      #report { padding: 0 20px 24px; }
+      #report h2 { margin: 0 0 8px; font-size: 15px; }
+      #report table { border-collapse: collapse; width: 100%; font-size: 12px; }
+      #report th, #report td { border-bottom: 1px solid var(--c-border); padding: 5px 8px; text-align: left; vertical-align: top; }
+      #report tr.bad { background: #fdf1f1; }
+      #report code { font-family: ui-monospace, Consolas, monospace; }
+    </style>
+  </head>
+  <body>
+    <div class="grid">
+      <div id="expanded"></div>
+      <div id="collapsed"></div>
+      <div id="report"></div>
+    </div>
+    <script type="module" src="/preview/sidebar.js"></script>
+  </body>
+</html>

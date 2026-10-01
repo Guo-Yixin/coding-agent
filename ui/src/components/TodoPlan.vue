@@ -16,8 +16,8 @@ function icon(status) {
 <template>
   <section class="todo-card">
     <header>
-      <span>☷</span>
-      <strong>{{ todos.filter((item) => item.status === 'completed').length }} out of {{ todos.length }} tasks completed</strong>
+      <span aria-hidden="true">☷</span>
+      <strong>已完成 {{ todos.filter((item) => item.status === 'completed').length }} / {{ todos.length }} 项</strong>
     </header>
     <ol>
       <li

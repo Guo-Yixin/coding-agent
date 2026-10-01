@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>主区状态矩阵预览</title>
+    <style>
+      /* 预览专用：把整屏应用塞进固定尺寸的盒子里逐格展示。
+         AgentWorkspace 用 height: 100vh 撑满视口，所以必须显式覆盖高度，
+         否则每个面板都会撑到整个预览页那么高。 */
+      body { margin: 0; padding: 16px; background: #e9ece9; font: 13px/1.5 system-ui, sans-serif; }
+      :root { --box-w: 893px; --box-h: 558px; }
+      .sheet { display: flex; flex-direction: column; gap: 14px; }
+      .cell { width: var(--box-w); }
+      .cell > h3 { margin: 0 0 6px; font-size: 13px; color: #333; }
+      .box { width: var(--box-w); height: var(--box-h); overflow: hidden; border: 1px solid #c9d0cb; background: #fff; }
+      .panel { width: 1440px; height: 900px; transform: scale(var(--scale, 0.62)); transform-origin: top left; }
+      body .app-shell { height: 900px; }
+    </style>
+  </head>
+  <body>
+    <div class="sheet" id="sheet"></div>
+    <script type="module" src="/preview/states.js"></script>
+  </body>
+</html>

@@ -91,6 +91,11 @@ export const useAgentStore = defineStore('agent', {
     selectedEffort: 'default',
     loading: false,
     error: '',
+    // 与 `error` 分开：`error` 是给主区顶部横幅用的「刚才那件事失败了」，
+    // 而 `projectsError` 回答的是一个结构性是非题 —— **侧栏到底有没有成功拿到项目列表**。
+    // 没有它的话，加载失败与「你确实一个项目都没有」在界面上完全一样，
+    // 于是失败时应用会热情地引导用户去「创建第一个项目」（见 DESIGN.md §18）。
+    projectsError: '',
     runActivityEvents: {},
     runActivityLoading: {},
   }),
@@ -144,26 +149,50 @@ export const useAgentStore = defineStore('agent', {
     async bootstrap() {
       this.loading = true
       this.error = ''
-      try {
-        const [user, options, threads, projects, activeRuns] = await Promise.all([
-          dashboardApi.me(), dashboardApi.options(), dashboardApi.listThreads(), dashboardApi.listProjects(), dashboardApi.listActiveRuns(),
-        ])
-        this.user = user
-        this.options = options
-        this.threads = threads
-        this.projects = projects
+      // 用 allSettled 而不是 all：五个接口是彼此独立的，其中一个挂掉不该把
+      // 已经拿到的四份数据一起丢掉。原来的 `Promise.all` 会让任意一个失败 →
+      // `this.projects` 保持 `[]` → 侧栏显示「项目会出现在这里」，
+      // 用户看到的是「你没有项目」而不是「没读到项目」。
+      const [user, options, threads, projects, activeRuns] = await Promise.allSettled([
+        dashboardApi.me(), dashboardApi.options(), dashboardApi.listThreads(), dashboardApi.listProjects(), dashboardApi.listActiveRuns(),
+      ])
+      if (user.status === 'fulfilled') this.user = user.value
+      if (options.status === 'fulfilled') {
+        this.options = options.value
         const savedModel = window.localStorage.getItem('coding.selected-model')
-        const validModels = (options.models || []).map((item) => item.id)
+        const validModels = (options.value.models || []).map((item) => item.id)
         this.selectedModel = validModels.includes(savedModel)
           ? savedModel
-          : options.default_agent_model || options.models?.[0]?.id || ''
-        this.selectedEffort = options.default_agent_reasoning_effort || 'default'
-        if (!this.currentThread && threads.length) await this.selectThread(threads[0].id)
-        for (const run of activeRuns) this.resumeRun(run)
+          : options.value.default_agent_model || options.value.models?.[0]?.id || ''
+        this.selectedEffort = options.value.default_agent_reasoning_effort || 'default'
+      }
+      if (threads.status === 'fulfilled') this.threads = threads.value
+      if (projects.status === 'fulfilled') {
+        this.projects = projects.value
+        this.projectsError = ''
+      } else {
+        this.projectsError = projects.reason?.message || '项目列表加载失败'
+      }
+      if (activeRuns.status === 'fulfilled') {
+        for (const run of activeRuns.value) this.resumeRun(run)
+      }
+      // 主区横幅保持原样：仍然只显示**第一条**失败信息，不变成五条。
+      const [firstFailure] = [user, options, threads, projects, activeRuns].filter((item) => item.status === 'rejected')
+      this.error = firstFailure ? (firstFailure.reason?.message || '初始化前端失败') : ''
+      this.loading = false
+      if (this.error) return
+      if (!this.currentThread && this.threads.length) await this.selectThread(this.threads[0].id)
+    },
+    // 侧栏「重新加载」按钮的落点。刻意只重取项目列表 ——
+    // 用户点这个按钮的唯一动机就是「项目没出来」。
+    async retryProjects() {
+      try {
+        this.projects = await dashboardApi.listProjects()
+        this.projectsError = ''
+        // 项目回来了，主区那条「加载项目列表失败」的横幅也该消失。
+        if (this.error) this.error = ''
       } catch (error) {
-        this.error = error.message || '初始化前端失败'
-      } finally {
-        this.loading = false
+        this.projectsError = error.message || '项目列表加载失败'
       }
     },
     async refreshThreads() {

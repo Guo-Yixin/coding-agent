@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>ActiveTaskStrip · 1:1</title>
+    <style>
+      /* 只挂活跃任务条本身，不套整个应用 —— 这样可以用 --scale 3 把它放大三倍看细节。
+         整屏夹具（states.html）做不到：放大整屏会超出图片尺寸上限。 */
+      body { margin: 0; padding: 20px; background: var(--c-bg-subtle); }
+      #app { width: 700px; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/preview/active-tasks.js"></script>
+  </body>
+</html>

@@ -35,7 +35,27 @@ const latestTodos = computed(() => {
   }
   return []
 })
-const timelineEvents = computed(() => props.events.filter((event) => event.kind !== 'todo'))
+const timelineEvents = computed(() => props.events.filter((event) => event.kind !== 'todo' && event.kind !== 'think'))
+
+/**
+ * 「深度思考」。
+ *
+ * `kind === 'think'` 的事件是模型自己的推理过程，和工具调用（`kind === 'other'`）
+ * 混在一条平铺列表里时读不出区别 —— 而它恰恰是最长、最需要折叠的那一类。
+ * 所以单独抽出来做成一层子折叠：默认收起（它经常比整个运行轨迹还长），
+ * 展开后按原顺序铺开。
+ *
+ * 不落盘持久化：这是一个"顺手看一眼"的控制，不是面板。
+ * 运行轨迹的展开状态要记住是因为它决定"这里有没有内容"；
+ * 深度思考记不记无所谓，每次回到这条消息重新看一遍反而更符合预期。
+ */
+const thinkEvents = computed(() => props.events.filter((event) => event.kind === 'think'))
+const thinkExpanded = shallowRef(false)
+
+function toggleThink() {
+  thinkExpanded.value = !thinkExpanded.value
+}
+
 const durationMs = computed(() => {
   const start = Date.parse(props.activity.started_at || '')
   if (!Number.isFinite(start)) return null
@@ -117,6 +137,29 @@ onUnmounted(() => {
     <div v-if="expanded" class="run-activity-content">
       <p v-if="loading" class="run-activity-loading">正在恢复执行记录…</p>
       <template v-else>
+        <div v-if="thinkEvents.length" class="think-block">
+          <button
+            type="button"
+            class="think-toggle"
+            :aria-expanded="thinkExpanded"
+            @click="toggleThink"
+          >
+            <span class="think-toggle-icon" aria-hidden="true">
+              <svg viewBox="0 0 20 20" :class="{ expanded: thinkExpanded }" focusable="false">
+                <path d="m5.5 7.5 4.5 4.5 4.5-4.5" />
+              </svg>
+            </span>
+            <span class="think-heading">深度思考</span>
+            <span class="think-count">{{ thinkEvents.length }} 段</span>
+          </button>
+          <ol v-if="thinkExpanded" class="think-list">
+            <li v-for="event in thinkEvents" :key="event.id" class="think-item">
+              <span class="think-title">{{ event.title }}</span>
+              <p v-if="event.detail?.text" class="think-text">{{ event.detail.text }}</p>
+            </li>
+          </ol>
+        </div>
+
         <TodoPlan v-if="latestTodos.length" :todos="latestTodos" />
         <ol v-if="timelineEvents.length" class="run-activity-timeline">
           <li v-for="event in timelineEvents" :key="event.id" class="run-activity-event">
@@ -125,7 +168,7 @@ onUnmounted(() => {
             <p v-if="event.detail?.text" class="run-activity-event-text">{{ event.detail.text }}</p>
           </li>
         </ol>
-        <p v-if="!latestTodos.length && !timelineEvents.length" class="run-activity-empty">
+        <p v-if="!latestTodos.length && !timelineEvents.length && !thinkEvents.length" class="run-activity-empty">
           暂无可展示的执行过程。
         </p>
       </template>

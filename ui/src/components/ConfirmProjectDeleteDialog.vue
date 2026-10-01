@@ -1,6 +1,9 @@
 <script setup>
 import { ref } from 'vue'
 
+import UiButton from './ui/UiButton.vue'
+import UiInput from './ui/UiInput.vue'
+
 const props = defineProps({
   project: { type: Object, required: true },
   busy: { type: Boolean, default: false },
@@ -23,11 +26,11 @@ function confirm() {
       <h2 id="delete-project-title">删除“{{ project.name }}”？</h2>
       <p id="delete-project-description" class="delete-description">此操作会永久删除该项目及其 <strong>{{ project.conversations?.length || 0 }} 个会话</strong>，包括聊天记录、运行记录和草稿。仓库代码不会被删除。</p>
       <label class="field-label" for="confirm-project-name">输入项目名称以确认</label>
-      <input id="confirm-project-name" v-model="confirmation" class="dialog-input" autocomplete="off" autofocus :placeholder="project.name" @keydown.enter.prevent="confirm" />
+      <UiInput id="confirm-project-name" v-model="confirmation" autocomplete="off" autofocus :placeholder="project.name" @keydown.enter.prevent="confirm" />
       <p v-if="errorMessage" class="dialog-error" role="alert">{{ errorMessage }}</p>
       <div class="dialog-actions">
-        <button class="button-secondary" type="button" :disabled="busy" @click="emit('close')">保留项目</button>
-        <button class="button-danger" type="button" :disabled="busy || confirmation.trim() !== project.name" @click="confirm">{{ busy ? '正在删除…' : '删除项目及所有会话' }}</button>
+        <UiButton variant="secondary" type="button" :disabled="busy" @click="emit('close')">保留项目</UiButton>
+        <UiButton variant="danger" type="button" :disabled="busy || confirmation.trim() !== project.name" @click="confirm">{{ busy ? '正在删除…' : '删除项目及所有会话' }}</UiButton>
       </div>
     </section>
   </div>

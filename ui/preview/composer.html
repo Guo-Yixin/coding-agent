@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>ChatComposer 各断点排布</title>
+    <style>
+      /* media query 认的是视口宽度，所以这里用 iframe 造出几个真实的窄视口。 */
+      body {
+        margin: 0;
+        padding: 16px;
+        color: #1c2321;
+        background: #ffffff;
+        font-family: Inter, "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+      }
+      h1 { margin: 0 0 14px; font-size: 15px; color: #5a6561; font-weight: 600; }
+      .row { display: flex; gap: 14px; align-items: flex-start; }
+      .cell { flex: 0 0 auto; }
+      .cap { margin-bottom: 6px; font-size: 12px; font-weight: 600; color: #5a6561; }
+      iframe { display: block; border: 1px solid #e4e7e6; border-radius: 8px; }
+    </style>
+  </head>
+  <body>
+    <h1>ChatComposer 在各断点下的底栏排布（iframe 宽度 = 视口宽度）</h1>
+    <div class="row">
+      <div class="cell">
+        <div class="cap">375px</div>
+        <iframe src="/preview/composer-frame.html" width="375" height="230"></iframe>
+      </div>
+      <div class="cell">
+        <div class="cap">560px</div>
+        <iframe src="/preview/composer-frame.html" width="560" height="230"></iframe>
+      </div>
+      <div class="cell">
+        <div class="cap">720px</div>
+        <iframe src="/preview/composer-frame.html" width="720" height="230"></iframe>
+      </div>
+    </div>
+  </body>
+</html>

@@ -3,6 +3,8 @@ import { computed } from 'vue'
 import MarkdownIt from 'markdown-it'
 import DOMPurify from 'dompurify'
 
+import UiButton from './ui/UiButton.vue'
+
 const props = defineProps({
   proposal: { type: Object, required: true },
   disabled: { type: Boolean, default: false },
@@ -27,13 +29,15 @@ const statusLabel = computed(() => ({
     </header>
     <div class="proposal-card-content markdown-body" v-html="body"></div>
     <footer v-if="proposal.status === 'pending'" class="proposal-actions">
-      <button class="proposal-button proposal-button-primary" type="button" :disabled="disabled" @click="emit('action', 'approve')">
+      <UiButton variant="primary" :disabled="disabled" @click="emit('action', 'approve')">
         确认并实施
-      </button>
-      <button class="proposal-button" type="button" :disabled="disabled" @click="emit('action', 'revise')">调整方案</button>
-      <button class="proposal-button proposal-button-muted" type="button" :disabled="disabled" @click="emit('action', 'reject')">
+      </UiButton>
+      <UiButton variant="secondary" :disabled="disabled" @click="emit('action', 'revise')">
+        调整方案
+      </UiButton>
+      <UiButton variant="ghost" :disabled="disabled" @click="emit('action', 'reject')">
         拒绝实施
-      </button>
+      </UiButton>
     </footer>
   </section>
 </template>
