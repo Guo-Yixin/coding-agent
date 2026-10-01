@@ -54,5 +54,43 @@ def test_long_secret_is_redacted_without_corrupting_longer_tokens(monkeypatch) -
     assert telemetry._redact("password is postgres") == "password is [REDACTED]"
 
 
+def test_compound_identifiers_are_not_split_by_a_secret_value(monkeypatch) -> None:
+    """下划线属于标识符字符：``postgres_user`` 不应变成 ``[REDACTED]_user``。"""
+
+    monkeypatch.setenv("POSTGRES_PASSWORD", "postgres")
+    payload = {"repo_path": "/work/postgres_backup", "id": "postgres_user"}
+
+    assert telemetry._redact(payload) == payload
+
+
+def test_values_shorter_than_the_threshold_are_plain_configuration(monkeypatch) -> None:
+    """契约：短于 ``_ENV_SECRET_MIN_LENGTH`` 的取值不是密钥材料，任何形式都不替换。
+
+    包含 JSON 的引号形式——``_SECRET_RE`` 要求标记名后紧跟 ``=`` 或 ``:``，
+    引号挡在中间时匹配不到，因此 ``{"password": "s3cr3t"}`` 保持原样。只有
+    无引号的 ``password=s3cr3t`` 才会被 ``_SECRET_RE`` 拦截。
+    """
+
+    monkeypatch.setenv("REVIEW_PASSWORD", "s3cr3t")
+    payload = {"password": "s3cr3t"}
+
+    assert telemetry._redact(payload) == payload
+    assert telemetry._redact('{"password": "s3cr3t"}') == '{"password": "s3cr3t"}'
+    assert telemetry._redact("password=s3cr3t") == "password=[REDACTED]"
+
+
+def test_long_environment_secret_is_redacted_inside_nested_payloads(monkeypatch) -> None:
+    """对照：达到阈值的密钥在字典取值与 JSON 字符串里都仍然被脱敏。"""
+
+    dsn = "postgresql://eval:sup3rsecret@127.0.0.1:5432/eval_db"
+    monkeypatch.setenv("POSTGRES_DSN", dsn)
+    embedded = json.dumps({"dsn": dsn})
+
+    redacted = telemetry._redact({"payload": {"content": embedded}})
+
+    assert dsn in embedded
+    assert redacted["payload"]["content"] == '{"dsn": "[REDACTED]"}'
+
+
 def test_name_value_secret_pattern_is_still_masked() -> None:
     assert telemetry._redact("token=abc123def456") == "token=[REDACTED]"
