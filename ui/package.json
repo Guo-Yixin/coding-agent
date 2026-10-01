@@ -8,7 +8,14 @@
     "build": "vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "preview": "vite preview --host 127.0.0.1 --port 3000"
+    "preview": "vite preview --host 127.0.0.1 --port 3000",
+    "audit": "node scripts/audit-css.mjs src --ignore tokens.css",
+    "audit:json": "node scripts/audit-css.mjs src --ignore tokens.css --json",
+    "shots": "node scripts/capture.mjs http://127.0.0.1:3000 shots --widths 375,768,1440 --name shot",
+    "lint:css": "stylelint \"src/components/ui/**/*.vue\" \"src/components/layout/**/*.vue\"",
+    "lint:css:all": "stylelint \"src/**/*.{css,vue}\"",
+    "check:contrast": "node scripts/check-contrast.mjs",
+    "verify": "npm run lint:css && npm run audit && npm run check:contrast && npm test && npm run build"
   },
   "dependencies": {
     "@vitejs/plugin-vue": "^6.0.0",
@@ -22,6 +29,9 @@
   "devDependencies": {
     "@vue/test-utils": "^2.5.1",
     "happy-dom": "^20.14.5",
+    "postcss-html": "^2.0.0",
+    "stylelint": "^17.15.0",
+    "stylelint-config-standard": "^40.0.0",
     "vitest": "^5.0.2"
   }
 }
