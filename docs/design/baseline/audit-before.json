@@ -1,0 +1,3226 @@
+{
+  "tool": "audit-css",
+  "version": 1,
+  "target": "A:\\gyx_cv\\coding_agent\\ui\\src",
+  "files": [
+    "A:\\gyx_cv\\coding_agent\\ui\\src\\App.vue",
+    "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ActiveTaskStrip.vue",
+    "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\AgentWorkspace.vue",
+    "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ChatComposer.vue",
+    "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ChatMessage.vue",
+    "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ConfirmProjectDeleteDialog.vue",
+    "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\CreateProjectDialog.vue",
+    "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\HumanInterventionCard.vue",
+    "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\MessageActions.vue",
+    "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ProposalCard.vue",
+    "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\RunActivityCard.vue",
+    "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\SessionSidebar.vue",
+    "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\TodoPlan.vue",
+    "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css"
+  ],
+  "thresholds": {
+    "nearDuplicateDistance": 12,
+    "nearWhiteMin": 245,
+    "neutralSaturation": 0.12,
+    "neutralChroma": 6,
+    "limits": {
+      "coloredDistinct": 5,
+      "radiusDistinct": 4,
+      "fontSizeDistinct": 7,
+      "nearWhiteDistinct": 3,
+      "rootBlocks": 1,
+      "tokenCoverage": 90,
+      "rgbBaseDistinct": 3,
+      "duplicateSelectors": 0,
+      "importantCount": 0
+    }
+  },
+  "totals": {
+    "files": 14,
+    "lines": 2722,
+    "ruleBlocks": 512,
+    "distinctSelectors": 417,
+    "selectorUses": 599
+  },
+  "root": {
+    "blockCount": 3,
+    "files": [
+      "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css"
+    ],
+    "variables": 18,
+    "variableDeclarations": 27,
+    "duplicates": [
+      {
+        "name": "--surface-soft",
+        "declarations": [
+          {
+            "name": "--surface-soft",
+            "value": "#f7f8f6",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 14
+          },
+          {
+            "name": "--surface-soft",
+            "value": "#f7f7f8",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 564
+          },
+          {
+            "name": "--surface-soft",
+            "value": "#f6f8f7",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 1122
+          }
+        ],
+        "winner": {
+          "name": "--surface-soft",
+          "value": "#f6f8f7",
+          "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+          "line": 1122
+        },
+        "dead": [
+          {
+            "name": "--surface-soft",
+            "value": "#f7f8f6",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 14
+          },
+          {
+            "name": "--surface-soft",
+            "value": "#f7f7f8",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 564
+          }
+        ]
+      },
+      {
+        "name": "--accent-strong",
+        "declarations": [
+          {
+            "name": "--accent-strong",
+            "value": "#245f59",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 9
+          },
+          {
+            "name": "--accent-strong",
+            "value": "#1f7667",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 1123
+          }
+        ],
+        "winner": {
+          "name": "--accent-strong",
+          "value": "#1f7667",
+          "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+          "line": 1123
+        },
+        "dead": [
+          {
+            "name": "--accent-strong",
+            "value": "#245f59",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 9
+          }
+        ]
+      },
+      {
+        "name": "--border",
+        "declarations": [
+          {
+            "name": "--border",
+            "value": "#e1e5e3",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 11
+          },
+          {
+            "name": "--border",
+            "value": "#e7e7e7",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 561
+          }
+        ],
+        "winner": {
+          "name": "--border",
+          "value": "#e7e7e7",
+          "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+          "line": 561
+        },
+        "dead": [
+          {
+            "name": "--border",
+            "value": "#e1e5e3",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 11
+          }
+        ]
+      },
+      {
+        "name": "--muted",
+        "declarations": [
+          {
+            "name": "--muted",
+            "value": "#6b7780",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 12
+          },
+          {
+            "name": "--muted",
+            "value": "#6b6b6b",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 562
+          }
+        ],
+        "winner": {
+          "name": "--muted",
+          "value": "#6b6b6b",
+          "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+          "line": 562
+        },
+        "dead": [
+          {
+            "name": "--muted",
+            "value": "#6b7780",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 12
+          }
+        ]
+      },
+      {
+        "name": "--sidebar-closed",
+        "declarations": [
+          {
+            "name": "--sidebar-closed",
+            "value": "72px",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 6
+          },
+          {
+            "name": "--sidebar-closed",
+            "value": "76px",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 1118
+          }
+        ],
+        "winner": {
+          "name": "--sidebar-closed",
+          "value": "76px",
+          "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+          "line": 1118
+        },
+        "dead": [
+          {
+            "name": "--sidebar-closed",
+            "value": "72px",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 6
+          }
+        ]
+      },
+      {
+        "name": "--sidebar-open",
+        "declarations": [
+          {
+            "name": "--sidebar-open",
+            "value": "272px",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 5
+          },
+          {
+            "name": "--sidebar-open",
+            "value": "292px",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 1117
+          }
+        ],
+        "winner": {
+          "name": "--sidebar-open",
+          "value": "292px",
+          "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+          "line": 1117
+        },
+        "dead": [
+          {
+            "name": "--sidebar-open",
+            "value": "272px",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 5
+          }
+        ]
+      },
+      {
+        "name": "--sidebar-width",
+        "declarations": [
+          {
+            "name": "--sidebar-width",
+            "value": "var(--sidebar-open)",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 7
+          },
+          {
+            "name": "--sidebar-width",
+            "value": "var(--sidebar-closed)",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 38
+          }
+        ],
+        "winner": {
+          "name": "--sidebar-width",
+          "value": "var(--sidebar-closed)",
+          "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+          "line": 38
+        },
+        "dead": [
+          {
+            "name": "--sidebar-width",
+            "value": "var(--sidebar-open)",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 7
+          }
+        ]
+      },
+      {
+        "name": "--surface",
+        "declarations": [
+          {
+            "name": "--surface",
+            "value": "#ffffff",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 13
+          },
+          {
+            "name": "--surface",
+            "value": "#ffffff",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 563
+          }
+        ],
+        "winner": {
+          "name": "--surface",
+          "value": "#ffffff",
+          "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+          "line": 563
+        },
+        "dead": [
+          {
+            "name": "--surface",
+            "value": "#ffffff",
+            "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+            "line": 13
+          }
+        ]
+      }
+    ]
+  },
+  "hexColors": {
+    "distinct": 297,
+    "occurrences": 462,
+    "top": [
+      {
+        "value": "#ffffff",
+        "count": 42
+      },
+      {
+        "value": "#2f2f2f",
+        "count": 12
+      },
+      {
+        "value": "#263238",
+        "count": 11
+      },
+      {
+        "value": "#e1e1e1",
+        "count": 7
+      },
+      {
+        "value": "#eeeeef",
+        "count": 5
+      },
+      {
+        "value": "#356b63",
+        "count": 4
+      },
+      {
+        "value": "#475569",
+        "count": 4
+      },
+      {
+        "value": "#94a3b8",
+        "count": 4
+      },
+      {
+        "value": "#9aa39f",
+        "count": 4
+      },
+      {
+        "value": "#edf4f2",
+        "count": 4
+      },
+      {
+        "value": "#f4f5f3",
+        "count": 4
+      },
+      {
+        "value": "#fbfcfb",
+        "count": 4
+      },
+      {
+        "value": "#245f59",
+        "count": 3
+      },
+      {
+        "value": "#286f5f",
+        "count": 3
+      },
+      {
+        "value": "#3f3f3f",
+        "count": 3
+      }
+    ],
+    "nearDuplicates": [
+      [
+        {
+          "label": "#e5e7eb",
+          "r": 229,
+          "g": 231,
+          "b": 235
+        },
+        {
+          "label": "#e1e5e3",
+          "r": 225,
+          "g": 229,
+          "b": 227
+        },
+        {
+          "label": "#dfe5e2",
+          "r": 223,
+          "g": 229,
+          "b": 226
+        },
+        {
+          "label": "#e2eeeb",
+          "r": 226,
+          "g": 238,
+          "b": 235
+        },
+        {
+          "label": "#ecefeb",
+          "r": 236,
+          "g": 239,
+          "b": 235
+        },
+        {
+          "label": "#e1e5ea",
+          "r": 225,
+          "g": 229,
+          "b": 234
+        },
+        {
+          "label": "#e8ebef",
+          "r": 232,
+          "g": 235,
+          "b": 239
+        },
+        {
+          "label": "#e0ebe7",
+          "r": 224,
+          "g": 235,
+          "b": 231
+        },
+        {
+          "label": "#e8f1ed",
+          "r": 232,
+          "g": 241,
+          "b": 237
+        },
+        {
+          "label": "#e3ece8",
+          "r": 227,
+          "g": 236,
+          "b": 232
+        },
+        {
+          "label": "#dfe6e2",
+          "r": 223,
+          "g": 230,
+          "b": 226
+        },
+        {
+          "label": "#e0e7e3",
+          "r": 224,
+          "g": 231,
+          "b": 227
+        },
+        {
+          "label": "#e7e7e7",
+          "r": 231,
+          "g": 231,
+          "b": 231
+        },
+        {
+          "label": "#e0e8e4",
+          "r": 224,
+          "g": 232,
+          "b": 228
+        },
+        {
+          "label": "#e4e4e4",
+          "r": 228,
+          "g": 228,
+          "b": 228
+        },
+        {
+          "label": "#dce8e4",
+          "r": 220,
+          "g": 232,
+          "b": 228
+        },
+        {
+          "label": "#e7eeeb",
+          "r": 231,
+          "g": 238,
+          "b": 235
+        },
+        {
+          "label": "#eceeef",
+          "r": 236,
+          "g": 238,
+          "b": 239
+        },
+        {
+          "label": "#e9eeeb",
+          "r": 233,
+          "g": 238,
+          "b": 235
+        },
+        {
+          "label": "#e9edeb",
+          "r": 233,
+          "g": 237,
+          "b": 235
+        },
+        {
+          "label": "#e2e8e5",
+          "r": 226,
+          "g": 232,
+          "b": 229
+        },
+        {
+          "label": "#e6ebe8",
+          "r": 230,
+          "g": 235,
+          "b": 232
+        },
+        {
+          "label": "#e8edeb",
+          "r": 232,
+          "g": 237,
+          "b": 235
+        },
+        {
+          "label": "#e3e9e6",
+          "r": 227,
+          "g": 233,
+          "b": 230
+        },
+        {
+          "label": "#e7ece9",
+          "r": 231,
+          "g": 236,
+          "b": 233
+        },
+        {
+          "label": "#e9efec",
+          "r": 233,
+          "g": 239,
+          "b": 236
+        },
+        {
+          "label": "#e4f1eb",
+          "r": 228,
+          "g": 241,
+          "b": 235
+        },
+        {
+          "label": "#e5ebe8",
+          "r": 229,
+          "g": 235,
+          "b": 232
+        },
+        {
+          "label": "#eaf1ed",
+          "r": 234,
+          "g": 241,
+          "b": 237
+        },
+        {
+          "label": "#e4e9e6",
+          "r": 228,
+          "g": 233,
+          "b": 230
+        },
+        {
+          "label": "#e6f2ec",
+          "r": 230,
+          "g": 242,
+          "b": 236
+        },
+        {
+          "label": "#e8eeeb",
+          "r": 232,
+          "g": 238,
+          "b": 235
+        },
+        {
+          "label": "#e1ece6",
+          "r": 225,
+          "g": 236,
+          "b": 230
+        },
+        {
+          "label": "#dfe7e2",
+          "r": 223,
+          "g": 231,
+          "b": 226
+        },
+        {
+          "label": "#e1e8e4",
+          "r": 225,
+          "g": 232,
+          "b": 228
+        },
+        {
+          "label": "#d6e5e0",
+          "r": 214,
+          "g": 229,
+          "b": 224
+        },
+        {
+          "label": "#dbe6e2",
+          "r": 219,
+          "g": 230,
+          "b": 226
+        },
+        {
+          "label": "#dce7e2",
+          "r": 220,
+          "g": 231,
+          "b": 226
+        },
+        {
+          "label": "#dfe4e1",
+          "r": 223,
+          "g": 228,
+          "b": 225
+        },
+        {
+          "label": "#e1e1e1",
+          "r": 225,
+          "g": 225,
+          "b": 225
+        },
+        {
+          "label": "#dedede",
+          "r": 222,
+          "g": 222,
+          "b": 222
+        },
+        {
+          "label": "#e0e0e0",
+          "r": 224,
+          "g": 224,
+          "b": 224
+        },
+        {
+          "label": "#dce5e0",
+          "r": 220,
+          "g": 229,
+          "b": 224
+        },
+        {
+          "label": "#d9e2dd",
+          "r": 217,
+          "g": 226,
+          "b": 221
+        },
+        {
+          "label": "#d7e6e0",
+          "r": 215,
+          "g": 230,
+          "b": 224
+        },
+        {
+          "label": "#dce8e1",
+          "r": 220,
+          "g": 232,
+          "b": 225
+        },
+        {
+          "label": "#d5e6e1",
+          "r": 213,
+          "g": 230,
+          "b": 225
+        },
+        {
+          "label": "#d9dfdc",
+          "r": 217,
+          "g": 223,
+          "b": 220
+        },
+        {
+          "label": "#d6e0dc",
+          "r": 214,
+          "g": 224,
+          "b": 220
+        },
+        {
+          "label": "#eaf2ef",
+          "r": 234,
+          "g": 242,
+          "b": 239
+        },
+        {
+          "label": "#e4f3e9",
+          "r": 228,
+          "g": 243,
+          "b": 233
+        },
+        {
+          "label": "#edf0ee",
+          "r": 237,
+          "g": 240,
+          "b": 238
+        },
+        {
+          "label": "#edf4f2",
+          "r": 237,
+          "g": 244,
+          "b": 242
+        },
+        {
+          "label": "#f0f1f2",
+          "r": 240,
+          "g": 241,
+          "b": 242
+        },
+        {
+          "label": "#edf3f1",
+          "r": 237,
+          "g": 243,
+          "b": 241
+        },
+        {
+          "label": "#f0f6f3",
+          "r": 240,
+          "g": 246,
+          "b": 243
+        },
+        {
+          "label": "#edf6f3",
+          "r": 237,
+          "g": 246,
+          "b": 243
+        },
+        {
+          "label": "#eeeeef",
+          "r": 238,
+          "g": 238,
+          "b": 239
+        },
+        {
+          "label": "#f1f1f2",
+          "r": 241,
+          "g": 241,
+          "b": 242
+        },
+        {
+          "label": "#f6eae8",
+          "r": 246,
+          "g": 234,
+          "b": 232
+        },
+        {
+          "label": "#edf1ef",
+          "r": 237,
+          "g": 241,
+          "b": 239
+        },
+        {
+          "label": "#edf2ef",
+          "r": 237,
+          "g": 242,
+          "b": 239
+        },
+        {
+          "label": "#eef2f0",
+          "r": 238,
+          "g": 242,
+          "b": 240
+        },
+        {
+          "label": "#eff5f2",
+          "r": 239,
+          "g": 245,
+          "b": 242
+        },
+        {
+          "label": "#e8eef8",
+          "r": 232,
+          "g": 238,
+          "b": 248
+        },
+        {
+          "label": "#f0f7f3",
+          "r": 240,
+          "g": 247,
+          "b": 243
+        },
+        {
+          "label": "#f4f5f3",
+          "r": 244,
+          "g": 245,
+          "b": 243
+        },
+        {
+          "label": "#f3f6f4",
+          "r": 243,
+          "g": 246,
+          "b": 244
+        },
+        {
+          "label": "#f1f7f4",
+          "r": 241,
+          "g": 247,
+          "b": 244
+        },
+        {
+          "label": "#cfe0db",
+          "r": 207,
+          "g": 224,
+          "b": 219
+        },
+        {
+          "label": "#cfdfd8",
+          "r": 207,
+          "g": 223,
+          "b": 216
+        },
+        {
+          "label": "#f1f8f4",
+          "r": 241,
+          "g": 248,
+          "b": 244
+        },
+        {
+          "label": "#f7f8f6",
+          "r": 247,
+          "g": 248,
+          "b": 246
+        },
+        {
+          "label": "#f5f6f7",
+          "r": 245,
+          "g": 246,
+          "b": 247
+        },
+        {
+          "label": "#f5f8f7",
+          "r": 245,
+          "g": 248,
+          "b": 247
+        },
+        {
+          "label": "#f6f8f7",
+          "r": 246,
+          "g": 248,
+          "b": 247
+        },
+        {
+          "label": "#f7f8f8",
+          "r": 247,
+          "g": 248,
+          "b": 248
+        },
+        {
+          "label": "#fbf3f2",
+          "r": 251,
+          "g": 243,
+          "b": 242
+        },
+        {
+          "label": "#f7f7f8",
+          "r": 247,
+          "g": 247,
+          "b": 248
+        },
+        {
+          "label": "#f8faf8",
+          "r": 248,
+          "g": 250,
+          "b": 248
+        },
+        {
+          "label": "#f8faf9",
+          "r": 248,
+          "g": 250,
+          "b": 249
+        },
+        {
+          "label": "#f8fbf9",
+          "r": 248,
+          "g": 251,
+          "b": 249
+        },
+        {
+          "label": "#f7faf8",
+          "r": 247,
+          "g": 250,
+          "b": 248
+        },
+        {
+          "label": "#f8f9f8",
+          "r": 248,
+          "g": 249,
+          "b": 248
+        },
+        {
+          "label": "#fef2f2",
+          "r": 254,
+          "g": 242,
+          "b": 242
+        },
+        {
+          "label": "#fafbf9",
+          "r": 250,
+          "g": 251,
+          "b": 249
+        },
+        {
+          "label": "#fafafa",
+          "r": 250,
+          "g": 250,
+          "b": 250
+        },
+        {
+          "label": "#fff3f2",
+          "r": 255,
+          "g": 243,
+          "b": 242
+        },
+        {
+          "label": "#fbfcfa",
+          "r": 251,
+          "g": 252,
+          "b": 250
+        },
+        {
+          "label": "#fafcfb",
+          "r": 250,
+          "g": 252,
+          "b": 251
+        },
+        {
+          "label": "#c9e1d5",
+          "r": 201,
+          "g": 225,
+          "b": 213
+        },
+        {
+          "label": "#c5ddd7",
+          "r": 197,
+          "g": 221,
+          "b": 215
+        },
+        {
+          "label": "#cbd8d2",
+          "r": 203,
+          "g": 216,
+          "b": 210
+        },
+        {
+          "label": "#c8d9d1",
+          "r": 200,
+          "g": 217,
+          "b": 209
+        },
+        {
+          "label": "#fbfdfc",
+          "r": 251,
+          "g": 253,
+          "b": 252
+        },
+        {
+          "label": "#fffaf0",
+          "r": 255,
+          "g": 250,
+          "b": 240
+        },
+        {
+          "label": "#fbfcfb",
+          "r": 251,
+          "g": 252,
+          "b": 251
+        },
+        {
+          "label": "#fbf5e9",
+          "r": 251,
+          "g": 245,
+          "b": 233
+        },
+        {
+          "label": "#fff0ef",
+          "r": 255,
+          "g": 240,
+          "b": 239
+        },
+        {
+          "label": "#fff0ee",
+          "r": 255,
+          "g": 240,
+          "b": 238
+        },
+        {
+          "label": "#ffffff",
+          "r": 255,
+          "g": 255,
+          "b": 255
+        },
+        {
+          "label": "#c1dcd6",
+          "r": 193,
+          "g": 220,
+          "b": 214
+        },
+        {
+          "label": "#cdd4d1",
+          "r": 205,
+          "g": 212,
+          "b": 209
+        },
+        {
+          "label": "#d0d0d0",
+          "r": 208,
+          "g": 208,
+          "b": 208
+        },
+        {
+          "label": "#cfcfcf",
+          "r": 207,
+          "g": 207,
+          "b": 207
+        },
+        {
+          "label": "#fff6e5",
+          "r": 255,
+          "g": 246,
+          "b": 229
+        }
+      ],
+      [
+        {
+          "label": "#737373",
+          "r": 115,
+          "g": 115,
+          "b": 115
+        },
+        {
+          "label": "#777777",
+          "r": 119,
+          "g": 119,
+          "b": 119
+        },
+        {
+          "label": "#737982",
+          "r": 115,
+          "g": 121,
+          "b": 130
+        },
+        {
+          "label": "#74817c",
+          "r": 116,
+          "g": 129,
+          "b": 124
+        },
+        {
+          "label": "#71807b",
+          "r": 113,
+          "g": 128,
+          "b": 123
+        },
+        {
+          "label": "#718079",
+          "r": 113,
+          "g": 128,
+          "b": 121
+        },
+        {
+          "label": "#738079",
+          "r": 115,
+          "g": 128,
+          "b": 121
+        },
+        {
+          "label": "#718078",
+          "r": 113,
+          "g": 128,
+          "b": 120
+        },
+        {
+          "label": "#728079",
+          "r": 114,
+          "g": 128,
+          "b": 121
+        },
+        {
+          "label": "#6b7780",
+          "r": 107,
+          "g": 119,
+          "b": 128
+        },
+        {
+          "label": "#79847f",
+          "r": 121,
+          "g": 132,
+          "b": 127
+        },
+        {
+          "label": "#7b8582",
+          "r": 123,
+          "g": 133,
+          "b": 130
+        },
+        {
+          "label": "#78857e",
+          "r": 120,
+          "g": 133,
+          "b": 126
+        },
+        {
+          "label": "#687b75",
+          "r": 104,
+          "g": 123,
+          "b": 117
+        },
+        {
+          "label": "#68877d",
+          "r": 104,
+          "g": 135,
+          "b": 125
+        },
+        {
+          "label": "#678477",
+          "r": 103,
+          "g": 132,
+          "b": 119
+        },
+        {
+          "label": "#7b8a84",
+          "r": 123,
+          "g": 138,
+          "b": 132
+        },
+        {
+          "label": "#7c8884",
+          "r": 124,
+          "g": 136,
+          "b": 132
+        },
+        {
+          "label": "#66756f",
+          "r": 102,
+          "g": 117,
+          "b": 111
+        },
+        {
+          "label": "#687873",
+          "r": 104,
+          "g": 120,
+          "b": 115
+        },
+        {
+          "label": "#67756f",
+          "r": 103,
+          "g": 117,
+          "b": 111
+        },
+        {
+          "label": "#68766f",
+          "r": 104,
+          "g": 118,
+          "b": 111
+        },
+        {
+          "label": "#638176",
+          "r": 99,
+          "g": 129,
+          "b": 118
+        },
+        {
+          "label": "#838e89",
+          "r": 131,
+          "g": 142,
+          "b": 137
+        },
+        {
+          "label": "#64736d",
+          "r": 100,
+          "g": 115,
+          "b": 109
+        },
+        {
+          "label": "#60706b",
+          "r": 96,
+          "g": 112,
+          "b": 107
+        },
+        {
+          "label": "#6b6b6b",
+          "r": 107,
+          "g": 107,
+          "b": 107
+        },
+        {
+          "label": "#89938f",
+          "r": 137,
+          "g": 147,
+          "b": 143
+        },
+        {
+          "label": "#8a8a8a",
+          "r": 138,
+          "g": 138,
+          "b": 138
+        },
+        {
+          "label": "#89958f",
+          "r": 137,
+          "g": 149,
+          "b": 143
+        },
+        {
+          "label": "#88948e",
+          "r": 136,
+          "g": 148,
+          "b": 142
+        },
+        {
+          "label": "#59716d",
+          "r": 89,
+          "g": 113,
+          "b": 109
+        },
+        {
+          "label": "#666666",
+          "r": 102,
+          "g": 102,
+          "b": 102
+        },
+        {
+          "label": "#8b9691",
+          "r": 139,
+          "g": 150,
+          "b": 145
+        },
+        {
+          "label": "#8d9792",
+          "r": 141,
+          "g": 151,
+          "b": 146
+        },
+        {
+          "label": "#8d9893",
+          "r": 141,
+          "g": 152,
+          "b": 147
+        },
+        {
+          "label": "#8a9590",
+          "r": 138,
+          "g": 149,
+          "b": 144
+        },
+        {
+          "label": "#909a95",
+          "r": 144,
+          "g": 154,
+          "b": 149
+        },
+        {
+          "label": "#8b9690",
+          "r": 139,
+          "g": 150,
+          "b": 144
+        },
+        {
+          "label": "#527267",
+          "r": 82,
+          "g": 114,
+          "b": 103
+        },
+        {
+          "label": "#56786d",
+          "r": 86,
+          "g": 120,
+          "b": 109
+        },
+        {
+          "label": "#5f6368",
+          "r": 95,
+          "g": 99,
+          "b": 104
+        },
+        {
+          "label": "#89969b",
+          "r": 137,
+          "g": 150,
+          "b": 155
+        },
+        {
+          "label": "#92979e",
+          "r": 146,
+          "g": 151,
+          "b": 158
+        },
+        {
+          "label": "#999999",
+          "r": 153,
+          "g": 153,
+          "b": 153
+        },
+        {
+          "label": "#94a19a",
+          "r": 148,
+          "g": 161,
+          "b": 154
+        },
+        {
+          "label": "#53725f",
+          "r": 83,
+          "g": 114,
+          "b": 95
+        },
+        {
+          "label": "#5f5f5f",
+          "r": 95,
+          "g": 95,
+          "b": 95
+        },
+        {
+          "label": "#59655f",
+          "r": 89,
+          "g": 101,
+          "b": 95
+        },
+        {
+          "label": "#596761",
+          "r": 89,
+          "g": 103,
+          "b": 97
+        },
+        {
+          "label": "#58665f",
+          "r": 88,
+          "g": 102,
+          "b": 95
+        },
+        {
+          "label": "#98a19d",
+          "r": 152,
+          "g": 161,
+          "b": 157
+        },
+        {
+          "label": "#9aa39f",
+          "r": 154,
+          "g": 163,
+          "b": 159
+        },
+        {
+          "label": "#9e9e9e",
+          "r": 158,
+          "g": 158,
+          "b": 158
+        },
+        {
+          "label": "#98a29d",
+          "r": 152,
+          "g": 162,
+          "b": 157
+        },
+        {
+          "label": "#55635f",
+          "r": 85,
+          "g": 99,
+          "b": 95
+        },
+        {
+          "label": "#57665e",
+          "r": 87,
+          "g": 102,
+          "b": 94
+        },
+        {
+          "label": "#52615b",
+          "r": 82,
+          "g": 97,
+          "b": 91
+        },
+        {
+          "label": "#52645f",
+          "r": 82,
+          "g": 100,
+          "b": 95
+        },
+        {
+          "label": "#51645b",
+          "r": 81,
+          "g": 100,
+          "b": 91
+        },
+        {
+          "label": "#52625b",
+          "r": 82,
+          "g": 98,
+          "b": 91
+        },
+        {
+          "label": "#526159",
+          "r": 82,
+          "g": 97,
+          "b": 89
+        },
+        {
+          "label": "#53615a",
+          "r": 83,
+          "g": 97,
+          "b": 90
+        },
+        {
+          "label": "#a1a1a1",
+          "r": 161,
+          "g": 161,
+          "b": 161
+        },
+        {
+          "label": "#a3a3a3",
+          "r": 163,
+          "g": 163,
+          "b": 163
+        },
+        {
+          "label": "#a0aaa5",
+          "r": 160,
+          "g": 170,
+          "b": 165
+        },
+        {
+          "label": "#4d5b56",
+          "r": 77,
+          "g": 91,
+          "b": 86
+        },
+        {
+          "label": "#a0a4aa",
+          "r": 160,
+          "g": 164,
+          "b": 170
+        },
+        {
+          "label": "#a1aaa6",
+          "r": 161,
+          "g": 170,
+          "b": 166
+        },
+        {
+          "label": "#a2aba7",
+          "r": 162,
+          "g": 171,
+          "b": 167
+        },
+        {
+          "label": "#a6b0ab",
+          "r": 166,
+          "g": 176,
+          "b": 171
+        },
+        {
+          "label": "#46574f",
+          "r": 70,
+          "g": 87,
+          "b": 79
+        },
+        {
+          "label": "#4a5a52",
+          "r": 74,
+          "g": 90,
+          "b": 82
+        },
+        {
+          "label": "#ababab",
+          "r": 171,
+          "g": 171,
+          "b": 171
+        },
+        {
+          "label": "#adb6b1",
+          "r": 173,
+          "g": 182,
+          "b": 177
+        },
+        {
+          "label": "#abb5b0",
+          "r": 171,
+          "g": 181,
+          "b": 176
+        },
+        {
+          "label": "#40534d",
+          "r": 64,
+          "g": 83,
+          "b": 77
+        },
+        {
+          "label": "#42564f",
+          "r": 66,
+          "g": 86,
+          "b": 79
+        },
+        {
+          "label": "#40524b",
+          "r": 64,
+          "g": 82,
+          "b": 75
+        },
+        {
+          "label": "#45524d",
+          "r": 69,
+          "g": 82,
+          "b": 77
+        },
+        {
+          "label": "#46544e",
+          "r": 70,
+          "g": 84,
+          "b": 78
+        },
+        {
+          "label": "#aab8b3",
+          "r": 170,
+          "g": 184,
+          "b": 179
+        },
+        {
+          "label": "#adb7b2",
+          "r": 173,
+          "g": 183,
+          "b": 178
+        },
+        {
+          "label": "#4a4a4a",
+          "r": 74,
+          "g": 74,
+          "b": 74
+        }
+      ],
+      [
+        {
+          "label": "#263238",
+          "r": 38,
+          "g": 50,
+          "b": 56
+        },
+        {
+          "label": "#273238",
+          "r": 39,
+          "g": 50,
+          "b": 56
+        },
+        {
+          "label": "#293241",
+          "r": 41,
+          "g": 50,
+          "b": 65
+        },
+        {
+          "label": "#293a35",
+          "r": 41,
+          "g": 58,
+          "b": 53
+        },
+        {
+          "label": "#263b34",
+          "r": 38,
+          "g": 59,
+          "b": 52
+        },
+        {
+          "label": "#26322f",
+          "r": 38,
+          "g": 50,
+          "b": 47
+        },
+        {
+          "label": "#273b36",
+          "r": 39,
+          "g": 59,
+          "b": 54
+        },
+        {
+          "label": "#293a34",
+          "r": 41,
+          "g": 58,
+          "b": 52
+        },
+        {
+          "label": "#27332e",
+          "r": 39,
+          "g": 51,
+          "b": 46
+        },
+        {
+          "label": "#293631",
+          "r": 41,
+          "g": 54,
+          "b": 49
+        },
+        {
+          "label": "#283631",
+          "r": 40,
+          "g": 54,
+          "b": 49
+        },
+        {
+          "label": "#28332f",
+          "r": 40,
+          "g": 51,
+          "b": 47
+        },
+        {
+          "label": "#2c4039",
+          "r": 44,
+          "g": 64,
+          "b": 57
+        },
+        {
+          "label": "#2f2f2f",
+          "r": 47,
+          "g": 47,
+          "b": 47
+        },
+        {
+          "label": "#1c2f2a",
+          "r": 28,
+          "g": 47,
+          "b": 42
+        },
+        {
+          "label": "#343434",
+          "r": 52,
+          "g": 52,
+          "b": 52
+        },
+        {
+          "label": "#35413d",
+          "r": 53,
+          "g": 65,
+          "b": 61
+        },
+        {
+          "label": "#33403b",
+          "r": 51,
+          "g": 64,
+          "b": 59
+        },
+        {
+          "label": "#36433e",
+          "r": 54,
+          "g": 67,
+          "b": 62
+        },
+        {
+          "label": "#33423a",
+          "r": 51,
+          "g": 66,
+          "b": 58
+        },
+        {
+          "label": "#202927",
+          "r": 32,
+          "g": 41,
+          "b": 39
+        },
+        {
+          "label": "#202b27",
+          "r": 32,
+          "g": 43,
+          "b": 39
+        },
+        {
+          "label": "#3f3f3f",
+          "r": 63,
+          "g": 63,
+          "b": 63
+        },
+        {
+          "label": "#3c4843",
+          "r": 60,
+          "g": 72,
+          "b": 67
+        },
+        {
+          "label": "#252525",
+          "r": 37,
+          "g": 37,
+          "b": 37
+        },
+        {
+          "label": "#35424a",
+          "r": 53,
+          "g": 66,
+          "b": 74
+        },
+        {
+          "label": "#344054",
+          "r": 52,
+          "g": 64,
+          "b": 84
+        }
+      ],
+      [
+        {
+          "label": "#356b63",
+          "r": 53,
+          "g": 107,
+          "b": 99
+        },
+        {
+          "label": "#2f6d64",
+          "r": 47,
+          "g": 109,
+          "b": 100
+        },
+        {
+          "label": "#2d7667",
+          "r": 45,
+          "g": 118,
+          "b": 103
+        },
+        {
+          "label": "#286f5f",
+          "r": 40,
+          "g": 111,
+          "b": 95
+        },
+        {
+          "label": "#347b67",
+          "r": 52,
+          "g": 123,
+          "b": 103
+        },
+        {
+          "label": "#277663",
+          "r": 39,
+          "g": 118,
+          "b": 99
+        },
+        {
+          "label": "#347967",
+          "r": 52,
+          "g": 121,
+          "b": 103
+        },
+        {
+          "label": "#246b5d",
+          "r": 36,
+          "g": 107,
+          "b": 93
+        },
+        {
+          "label": "#397967",
+          "r": 57,
+          "g": 121,
+          "b": 103
+        },
+        {
+          "label": "#1f7667",
+          "r": 31,
+          "g": 118,
+          "b": 103
+        }
+      ],
+      [
+        {
+          "label": "#ad514d",
+          "r": 173,
+          "g": 81,
+          "b": 77
+        },
+        {
+          "label": "#b44f4b",
+          "r": 180,
+          "g": 79,
+          "b": 75
+        },
+        {
+          "label": "#a55353",
+          "r": 165,
+          "g": 83,
+          "b": 83
+        },
+        {
+          "label": "#a34f4c",
+          "r": 163,
+          "g": 79,
+          "b": 76
+        },
+        {
+          "label": "#a64f4c",
+          "r": 166,
+          "g": 79,
+          "b": 76
+        },
+        {
+          "label": "#9d5656",
+          "r": 157,
+          "g": 86,
+          "b": 86
+        },
+        {
+          "label": "#a14e4b",
+          "r": 161,
+          "g": 78,
+          "b": 75
+        },
+        {
+          "label": "#a54848",
+          "r": 165,
+          "g": 72,
+          "b": 72
+        },
+        {
+          "label": "#a54949",
+          "r": 165,
+          "g": 73,
+          "b": 73
+        },
+        {
+          "label": "#a24a48",
+          "r": 162,
+          "g": 74,
+          "b": 72
+        }
+      ],
+      [
+        {
+          "label": "#ead5aa",
+          "r": 234,
+          "g": 213,
+          "b": 170
+        },
+        {
+          "label": "#eadbb4",
+          "r": 234,
+          "g": 219,
+          "b": 180
+        },
+        {
+          "label": "#e7d8ad",
+          "r": 231,
+          "g": 216,
+          "b": 173
+        },
+        {
+          "label": "#e4d7b6",
+          "r": 228,
+          "g": 215,
+          "b": 182
+        },
+        {
+          "label": "#ddd2b4",
+          "r": 221,
+          "g": 210,
+          "b": 180
+        }
+      ],
+      [
+        {
+          "label": "#4b9a84",
+          "r": 75,
+          "g": 154,
+          "b": 132
+        },
+        {
+          "label": "#4d9380",
+          "r": 77,
+          "g": 147,
+          "b": 128
+        },
+        {
+          "label": "#54a087",
+          "r": 84,
+          "g": 160,
+          "b": 135
+        },
+        {
+          "label": "#52927e",
+          "r": 82,
+          "g": 146,
+          "b": 126
+        },
+        {
+          "label": "#57a487",
+          "r": 87,
+          "g": 164,
+          "b": 135
+        }
+      ],
+      [
+        {
+          "label": "#245f59",
+          "r": 36,
+          "g": 95,
+          "b": 89
+        },
+        {
+          "label": "#2f5f55",
+          "r": 47,
+          "g": 95,
+          "b": 85
+        },
+        {
+          "label": "#286451",
+          "r": 40,
+          "g": 100,
+          "b": 81
+        },
+        {
+          "label": "#205d50",
+          "r": 32,
+          "g": 93,
+          "b": 80
+        }
+      ],
+      [
+        {
+          "label": "#b85c5c",
+          "r": 184,
+          "g": 92,
+          "b": 92
+        },
+        {
+          "label": "#bc5657",
+          "r": 188,
+          "g": 86,
+          "b": 87
+        }
+      ],
+      [
+        {
+          "label": "#347257",
+          "r": 52,
+          "g": 114,
+          "b": 87
+        },
+        {
+          "label": "#317353",
+          "r": 49,
+          "g": 115,
+          "b": 83
+        }
+      ],
+      [
+        {
+          "label": "#b8d4cd",
+          "r": 184,
+          "g": 212,
+          "b": 205
+        },
+        {
+          "label": "#bfd4ca",
+          "r": 191,
+          "g": 212,
+          "b": 202
+        }
+      ],
+      [
+        {
+          "label": "#90b2a6",
+          "r": 144,
+          "g": 178,
+          "b": 166
+        },
+        {
+          "label": "#8caaa0",
+          "r": 140,
+          "g": 170,
+          "b": 160
+        }
+      ],
+      [
+        {
+          "label": "#725b2b",
+          "r": 114,
+          "g": 91,
+          "b": 43
+        },
+        {
+          "label": "#75602f",
+          "r": 117,
+          "g": 96,
+          "b": 47
+        }
+      ],
+      [
+        {
+          "label": "#66532b",
+          "r": 102,
+          "g": 83,
+          "b": 43
+        },
+        {
+          "label": "#685832",
+          "r": 104,
+          "g": 88,
+          "b": 50
+        }
+      ]
+    ]
+  },
+  "rgbColors": {
+    "distinct": 29,
+    "occurrences": 31,
+    "baseDistinct": 19,
+    "top": [
+      {
+        "value": "rgba(0,0,0,0.05)",
+        "count": 2
+      },
+      {
+        "value": "rgba(38,50,56,0.07)",
+        "count": 2
+      },
+      {
+        "value": "rgba(0,0,0,0.06)",
+        "count": 1
+      },
+      {
+        "value": "rgba(15,23,42,0.06)",
+        "count": 1
+      },
+      {
+        "value": "rgba(15,23,42,0.12)",
+        "count": 1
+      },
+      {
+        "value": "rgba(15,23,42,0.28)",
+        "count": 1
+      },
+      {
+        "value": "rgba(17,36,32,0.2)",
+        "count": 1
+      },
+      {
+        "value": "rgba(18,36,29,0.24)",
+        "count": 1
+      },
+      {
+        "value": "rgba(180,83,79,0.08)",
+        "count": 1
+      },
+      {
+        "value": "rgba(19,31,34,0.38)",
+        "count": 1
+      },
+      {
+        "value": "rgba(21,32,28,0.42)",
+        "count": 1
+      },
+      {
+        "value": "rgba(247,252,250,0.97)",
+        "count": 1
+      },
+      {
+        "value": "rgba(255,255,255,0.7)",
+        "count": 1
+      },
+      {
+        "value": "rgba(255,255,255,0.95)",
+        "count": 1
+      },
+      {
+        "value": "rgba(255,255,255,0.97)",
+        "count": 1
+      }
+    ],
+    "baseNearDuplicates": [
+      [
+        {
+          "label": "rgb(19, 31, 34)",
+          "r": 19,
+          "g": 31,
+          "b": 34
+        },
+        {
+          "label": "rgb(17, 36, 32)",
+          "r": 17,
+          "g": 36,
+          "b": 32
+        },
+        {
+          "label": "rgb(21, 32, 28)",
+          "r": 21,
+          "g": 32,
+          "b": 28
+        },
+        {
+          "label": "rgb(18, 36, 29)",
+          "r": 18,
+          "g": 36,
+          "b": 29
+        },
+        {
+          "label": "rgb(27, 40, 34)",
+          "r": 27,
+          "g": 40,
+          "b": 34
+        },
+        {
+          "label": "rgb(31, 45, 39)",
+          "r": 31,
+          "g": 45,
+          "b": 39
+        },
+        {
+          "label": "rgb(26, 44, 35)",
+          "r": 26,
+          "g": 44,
+          "b": 35
+        }
+      ],
+      [
+        {
+          "label": "rgb(255, 255, 255)",
+          "r": 255,
+          "g": 255,
+          "b": 255
+        },
+        {
+          "label": "rgb(247, 252, 250)",
+          "r": 247,
+          "g": 252,
+          "b": 250
+        }
+      ],
+      [
+        {
+          "label": "rgb(44, 126, 103)",
+          "r": 44,
+          "g": 126,
+          "b": 103
+        },
+        {
+          "label": "rgb(54, 126, 101)",
+          "r": 54,
+          "g": 126,
+          "b": 101
+        }
+      ]
+    ]
+  },
+  "colored": {
+    "distinct": 167,
+    "values": [
+      "#172033",
+      "#1c2f2a",
+      "#1f7667",
+      "#202927",
+      "#202b27",
+      "#205d50",
+      "#245f59",
+      "#246b5d",
+      "#26322f",
+      "#263238",
+      "#263b34",
+      "#273238",
+      "#27332e",
+      "#273b36",
+      "#277663",
+      "#28332f",
+      "#283631",
+      "#286451",
+      "#286f5f",
+      "#293241",
+      "#293631",
+      "#293a34",
+      "#293a35",
+      "#2c4039",
+      "#2d7667",
+      "#2f5f55",
+      "#2f6d64",
+      "#2f7d74",
+      "#317353",
+      "#33423a",
+      "#344054",
+      "#347257",
+      "#347967",
+      "#347b67",
+      "#35424a",
+      "#356b63",
+      "#397967",
+      "#3d5e57",
+      "#3d8968",
+      "#3f3a2e",
+      "#40524b",
+      "#40534d",
+      "#416b5d",
+      "#42564f",
+      "#43545d",
+      "#438f79",
+      "#475569",
+      "#4b9a84",
+      "#4d9380",
+      "#527267",
+      "#52927e",
+      "#53725f",
+      "#54a087",
+      "#56786d",
+      "#57a487",
+      "#6366f1",
+      "#638176",
+      "#64748b",
+      "#66532b",
+      "#678477",
+      "#685832",
+      "#68877d",
+      "#69a18b",
+      "#725b2b",
+      "#75602f",
+      "#81734f",
+      "#86652d",
+      "#8caaa0",
+      "#8f403e",
+      "#8f4e4e",
+      "#90b2a6",
+      "#93635d",
+      "#946d24",
+      "#94a3b8",
+      "#991b1b",
+      "#99b9ad",
+      "#9d5656",
+      "#a14e4b",
+      "#a1813a",
+      "#a24a48",
+      "#a34f4c",
+      "#a54848",
+      "#a54949",
+      "#a55353",
+      "#a64f4c",
+      "#a8ccc4",
+      "#ad514d",
+      "#b44f4b",
+      "#b85c5c",
+      "#b8873d",
+      "#b8d4cd",
+      "#bc5657",
+      "#bfd4ca",
+      "#c1dcd6",
+      "#c28d89",
+      "#c5ddd7",
+      "#c8d9d1",
+      "#c9e1d5",
+      "#cbd5e1",
+      "#cbd8d2",
+      "#cfdfd8",
+      "#cfe0db",
+      "#d5e6e1",
+      "#d6e0dc",
+      "#d6e5e0",
+      "#d7e6e0",
+      "#d97706",
+      "#d9e2dd",
+      "#dbe6e2",
+      "#dce5e0",
+      "#dce7e2",
+      "#dce8e1",
+      "#dce8e4",
+      "#ddd2b4",
+      "#dfe6e2",
+      "#dfe7e2",
+      "#e0e7e3",
+      "#e0e8e4",
+      "#e0ebe7",
+      "#e1e5ea",
+      "#e1e8e4",
+      "#e1ece6",
+      "#e2eeeb",
+      "#e3ece8",
+      "#e4d7b6",
+      "#e4f1eb",
+      "#e4f3e9",
+      "#e6f2ec",
+      "#e7caca",
+      "#e7d8ad",
+      "#e7eeeb",
+      "#e8ebef",
+      "#e8eef8",
+      "#e8f1ed",
+      "#ead5aa",
+      "#eadbb4",
+      "#eaf1ed",
+      "#eaf2ef",
+      "#edf4f2",
+      "#edf6f3",
+      "#f0f7f3",
+      "#f1f8f4",
+      "#f6eae8",
+      "#f7eedc",
+      "#fbf3f2",
+      "#fbf5e9",
+      "#fecaca",
+      "#fee2e2",
+      "#fef2f2",
+      "#fff0ee",
+      "#fff0ef",
+      "#fff3f2",
+      "#fff6e5",
+      "#fffaf0",
+      "rgb(15,23,42)",
+      "rgb(17,36,32)",
+      "rgb(18,36,29)",
+      "rgb(180,83,79)",
+      "rgb(19,31,34)",
+      "rgb(21,32,28)",
+      "rgb(26,44,35)",
+      "rgb(27,40,34)",
+      "rgb(30,55,48)",
+      "rgb(31,45,39)",
+      "rgb(44,126,103)",
+      "rgb(54,126,101)",
+      "rgb(64,123,110)"
+    ]
+  },
+  "nearWhite": {
+    "distinct": 17,
+    "values": [
+      "#f6f8f7",
+      "#f7f7f8",
+      "#f7f8f6",
+      "#f7f8f8",
+      "#f7faf8",
+      "#f8f9f8",
+      "#f8faf8",
+      "#f8faf9",
+      "#f8fbf9",
+      "#fafafa",
+      "#fafbf9",
+      "#fafcfb",
+      "#fbfcfa",
+      "#fbfcfb",
+      "#fbfdfc",
+      "#ffffff",
+      "rgb(247,252,250)"
+    ]
+  },
+  "borderRadius": {
+    "distinct": 20,
+    "values": [
+      {
+        "value": "9px",
+        "count": 5
+      },
+      {
+        "value": "8px",
+        "count": 19
+      },
+      {
+        "value": "10px",
+        "count": 11
+      },
+      {
+        "value": "6px",
+        "count": 7
+      },
+      {
+        "value": "50%",
+        "count": 6
+      },
+      {
+        "value": "999px",
+        "count": 9
+      },
+      {
+        "value": "7px",
+        "count": 6
+      },
+      {
+        "value": "16px 16px 4px 16px",
+        "count": 1
+      },
+      {
+        "value": "4px",
+        "count": 1
+      },
+      {
+        "value": "22px",
+        "count": 1
+      },
+      {
+        "value": "12px",
+        "count": 3
+      },
+      {
+        "value": "16px",
+        "count": 2
+      },
+      {
+        "value": "14px",
+        "count": 1
+      },
+      {
+        "value": "0",
+        "count": 1
+      },
+      {
+        "value": "15px",
+        "count": 1
+      },
+      {
+        "value": "13px",
+        "count": 1
+      },
+      {
+        "value": "5px",
+        "count": 4
+      },
+      {
+        "value": "11px",
+        "count": 3
+      },
+      {
+        "value": "17px",
+        "count": 1
+      },
+      {
+        "value": "18px",
+        "count": 1
+      }
+    ]
+  },
+  "fontSize": {
+    "distinct": 19,
+    "values": [
+      {
+        "value": "12px",
+        "count": 33
+      },
+      {
+        "value": "17px",
+        "count": 4
+      },
+      {
+        "value": "24px",
+        "count": 1
+      },
+      {
+        "value": "20px",
+        "count": 7
+      },
+      {
+        "value": "11px",
+        "count": 23
+      },
+      {
+        "value": "10px",
+        "count": 20
+      },
+      {
+        "value": "18px",
+        "count": 3
+      },
+      {
+        "value": "13px",
+        "count": 14
+      },
+      {
+        "value": "clamp(24px, 3vw, 34px)",
+        "count": 1
+      },
+      {
+        "value": "14px",
+        "count": 6
+      },
+      {
+        "value": "0.9em",
+        "count": 1
+      },
+      {
+        "value": "15px",
+        "count": 2
+      },
+      {
+        "value": "16px",
+        "count": 7
+      },
+      {
+        "value": "22px",
+        "count": 1
+      },
+      {
+        "value": "19px",
+        "count": 1
+      },
+      {
+        "value": "10.5px",
+        "count": 1
+      },
+      {
+        "value": "8px",
+        "count": 1
+      },
+      {
+        "value": "9px",
+        "count": 2
+      },
+      {
+        "value": "clamp(26px, 3vw, 36px)",
+        "count": 1
+      }
+    ]
+  },
+  "selectors": {
+    "duplicateCount": 109,
+    "duplicateUses": 291,
+    "list": [
+      {
+        "value": ".stop-button",
+        "count": 10
+      },
+      {
+        "value": ".send-button",
+        "count": 9
+      },
+      {
+        "value": ".composer-footer",
+        "count": 8
+      },
+      {
+        "value": ".composer",
+        "count": 6
+      },
+      {
+        "value": ".workspace-header",
+        "count": 6
+      },
+      {
+        "value": ".composer-meta",
+        "count": 5
+      },
+      {
+        "value": ".sidebar",
+        "count": 5
+      },
+      {
+        "value": ".brand",
+        "count": 4
+      },
+      {
+        "value": ".composer textarea",
+        "count": 4
+      },
+      {
+        "value": ".repo-control",
+        "count": 4
+      },
+      {
+        "value": ".repo-control-input",
+        "count": 4
+      },
+      {
+        "value": ".workspace-header h1",
+        "count": 4
+      },
+      {
+        "value": ".workspace-status",
+        "count": 4
+      },
+      {
+        "value": ":root",
+        "count": 3
+      },
+      {
+        "value": ".app-shell",
+        "count": 3
+      },
+      {
+        "value": ".assistant-message-content",
+        "count": 3
+      },
+      {
+        "value": ".empty-state h2",
+        "count": 3
+      },
+      {
+        "value": ".message-expand-button:focus-visible",
+        "count": 3
+      },
+      {
+        "value": ".message-list",
+        "count": 3
+      },
+      {
+        "value": ".meta-chip",
+        "count": 3
+      },
+      {
+        "value": ".meta-label",
+        "count": 3
+      },
+      {
+        "value": ".new-button",
+        "count": 3
+      },
+      {
+        "value": ".project-add-thread",
+        "count": 3
+      },
+      {
+        "value": ".project-heading-main small",
+        "count": 3
+      },
+      {
+        "value": ".project-heading-main strong",
+        "count": 3
+      },
+      {
+        "value": ".project-menu-trigger",
+        "count": 3
+      },
+      {
+        "value": ".repo-field",
+        "count": 3
+      },
+      {
+        "value": ".repo-hint",
+        "count": 3
+      },
+      {
+        "value": ".repo-status",
+        "count": 3
+      },
+      {
+        "value": ".send-button:disabled",
+        "count": 3
+      },
+      {
+        "value": ".sidebar-toggle",
+        "count": 3
+      },
+      {
+        "value": ".sidebar-toggle:hover",
+        "count": 3
+      },
+      {
+        "value": ".sidebar-topbar",
+        "count": 3
+      },
+      {
+        "value": ".sidebar.collapsed .sidebar-toggle",
+        "count": 3
+      },
+      {
+        "value": ".thread-delete",
+        "count": 3
+      },
+      {
+        "value": ".thread-item:hover",
+        "count": 3
+      },
+      {
+        "value": ".thread-item.active",
+        "count": 3
+      },
+      {
+        "value": ".thread-title",
+        "count": 3
+      },
+      {
+        "value": ".workspace",
+        "count": 3
+      },
+      {
+        "value": ".active-task-cancel",
+        "count": 2
+      },
+      {
+        "value": ".app-shell.sidebar-collapsed .composer",
+        "count": 2
+      },
+      {
+        "value": ".assistant-message-body",
+        "count": 2
+      },
+      {
+        "value": ".branch-label",
+        "count": 2
+      },
+      {
+        "value": ".brand img",
+        "count": 2
+      },
+      {
+        "value": ".brand-name",
+        "count": 2
+      },
+      {
+        "value": ".code-window-actions",
+        "count": 2
+      },
+      {
+        "value": ".code-window-language",
+        "count": 2
+      },
+      {
+        "value": ".composer textarea::placeholder",
+        "count": 2
+      },
+      {
+        "value": ".composer-chat-context",
+        "count": 2
+      },
+      {
+        "value": ".composer-context-label",
+        "count": 2
+      },
+      {
+        "value": ".composer-context-label strong",
+        "count": 2
+      },
+      {
+        "value": ".empty-state",
+        "count": 2
+      },
+      {
+        "value": ".empty-state p:last-child",
+        "count": 2
+      },
+      {
+        "value": ".keyboard-hint",
+        "count": 2
+      },
+      {
+        "value": ".markdown-body h1",
+        "count": 2
+      },
+      {
+        "value": ".markdown-body h2",
+        "count": 2
+      },
+      {
+        "value": ".markdown-body h3",
+        "count": 2
+      },
+      {
+        "value": ".message-actions",
+        "count": 2
+      },
+      {
+        "value": ".message-assistant",
+        "count": 2
+      },
+      {
+        "value": ".message-expand-button",
+        "count": 2
+      },
+      {
+        "value": ".message-expand-button:hover",
+        "count": 2
+      },
+      {
+        "value": ".message-user",
+        "count": 2
+      },
+      {
+        "value": ".new-button:focus-visible",
+        "count": 2
+      },
+      {
+        "value": ".new-button:hover",
+        "count": 2
+      },
+      {
+        "value": ".new-chat-button",
+        "count": 2
+      },
+      {
+        "value": ".new-content-button",
+        "count": 2
+      },
+      {
+        "value": ".new-project-button",
+        "count": 2
+      },
+      {
+        "value": ".project-add-thread:disabled",
+        "count": 2
+      },
+      {
+        "value": ".project-disclosure",
+        "count": 2
+      },
+      {
+        "value": ".project-empty",
+        "count": 2
+      },
+      {
+        "value": ".project-group",
+        "count": 2
+      },
+      {
+        "value": ".project-heading",
+        "count": 2
+      },
+      {
+        "value": ".project-heading-main",
+        "count": 2
+      },
+      {
+        "value": ".project-thread-item",
+        "count": 2
+      },
+      {
+        "value": ".proposal-actions",
+        "count": 2
+      },
+      {
+        "value": ".proposal-card-content",
+        "count": 2
+      },
+      {
+        "value": ".proposal-card-header",
+        "count": 2
+      },
+      {
+        "value": ".repo-control-label",
+        "count": 2
+      },
+      {
+        "value": ".repo-field input",
+        "count": 2
+      },
+      {
+        "value": ".repo-fixed-name",
+        "count": 2
+      },
+      {
+        "value": ".repo-provider-label",
+        "count": 2
+      },
+      {
+        "value": ".repo-status-dot",
+        "count": 2
+      },
+      {
+        "value": ".send-button:not(:disabled)",
+        "count": 2
+      },
+      {
+        "value": ".send-button:not(:disabled):focus-visible",
+        "count": 2
+      },
+      {
+        "value": ".send-button:not(:disabled):hover",
+        "count": 2
+      },
+      {
+        "value": ".sidebar-section-label",
+        "count": 2
+      },
+      {
+        "value": ".sidebar-toggle:focus-visible",
+        "count": 2
+      },
+      {
+        "value": ".sidebar.collapsed",
+        "count": 2
+      },
+      {
+        "value": ".sidebar.collapsed .brand img",
+        "count": 2
+      },
+      {
+        "value": ".sidebar.collapsed .sidebar-topbar",
+        "count": 2
+      },
+      {
+        "value": ".status-dot",
+        "count": 2
+      },
+      {
+        "value": ".status-pill",
+        "count": 2
+      },
+      {
+        "value": ".thread-content",
+        "count": 2
+      },
+      {
+        "value": ".thread-delete:focus-visible",
+        "count": 2
+      },
+      {
+        "value": ".thread-delete:hover",
+        "count": 2
+      },
+      {
+        "value": ".thread-item",
+        "count": 2
+      },
+      {
+        "value": ".thread-item small",
+        "count": 2
+      },
+      {
+        "value": ".thread-item:hover .thread-delete",
+        "count": 2
+      },
+      {
+        "value": ".thread-list",
+        "count": 2
+      },
+      {
+        "value": ".title-save-error",
+        "count": 2
+      },
+      {
+        "value": ".title-save-state",
+        "count": 2
+      },
+      {
+        "value": ".user-avatar",
+        "count": 2
+      },
+      {
+        "value": ".user-bubble",
+        "count": 2
+      },
+      {
+        "value": ".user-message-content",
+        "count": 2
+      },
+      {
+        "value": ".workspace-heading",
+        "count": 2
+      },
+      {
+        "value": ".workspace-repo",
+        "count": 2
+      },
+      {
+        "value": ".workspace-title-input",
+        "count": 2
+      },
+      {
+        "value": "body",
+        "count": 2
+      },
+      {
+        "value": "button",
+        "count": 2
+      }
+    ],
+    "top": [
+      {
+        "value": ".stop-button",
+        "count": 10
+      },
+      {
+        "value": ".send-button",
+        "count": 9
+      },
+      {
+        "value": ".composer-footer",
+        "count": 8
+      },
+      {
+        "value": ".composer",
+        "count": 6
+      },
+      {
+        "value": ".workspace-header",
+        "count": 6
+      },
+      {
+        "value": ".composer-meta",
+        "count": 5
+      },
+      {
+        "value": ".sidebar",
+        "count": 5
+      },
+      {
+        "value": ".brand",
+        "count": 4
+      },
+      {
+        "value": ".composer textarea",
+        "count": 4
+      },
+      {
+        "value": ".repo-control",
+        "count": 4
+      },
+      {
+        "value": ".repo-control-input",
+        "count": 4
+      },
+      {
+        "value": ".workspace-header h1",
+        "count": 4
+      },
+      {
+        "value": ".workspace-status",
+        "count": 4
+      },
+      {
+        "value": ":root",
+        "count": 3
+      },
+      {
+        "value": ".app-shell",
+        "count": 3
+      }
+    ]
+  },
+  "tokenCoverage": {
+    "percent": 3.4,
+    "varUses": 36,
+    "hardcodedColors": 488,
+    "hardcodedPx": 550,
+    "pxSamples": [
+      {
+        "prop": "gap",
+        "value": "12px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ActiveTaskStrip.vue",
+        "line": 40
+      },
+      {
+        "prop": "padding",
+        "value": "9px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ActiveTaskStrip.vue",
+        "line": 40
+      },
+      {
+        "prop": "padding",
+        "value": "22px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ActiveTaskStrip.vue",
+        "line": 40
+      },
+      {
+        "prop": "font-size",
+        "value": "12px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ActiveTaskStrip.vue",
+        "line": 41
+      },
+      {
+        "prop": "gap",
+        "value": "8px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ActiveTaskStrip.vue",
+        "line": 42
+      },
+      {
+        "prop": "border-radius",
+        "value": "9px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ActiveTaskStrip.vue",
+        "line": 43
+      },
+      {
+        "prop": "gap",
+        "value": "7px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ActiveTaskStrip.vue",
+        "line": 45
+      },
+      {
+        "prop": "padding",
+        "value": "6px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ActiveTaskStrip.vue",
+        "line": 45
+      },
+      {
+        "prop": "padding",
+        "value": "8px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ActiveTaskStrip.vue",
+        "line": 45
+      },
+      {
+        "prop": "padding-left",
+        "value": "4px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ActiveTaskStrip.vue",
+        "line": 48
+      },
+      {
+        "prop": "font-size",
+        "value": "17px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\components\\ActiveTaskStrip.vue",
+        "line": 48
+      },
+      {
+        "prop": "padding",
+        "value": "16px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+        "line": 50
+      },
+      {
+        "prop": "padding",
+        "value": "12px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+        "line": 50
+      },
+      {
+        "prop": "padding",
+        "value": "16px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+        "line": 54
+      },
+      {
+        "prop": "padding",
+        "value": "10px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+        "line": 54
+      },
+      {
+        "prop": "gap",
+        "value": "8px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+        "line": 58
+      },
+      {
+        "prop": "margin-bottom",
+        "value": "18px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+        "line": 58
+      },
+      {
+        "prop": "gap",
+        "value": "10px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+        "line": 60
+      },
+      {
+        "prop": "border-radius",
+        "value": "8px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+        "line": 68
+      },
+      {
+        "prop": "font-size",
+        "value": "24px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+        "line": 68
+      },
+      {
+        "prop": "gap",
+        "value": "8px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+        "line": 72
+      },
+      {
+        "prop": "border-radius",
+        "value": "10px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+        "line": 72
+      },
+      {
+        "prop": "padding",
+        "value": "10px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+        "line": 72
+      },
+      {
+        "prop": "padding",
+        "value": "14px",
+        "file": "A:\\gyx_cv\\coding_agent\\ui\\src\\styles\\main.css",
+        "line": 72
+      }
+    ]
+  },
+  "importantCount": 2,
+  "notes": [],
+  "checks": [
+    {
+      "id": "coloredDistinct",
+      "label": "彩色 distinct",
+      "value": 167,
+      "need": "≤5",
+      "pass": false
+    },
+    {
+      "id": "radiusDistinct",
+      "label": "border-radius",
+      "value": 20,
+      "need": "≤4",
+      "pass": false
+    },
+    {
+      "id": "fontSizeDistinct",
+      "label": "font-size",
+      "value": 19,
+      "need": "≤7",
+      "pass": false
+    },
+    {
+      "id": "nearWhiteDistinct",
+      "label": "近白背景 distinct",
+      "value": 17,
+      "need": "≤3",
+      "pass": false
+    },
+    {
+      "id": "rootBlocks",
+      "label": ":root 块",
+      "value": 3,
+      "need": "=1",
+      "pass": false
+    },
+    {
+      "id": "tokenCoverage",
+      "label": "token 覆盖率",
+      "value": 3.4,
+      "need": "≥90%",
+      "pass": false
+    },
+    {
+      "id": "rgbBaseDistinct",
+      "label": "rgb/rgba 基色 distinct",
+      "value": 19,
+      "need": "≤3",
+      "pass": false
+    },
+    {
+      "id": "duplicateSelectors",
+      "label": "重复声明选择器",
+      "value": 109,
+      "need": "=0",
+      "pass": false
+    },
+    {
+      "id": "importantCount",
+      "label": "!important",
+      "value": 2,
+      "need": "=0",
+      "pass": false
+    }
+  ],
+  "failed": [
+    "coloredDistinct",
+    "radiusDistinct",
+    "fontSizeDistinct",
+    "nearWhiteDistinct",
+    "rootBlocks",
+    "tokenCoverage",
+    "rgbBaseDistinct",
+    "duplicateSelectors",
+    "importantCount"
+  ],
+  "failedCount": 9,
+  "passed": false
+}
